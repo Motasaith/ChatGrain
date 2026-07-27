@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg18
+    environment:
+      POSTGRES_DB: docent
+      POSTGRES_USER: docent
+      POSTGRES_PASSWORD: docent
+    ports:
+      - "5434:5432"
+    volumes:
+      - docent_postgres:/var/lib/postgresql
+      - ./docker/postgres/init/001-vector.sql:/docker-entrypoint-initdb.d/001-vector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docent -d docent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-ai"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - docent_ollama:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  docent_postgres:
+  docent_ollama:

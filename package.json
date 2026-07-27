@@ -1,0 +1,30 @@
+{
+  "name": "docent",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Open-source AI customer support agents trained on your knowledge.",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @docent/web",
+    "dev:web": "npm run dev:web -w @docent/web",
+    "build": "npm run build -w @docent/web",
+    "start": "npm run start -w @docent/web",
+    "test": "npm run test -w @docent/web",
+    "lint": "npm run lint -w @docent/web",
+    "typecheck": "npm run typecheck -w @docent/web",
+    "db:push": "npm run db:push -w @docent/web",
+    "db:migrate": "npm run db:migrate -w @docent/web",
+    "services:up": "docker compose up -d",
+    "services:down": "docker compose down"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.9"
+  }
+}

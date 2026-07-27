@@ -1,0 +1,27 @@
+# Local data and secrets
+.data/
+.env*
+!.env.example
+apps/*/.env*
+!apps/*/.env.example
+
+# Dependencies and generated application output
+node_modules/
+apps/*/node_modules/
+.next/
+apps/*/.next/
+.cache/
+apps/*/.cache/
+coverage/
+*.tsbuildinfo
+
+# Local tooling and test artifacts
+.chrome-*/
+.*.png
+test/server.test.mjs
+*.log
+.vercel/
+
+# Operating-system files
+.DS_Store
+Thumbs.db

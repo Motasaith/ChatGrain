@@ -1,0 +1,50 @@
+{
+  "name": "@docent/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n web,worker -c green,cyan \"next dev\" \"tsx watch src/worker-entry.ts\"",
+    "dev:web": "next dev",
+    "worker": "tsx src/worker-entry.ts",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push --force",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "@mozilla/readability": "^0.6.0",
+    "@next/env": "16.2.12",
+    "cheerio": "^1.2.0",
+    "drizzle-orm": "^0.45.2",
+    "jose": "^6.2.4",
+    "jsdom": "^29.1.1",
+    "lucide-react": "^1.27.0",
+    "nanoid": "^6.0.0",
+    "next": "16.2.12",
+    "pino": "^10.3.1",
+    "postgres": "^3.4.9",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.12",
+    "tailwindcss": "^4",
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "vitest": "^4.0.18"
+  }
+}
