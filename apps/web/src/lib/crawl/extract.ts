@@ -19,6 +19,16 @@ export type SiteBrand = {
   primaryColor: string;
 };
 
+export function isSoftNotFound(html: string) {
+  const $ = cheerio.load(html);
+  const title =
+    $("meta[property='og:title']").attr("content")?.trim() ||
+    $("title").text().trim();
+  return /^(?:404(?:\s+error)?|not found|page not found)(?:\s*[|—–-]|$)/i.test(
+    title,
+  );
+}
+
 function absoluteUrl(value: string | undefined, base: URL) {
   if (!value) return undefined;
   try {

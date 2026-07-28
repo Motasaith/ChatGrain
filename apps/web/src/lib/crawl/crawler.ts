@@ -1,8 +1,17 @@
 import { AppError } from "@/lib/http/errors";
-import { safeFetch, validatePublicUrl } from "@/lib/security/public-url";
+import {
+  createSafeFetcher,
+  validatePublicUrl,
+  type SafeFetcher,
+} from "@/lib/security/public-url";
+import {
+  createBrowserRenderer,
+  needsBrowserRendering,
+} from "./browser-renderer";
 import {
   extractBrand,
   extractPage,
+  isSoftNotFound,
   type ExtractedPage,
   type SiteBrand,
 } from "./extract";
@@ -50,9 +59,9 @@ function parseRobots(content: string) {
     !disallowed.some((path) => url.pathname.startsWith(path));
 }
 
-async function loadRobots(origin: string) {
+async function loadRobots(origin: string, fetchPublic: SafeFetcher) {
   try {
-    const { response } = await safeFetch(new URL("/robots.txt", origin), {
+    const { response } = await fetchPublic(new URL("/robots.txt", origin), {
       timeoutMs: 5_000,
       maxBytes: 500_000,
       headers: { accept: "text/plain" },
@@ -64,7 +73,7 @@ async function loadRobots(origin: string) {
   }
 }
 
-async function discoverSitemap(root: URL) {
+async function discoverSitemap(root: URL, fetchPublic: SafeFetcher) {
   const candidates = [
     new URL("/sitemap.xml", root),
     new URL("/sitemap_index.xml", root),
@@ -72,7 +81,7 @@ async function discoverSitemap(root: URL) {
   const urls = new Set<string>();
   for (const candidate of candidates) {
     try {
-      const { response } = await safeFetch(candidate, {
+      const { response } = await fetchPublic(candidate, {
         timeoutMs: 8_000,
         maxBytes: 2_000_000,
         headers: { accept: "application/xml,text/xml" },
@@ -122,11 +131,15 @@ function matchesPath(
   return true;
 }
 
-async function fetchHtml(url: URL, retries = 2) {
+async function fetchHtml(
+  url: URL,
+  fetchPublic: SafeFetcher,
+  retries = 2,
+) {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
-      const { response, finalUrl } = await safeFetch(url, {
+      const { response, finalUrl } = await fetchPublic(url, {
         timeoutMs: 15_000,
         maxBytes: 3_000_000,
       });
@@ -167,7 +180,9 @@ export async function crawlWebsite({
 }: CrawlOptions): Promise<CrawlResult> {
   const root = await validatePublicUrl(input);
   const limit = Math.max(1, Math.min(500, pageLimit));
-  const allowedByRobots = await loadRobots(root.origin);
+  const fetchPublic = createSafeFetcher();
+  const browserRenderer = createBrowserRenderer();
+  const allowedByRobots = await loadRobots(root.origin, fetchPublic);
   if (!allowedByRobots(root)) {
     throw new AppError(
       "ROBOTS_BLOCKED",
@@ -176,7 +191,10 @@ export async function crawlWebsite({
     );
   }
 
-  const sitemapUrls = (await discoverSitemap(root)).slice(0, limit * 8);
+  const sitemapUrls = (await discoverSitemap(root, fetchPublic)).slice(
+    0,
+    limit * 8,
+  );
   const queue = [
     root.href,
     ...sitemapUrls.filter((item) => item !== root.href),
@@ -188,86 +206,106 @@ export async function crawlWebsite({
   let brand: SiteBrand | undefined;
   let processed = 0;
 
-  while (queue.length && pages.length < limit) {
-    const batch = queue.splice(0, Math.min(6, limit - pages.length));
-    const results = await Promise.allSettled(
-      batch.map(async (value) => {
-        const requestedUrl = new URL(value);
-        if (
-          requestedUrl.origin !== root.origin ||
-          !allowedByRobots(requestedUrl) ||
-          !matchesPath(requestedUrl, includePaths, excludePaths)
-        ) {
-          return null;
-        }
-        const { html, finalUrl } = await fetchHtml(requestedUrl);
-        return {
-          page: extractPage(html, finalUrl),
-          brand: extractBrand(html, finalUrl),
-        };
-      }),
-    );
+  try {
+    while (queue.length && pages.length < limit) {
+      const batch = queue.splice(0, Math.min(6, limit - pages.length));
+      const results = await Promise.allSettled(
+        batch.map(async (value) => {
+          const requestedUrl = new URL(value);
+          if (
+            requestedUrl.origin !== root.origin ||
+            !allowedByRobots(requestedUrl) ||
+            !matchesPath(requestedUrl, includePaths, excludePaths)
+          ) {
+            return null;
+          }
+          const fetched = await fetchHtml(requestedUrl, fetchPublic);
+          let html = fetched.html;
+          let finalUrl = fetched.finalUrl;
+          if (isSoftNotFound(html)) {
+            throw new AppError(
+              "PAGE_NOT_FOUND",
+              "The sitemap URL resolves to a not-found page.",
+              404,
+            );
+          }
+          let page = extractPage(html, finalUrl);
+          if (needsBrowserRendering(html, page.text)) {
+            const rendered = await browserRenderer.render(finalUrl);
+            html = rendered.html;
+            finalUrl = rendered.finalUrl;
+            page = extractPage(html, finalUrl);
+          }
+          return {
+            page,
+            brand: extractBrand(html, finalUrl),
+          };
+        }),
+      );
 
-    for (let index = 0; index < results.length; index += 1) {
-      processed += 1;
-      const result = results[index];
-      if (result.status === "rejected") {
-        failures.push({
-          url: batch[index],
-          reason:
-            result.reason instanceof Error
-              ? result.reason.message
-              : "Unknown crawl error",
-        });
-        continue;
-      }
-      if (!result.value) continue;
-      const { page, brand: pageBrand } = result.value;
-      brand ??= pageBrand;
-      if (
-        page.text.length >= 120 &&
-        !contentHashes.has(page.contentHash)
-      ) {
-        contentHashes.add(page.contentHash);
-        pages.push(page);
-      }
-      for (const link of page.links) {
-        if (queued.size >= limit * 8) break;
-        const next = new URL(link);
+      for (let index = 0; index < results.length; index += 1) {
+        processed += 1;
+        const result = results[index];
+        if (result.status === "rejected") {
+          failures.push({
+            url: batch[index],
+            reason:
+              result.reason instanceof Error
+                ? result.reason.message
+                : "Unknown crawl error",
+          });
+          continue;
+        }
+        if (!result.value) continue;
+        const { page, brand: pageBrand } = result.value;
+        brand ??= pageBrand;
         if (
-          next.origin === root.origin &&
-          !queued.has(next.href) &&
-          allowedByRobots(next) &&
-          matchesPath(next, includePaths, excludePaths)
+          page.text.length >= 120 &&
+          !contentHashes.has(page.contentHash)
         ) {
-          queued.add(next.href);
-          queue.push(next.href);
+          contentHashes.add(page.contentHash);
+          pages.push(page);
+        }
+        for (const link of page.links) {
+          if (queued.size >= limit * 8) break;
+          const next = new URL(link);
+          if (
+            next.origin === root.origin &&
+            !queued.has(next.href) &&
+            allowedByRobots(next) &&
+            matchesPath(next, includePaths, excludePaths)
+          ) {
+            queued.add(next.href);
+            queue.push(next.href);
+          }
         }
       }
+      await onProgress?.({
+        discovered: queued.size,
+        processed,
+      });
     }
-    await onProgress?.({
-      discovered: queued.size,
-      processed,
-    });
-  }
 
-  if (!pages.length) {
-    throw new AppError(
-      "NO_CONTENT_FOUND",
-      "No useful public text could be extracted from this website.",
-      422,
-      { failures: failures.slice(0, 10) },
-    );
-  }
+    if (!pages.length) {
+      throw new AppError(
+        "NO_CONTENT_FOUND",
+        "No useful public text could be extracted from this website.",
+        422,
+        { failures: failures.slice(0, 10) },
+      );
+    }
 
-  return {
-    rootUrl: root.href,
-    brand: brand ?? {
-      name: root.hostname.replace(/^www\./, ""),
-      iconUrl: new URL("/favicon.ico", root).href,
-      primaryColor: "#177e51",
-    },
-    pages,
-    failures,
-  };
+    return {
+      rootUrl: root.href,
+      brand: brand ?? {
+        name: root.hostname.replace(/^www\./, ""),
+        iconUrl: new URL("/favicon.ico", root).href,
+        primaryColor: "#177e51",
+      },
+      pages,
+      failures,
+    };
+  } finally {
+    await browserRenderer.close();
+  }
 }

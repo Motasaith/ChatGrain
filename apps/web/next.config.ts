@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "@huggingface/transformers",
     "onnxruntime-node",
+    "playwright-core",
     "pino",
   ],
 };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractBrand, extractPage } from "./extract";
+import { extractBrand, extractPage, isSoftNotFound } from "./extract";
 
 const pageUrl = new URL("https://example.com/docs/start");
 const html = `<!doctype html>
@@ -35,5 +35,14 @@ describe("content extraction", () => {
     expect(brand.name).toBe("Acme Docs");
     expect(brand.primaryColor).toBe("#285f45");
     expect(brand.iconUrl).toBe("https://example.com/favicon.png");
+  });
+
+  it("detects a soft 404 returned with HTTP 200", () => {
+    expect(
+      isSoftNotFound(
+        "<html><head><title>Not Found | Acme</title></head><body>Loading</body></html>",
+      ),
+    ).toBe(true);
+    expect(isSoftNotFound(html)).toBe(false);
   });
 });

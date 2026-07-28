@@ -43,6 +43,10 @@ npm run dev
 Open `http://localhost:3000`. The web process and crawl worker run together in
 development. PostgreSQL is exposed on local port `5434`.
 
+Chrome, Chromium, or Microsoft Edge is used only as a fallback for sites whose
+public text is rendered by JavaScript. Set `BROWSER_EXECUTABLE_PATH` if the
+worker cannot find a browser in a standard operating-system location.
+
 For a first run without downloading a model:
 
 ```powershell

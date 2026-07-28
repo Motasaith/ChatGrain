@@ -1,5 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { CookieJar } from "tough-cookie";
 import { AppError } from "@/lib/http/errors";
 
 function isPrivateIp(address: string) {
@@ -59,9 +60,20 @@ export async function validatePublicUrl(value: string) {
   return url;
 }
 
-export async function safeFetch(
+type SafeFetchInit = RequestInit & {
+  timeoutMs?: number;
+  maxBytes?: number;
+};
+
+export type SafeFetcher = (
   input: string | URL,
-  init: RequestInit & { timeoutMs?: number; maxBytes?: number } = {},
+  init?: SafeFetchInit,
+) => Promise<{ response: Response; finalUrl: URL }>;
+
+async function fetchWithRedirects(
+  input: string | URL,
+  init: SafeFetchInit,
+  cookieJar: CookieJar,
   redirectCount = 0,
 ): Promise<{ response: Response; finalUrl: URL }> {
   if (redirectCount > 5) {
@@ -71,27 +83,45 @@ export async function safeFetch(
   const {
     timeoutMs = 15_000,
     maxBytes = 3_000_000,
+    headers: customHeaders,
     ...fetchInit
   } = init;
+  const headers = new Headers({
+    "user-agent": "DocentBot/0.2 (+self-hosted knowledge crawler)",
+    accept:
+      "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.1",
+  });
+  new Headers(customHeaders).forEach((value, key) => {
+    headers.set(key, value);
+  });
+  const cookieHeader = await cookieJar.getCookieString(url.href);
+  if (cookieHeader) {
+    const existingCookieHeader = headers.get("cookie");
+    headers.set(
+      "cookie",
+      existingCookieHeader
+        ? `${existingCookieHeader}; ${cookieHeader}`
+        : cookieHeader,
+    );
+  }
   const response = await fetch(url, {
     ...fetchInit,
     redirect: "manual",
     signal: AbortSignal.timeout(timeoutMs),
-    headers: {
-      "user-agent": "DocentBot/0.2 (+self-hosted knowledge crawler)",
-      accept:
-        "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.1",
-      ...fetchInit.headers,
-    },
+    headers,
   });
+  for (const setCookie of response.headers.getSetCookie()) {
+    await cookieJar.setCookie(setCookie, url.href, { ignoreError: true });
+  }
   if (
     response.status >= 300 &&
     response.status < 400 &&
     response.headers.has("location")
   ) {
-    return safeFetch(
+    return fetchWithRedirects(
       new URL(response.headers.get("location")!, url),
       init,
+      cookieJar,
       redirectCount + 1,
     );
   }
@@ -135,4 +165,17 @@ export async function safeFetch(
     }),
     finalUrl: url,
   };
+}
+
+export async function safeFetch(
+  input: string | URL,
+  init: SafeFetchInit = {},
+): Promise<{ response: Response; finalUrl: URL }> {
+  return fetchWithRedirects(input, init, new CookieJar());
+}
+
+export function createSafeFetcher(): SafeFetcher {
+  const cookieJar = new CookieJar();
+  return (input, init = {}) =>
+    fetchWithRedirects(input, init, cookieJar);
 }
