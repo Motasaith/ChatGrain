@@ -76,11 +76,10 @@ export function ChatPanel({
     },
   ]);
   const [conversationId, setConversationId] = useState<string>();
-  const [hasInput, setHasInput] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const messagesRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const volatileSessionRef = useRef<string | undefined>(undefined);
   const initializedRef = useRef(false);
   const brandImage = logoUrl || iconUrl;
@@ -124,7 +123,6 @@ export function ChatPanel({
       { id: localId, role: "user", content },
     ]);
     if (inputRef.current) inputRef.current.value = "";
-    setHasInput(false);
     setBusy(true);
     setError("");
     try {
@@ -278,25 +276,17 @@ export function ChatPanel({
         {error && <div className="chat-error">{error}</div>}
       </div>
       <form className="chat-composer" onSubmit={send}>
-        <textarea
+        <input
           aria-label="Message"
+          autoComplete="off"
           disabled={busy}
-          onInput={(event) =>
-            setHasInput(Boolean(event.currentTarget.value.trim()))
-          }
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
           placeholder="Ask a question..."
           ref={inputRef}
-          rows={1}
+          type="text"
         />
         <button
           aria-label="Send"
-          disabled={busy || !hasInput}
+          disabled={busy}
         >
           {busy ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={16} />}
         </button>
