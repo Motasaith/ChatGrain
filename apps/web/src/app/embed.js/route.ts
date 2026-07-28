@@ -71,7 +71,10 @@ export function GET(request: Request) {
   return new Response(source, {
     headers: {
       "content-type": "application/javascript; charset=utf-8",
-      "cache-control": "public, max-age=300",
+      "cache-control":
+        process.env.NODE_ENV === "development"
+          ? "no-store"
+          : "public, max-age=300",
       "access-control-allow-origin": "*",
       "x-content-type-options": "nosniff",
     },
