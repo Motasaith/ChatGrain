@@ -1,14 +1,19 @@
-import { SignIn } from "@clerk/nextjs";
-import Link from "next/link";
-import { Logo } from "@/components/logo";
+import type { Metadata } from "next";
+import { Suspense } from "react";
+import { AuthShell } from "@/components/auth/auth-shell";
+import { CustomSignIn } from "@/components/auth/custom-sign-in";
+
+export const metadata: Metadata = {
+  title: "Sign in",
+  description: "Sign in to your Docent workspace.",
+};
 
 export default function SignInPage() {
   return (
-    <main className="auth-page">
-      <Link href="/" aria-label="Back to Docent">
-        <Logo />
-      </Link>
-      <SignIn />
-    </main>
+    <AuthShell mode="sign-in">
+      <Suspense fallback={<div className="docent-auth-loading">Loading…</div>}>
+        <CustomSignIn />
+      </Suspense>
+    </AuthShell>
   );
 }

@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  Show,
-  SignInButton,
-  SignUpButton,
-  UserButton,
-} from "@clerk/nextjs";
+import { Show, UserButton } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
@@ -38,14 +33,10 @@ export function HomepageNav() {
         </nav>
         <div className="home-nav-actions">
           <Show when="signed-out">
-            <SignInButton mode="modal">
-              <button className="home-nav-signin" type="button">Sign in</button>
-            </SignInButton>
-            <SignUpButton mode="modal">
-              <button className="home-nav-primary" type="button">
-                Build an agent <ArrowRight size={15} />
-              </button>
-            </SignUpButton>
+            <Link href="/sign-in" className="home-nav-signin">Sign in</Link>
+            <Link href="/sign-up" className="home-nav-primary">
+              Build an agent <ArrowRight size={15} />
+            </Link>
           </Show>
           <Show when="signed-in">
             <Link href="/dashboard" className="home-nav-primary">
