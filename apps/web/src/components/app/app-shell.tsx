@@ -14,9 +14,9 @@ import {
   ContactRound,
   Inbox,
   LayoutDashboard,
+  Plus,
   Plug,
   Search,
-  Sparkles,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
 
@@ -103,7 +103,7 @@ export function AppShell({
             <span className="local-status-dot" />
             <b>Local stack</b>
           </div>
-          <small>Postgres · Worker · Local AI</small>
+          <small>Postgres · Worker · Local embeddings</small>
           <Link href="/dashboard/settings">
             Configure <Cog size={12} />
           </Link>
@@ -134,7 +134,7 @@ export function AppShell({
               <Activity size={18} />
             </Link>
             <Link className="header-build-button" href="/dashboard/agents/new">
-              <Sparkles size={15} />
+              <Plus size={15} />
               New agent
             </Link>
           </div>

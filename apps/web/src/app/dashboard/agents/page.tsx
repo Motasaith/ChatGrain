@@ -62,9 +62,9 @@ export default async function AgentsPage() {
             <Link href={`/dashboard/agents/${agent.id}`} key={agent.id}>
               <div className="agent-card-top">
                 <span style={{ background: agent.primaryColor }}>
-                  {agent.logoUrl ? (
+                  {agent.logoUrl || agent.iconUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img alt="" src={agent.logoUrl} />
+                    <img alt="" src={agent.logoUrl || agent.iconUrl || ""} />
                   ) : agent.name[0]}
                 </span>
                 <i className={`status-pill status-${agent.status}`}>

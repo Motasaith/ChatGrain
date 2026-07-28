@@ -8,6 +8,13 @@
       "when": 1785179111150,
       "tag": "0000_big_pyro",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785253088533,
+      "tag": "0001_outstanding_purple_man",
+      "breakpoints": true
     }
   ]
 }

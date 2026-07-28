@@ -37,6 +37,42 @@ describe("content extraction", () => {
     expect(brand.iconUrl).toBe("https://example.com/favicon.png");
   });
 
+  it("captures and sanitizes an inline SVG logo", () => {
+    const brand = extractBrand(
+      `<html><head><title>ToolHive</title></head><body>
+        <header><a aria-label="ToolHive home">
+          <svg aria-label="ToolHive logo" viewBox="0 0 32 32" onclick="alert(1)">
+            <script>alert(1)</script>
+            <rect fill="#4f46e5" width="32" height="32" />
+          </svg>
+        </a></header>
+      </body></html>`,
+      pageUrl,
+    );
+    expect(brand.logoUrl).toMatch(/^data:image\/svg\+xml;base64,/);
+    const decoded = Buffer.from(
+      brand.logoUrl!.split(",")[1],
+      "base64",
+    ).toString("utf8");
+    expect(decoded).toContain("#4f46e5");
+    expect(decoded).not.toContain("<script");
+    expect(decoded).not.toContain("onclick");
+    expect(brand.primaryColor).toBe("#4f46e5");
+  });
+
+  it("prefers a touch icon when a separate logo is unavailable", () => {
+    const brand = extractBrand(
+      `<html><head>
+        <title>Acme</title>
+        <link rel="icon" href="/favicon.ico">
+        <link rel="apple-touch-icon" href="/apple-icon.png">
+      </head></html>`,
+      pageUrl,
+    );
+    expect(brand.logoUrl).toBeUndefined();
+    expect(brand.iconUrl).toBe("https://example.com/apple-icon.png");
+  });
+
   it("detects a soft 404 returned with HTTP 200", () => {
     expect(
       isSoftNotFound(

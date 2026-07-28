@@ -16,12 +16,13 @@ import {
   LoaderCircle,
   MessageSquare,
   Palette,
+  Pin,
   Plus,
   RefreshCw,
   Save,
   Settings2,
   SlidersHorizontal,
-  Sparkles,
+  DatabaseZap,
   Trash2,
 } from "lucide-react";
 import { ChatPanel } from "@/components/chat/chat-panel";
@@ -36,6 +37,7 @@ type Agent = {
   fallbackMessage: string;
   primaryColor: string;
   logoUrl: string | null;
+  iconUrl: string | null;
   widgetPosition: string;
   collectFeedback: boolean;
   showCitations: boolean;
@@ -153,6 +155,8 @@ export function AgentStudio({
         welcomeMessage: agent.welcomeMessage,
         fallbackMessage: agent.fallbackMessage,
         primaryColor: agent.primaryColor,
+        logoUrl: agent.logoUrl,
+        iconUrl: agent.iconUrl,
         widgetPosition: agent.widgetPosition,
         collectFeedback: agent.collectFeedback,
         showCitations: agent.showCitations,
@@ -328,9 +332,9 @@ export function AgentStudio({
       <div className="studio-heading">
         <div className="studio-agent-identity">
           <span style={{ background: agent.primaryColor }}>
-            {agent.logoUrl ? (
+            {agent.logoUrl || agent.iconUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img alt="" src={agent.logoUrl} />
+              <img alt="" src={agent.logoUrl || agent.iconUrl || ""} />
             ) : <Bot size={19} />}
           </span>
           <div>
@@ -421,7 +425,7 @@ export function AgentStudio({
                 <FileText size={13} /> Paste text
               </button>
               <button onClick={() => setPinnedOpen((value) => !value)} type="button">
-                <Sparkles size={13} /> Pin an answer
+                <Pin size={13} /> Pin an answer
               </button>
             </div>
             {textOpen && (
@@ -465,7 +469,7 @@ export function AgentStudio({
                 <span>Pinned answers</span>
                 {pinned.map((item) => (
                   <article key={item.id}>
-                    <Sparkles size={14} />
+                    <Pin size={14} />
                     <div><b>{item.title}</b><small>{item.answer}</small></div>
                     <em>{item.useCount} uses</em>
                     <button aria-label="Delete pinned answer" onClick={() => removePinned(item.id)} type="button"><Trash2 size={13} /></button>
@@ -475,7 +479,7 @@ export function AgentStudio({
             )}
           </section>
           <aside className="knowledge-summary">
-            <span><Sparkles size={17} /></span>
+            <span><DatabaseZap size={17} /></span>
             <h3>How retrieval works</h3>
             <p>
               Every page is converted into overlapping passages and indexed
@@ -510,6 +514,7 @@ export function AgentStudio({
             agentId={agent.id}
             collectFeedback={agent.collectFeedback}
             embedToken={previewToken}
+            iconUrl={agent.iconUrl}
             logoUrl={agent.logoUrl}
             name={agent.name}
             primaryColor={agent.primaryColor}
@@ -541,11 +546,11 @@ export function AgentStudio({
               <span>Answer engine</span>
               <select value={agent.modelProvider} onChange={(event) => patch("modelProvider", event.target.value)}>
                 <option value="extractive">Extractive (zero setup)</option>
-                <option value="ollama">Ollama (local generative AI)</option>
+                <option value="ollama">Ollama Cloud (grounded generation)</option>
               </select>
             </label>
             {agent.modelProvider === "ollama" && (
-              <label className="field"><span>Ollama model</span><input placeholder="llama3.2:3b" value={agent.modelName || ""} onChange={(event) => patch("modelName", event.target.value || null)} /></label>
+              <label className="field"><span>Ollama model</span><input placeholder="gemma4:31b" value={agent.modelName || ""} onChange={(event) => patch("modelName", event.target.value || null)} /></label>
             )}
           </aside>
         </div>
@@ -561,11 +566,33 @@ export function AgentStudio({
               <span>Primary color</span>
               <div className="color-field"><input type="color" value={agent.primaryColor} onChange={(event) => patch("primaryColor", event.target.value)} /><input value={agent.primaryColor} onChange={(event) => patch("primaryColor", event.target.value)} /></div>
             </label>
+            <div className="two-fields">
+              <label className="field">
+                <span>Logo URL</span>
+                <input
+                  onChange={(event) => patch("logoUrl", event.target.value || null)}
+                  placeholder={agent.logoUrl?.startsWith("data:") ? "Inline SVG detected from the website" : "https://example.com/logo.svg"}
+                  type="url"
+                  value={agent.logoUrl?.startsWith("data:") ? "" : agent.logoUrl || ""}
+                />
+                <small>Detected automatically. Override it with a public image URL.</small>
+              </label>
+              <label className="field">
+                <span>Icon URL</span>
+                <input
+                  onChange={(event) => patch("iconUrl", event.target.value || null)}
+                  placeholder="https://example.com/icon.png"
+                  type="url"
+                  value={agent.iconUrl || ""}
+                />
+                <small>Used for the launcher and as a logo fallback.</small>
+              </label>
+            </div>
             <label className="field"><span>Widget position</span><select value={agent.widgetPosition} onChange={(event) => patch("widgetPosition", event.target.value)}><option value="right">Bottom right</option><option value="left">Bottom left</option></select></label>
           </section>
           <div className="appearance-preview">
             <span>Preview</span>
-            <ChatPanel agentId={agent.id} collectFeedback={agent.collectFeedback} embedToken={previewToken} logoUrl={agent.logoUrl} name={agent.name} primaryColor={agent.primaryColor} welcomeMessage={agent.welcomeMessage} />
+            <ChatPanel agentId={agent.id} collectFeedback={agent.collectFeedback} embedToken={previewToken} iconUrl={agent.iconUrl} logoUrl={agent.logoUrl} name={agent.name} primaryColor={agent.primaryColor} welcomeMessage={agent.welcomeMessage} />
           </div>
         </div>
       )}

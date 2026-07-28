@@ -26,6 +26,7 @@ export default async function WidgetPage({
       welcomeMessage: agents.welcomeMessage,
       primaryColor: agents.primaryColor,
       logoUrl: agents.logoUrl,
+      iconUrl: agents.iconUrl,
       collectFeedback: agents.collectFeedback,
     })
     .from(agents)
@@ -40,6 +41,7 @@ export default async function WidgetPage({
         embedded
         embedToken={query.token}
         logoUrl={agent.logoUrl}
+        iconUrl={agent.iconUrl}
         name={agent.name}
         primaryColor={agent.primaryColor}
         welcomeMessage={agent.welcomeMessage}

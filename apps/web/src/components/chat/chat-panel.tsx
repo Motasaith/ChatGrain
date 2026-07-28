@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowUp,
-  Bot,
   ExternalLink,
   LoaderCircle,
+  MessageCircle,
   RotateCcw,
   ShieldCheck,
-  Sparkles,
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
@@ -30,12 +29,30 @@ function sessionKey(agentId: string) {
   return `docent-session-${agentId}`;
 }
 
+function readableTextColor(hex: string) {
+  const channels = hex
+    .replace("#", "")
+    .match(/.{2}/g)
+    ?.map((value) => Number.parseInt(value, 16));
+  if (!channels || channels.length !== 3) return "#ffffff";
+  const [red, green, blue] = channels.map((channel) => {
+    const value = channel / 255;
+    return value <= 0.03928
+      ? value / 12.92
+      : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue > 0.48
+    ? "#15251d"
+    : "#ffffff";
+}
+
 export function ChatPanel({
   agentId,
   welcomeMessage,
   name,
   primaryColor,
   logoUrl,
+  iconUrl,
   embedded = false,
   collectFeedback = true,
   embedToken,
@@ -45,6 +62,7 @@ export function ChatPanel({
   name: string;
   primaryColor: string;
   logoUrl?: string | null;
+  iconUrl?: string | null;
   embedded?: boolean;
   collectFeedback?: boolean;
   embedToken?: string;
@@ -58,17 +76,30 @@ export function ChatPanel({
     },
   ]);
   const [conversationId, setConversationId] = useState<string>();
-  const [input, setInput] = useState("");
+  const [hasInput, setHasInput] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const messagesRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const volatileSessionRef = useRef<string | undefined>(undefined);
   const initializedRef = useRef(false);
+  const brandImage = logoUrl || iconUrl;
+  const contrastColor = readableTextColor(primaryColor);
+  const panelStyle = {
+    "--chat-accent": primaryColor,
+    "--chat-accent-contrast": contrastColor,
+  } as CSSProperties;
 
   function getSessionId() {
-    const existing = window.sessionStorage.getItem(sessionKey(agentId));
-    const value = existing || crypto.randomUUID();
-    window.sessionStorage.setItem(sessionKey(agentId), value);
-    return value;
+    try {
+      const existing = window.sessionStorage.getItem(sessionKey(agentId));
+      const value = existing || crypto.randomUUID();
+      window.sessionStorage.setItem(sessionKey(agentId), value);
+      return value;
+    } catch {
+      volatileSessionRef.current ??= crypto.randomUUID();
+      return volatileSessionRef.current;
+    }
   }
 
   useEffect(() => {
@@ -84,7 +115,7 @@ export function ChatPanel({
 
   async function send(event: React.FormEvent) {
     event.preventDefault();
-    const content = input.trim();
+    const content = inputRef.current?.value.trim() ?? "";
     if (!content || busy) return;
     const sessionId = getSessionId();
     const localId = crypto.randomUUID();
@@ -92,7 +123,8 @@ export function ChatPanel({
       ...current,
       { id: localId, role: "user", content },
     ]);
-    setInput("");
+    if (inputRef.current) inputRef.current.value = "";
+    setHasInput(false);
     setBusy(true);
     setError("");
     try {
@@ -151,20 +183,27 @@ export function ChatPanel({
 
   function reset() {
     const nextSession = crypto.randomUUID();
-    window.sessionStorage.setItem(sessionKey(agentId), nextSession);
+    try {
+      window.sessionStorage.setItem(sessionKey(agentId), nextSession);
+    } catch {
+      volatileSessionRef.current = nextSession;
+    }
     setConversationId(undefined);
     setMessages([{ id: "welcome", role: "assistant", content: welcomeMessage }]);
     setError("");
   }
 
   return (
-    <div className={`chat-panel ${embedded ? "chat-panel-embedded" : ""}`}>
-      <header style={{ background: primaryColor }}>
+    <div
+      className={`chat-panel ${embedded ? "chat-panel-embedded" : ""}`}
+      style={panelStyle}
+    >
+      <header>
         <span className="chat-brand-avatar">
-          {logoUrl ? (
+          {brandImage ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img alt="" src={logoUrl} />
-          ) : <Bot size={18} />}
+            <img alt="" src={brandImage} />
+          ) : <MessageCircle size={18} />}
         </span>
         <span><b>{name}</b><small><i /> Online</small></span>
         <button aria-label="Reset conversation" onClick={reset} type="button">
@@ -176,8 +215,13 @@ export function ChatPanel({
         {messages.map((message) => (
           <div className={`chat-line chat-line-${message.role}`} key={message.id}>
             {message.role === "assistant" && (
-              <span className="chat-small-avatar" style={{ color: primaryColor }}>
-                <Sparkles size={12} />
+              <span className="chat-small-avatar">
+                {brandImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img alt="" src={brandImage} />
+                ) : (
+                  <MessageCircle size={12} />
+                )}
               </span>
             )}
             <div>
@@ -218,8 +262,13 @@ export function ChatPanel({
         ))}
         {busy && (
           <div className="chat-line chat-line-assistant">
-            <span className="chat-small-avatar" style={{ color: primaryColor }}>
-              <Sparkles size={12} />
+            <span className="chat-small-avatar">
+              {brandImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img alt="" src={brandImage} />
+              ) : (
+                <MessageCircle size={12} />
+              )}
             </span>
             <div className="chat-bubble chat-thinking">
               <i /><i /><i />
@@ -232,7 +281,9 @@ export function ChatPanel({
         <textarea
           aria-label="Message"
           disabled={busy}
-          onChange={(event) => setInput(event.target.value)}
+          onInput={(event) =>
+            setHasInput(Boolean(event.currentTarget.value.trim()))
+          }
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
@@ -240,13 +291,12 @@ export function ChatPanel({
             }
           }}
           placeholder="Ask a question..."
+          ref={inputRef}
           rows={1}
-          value={input}
         />
         <button
           aria-label="Send"
-          disabled={busy || !input.trim()}
-          style={{ background: primaryColor }}
+          disabled={busy || !hasInput}
         >
           {busy ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={16} />}
         </button>

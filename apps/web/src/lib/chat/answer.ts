@@ -2,6 +2,10 @@ import { eq, sql } from "drizzle-orm";
 import type { Agent } from "@/lib/db/schema";
 import { db } from "@/lib/db/client";
 import { pinnedAnswers } from "@/lib/db/schema";
+import {
+  defaultLlmModel,
+  generateGroundedAnswer,
+} from "@/lib/llm/client";
 import { logger } from "@/lib/observability/logger";
 import { hybridRetrieve, type RetrievalHit } from "@/lib/rag/retrieve";
 
@@ -103,56 +107,26 @@ function extractiveAnswer(question: string, hits: RetrievalHit[]) {
     .slice(0, 1_200);
 }
 
-async function ollamaAnswer(
+async function llmAnswer(
   agent: Agent,
   question: string,
   hits: RetrievalHit[],
 ) {
-  const model = agent.modelName || process.env.OLLAMA_MODEL;
-  if (!model) return null;
-  const endpoint = (process.env.OLLAMA_URL ?? "http://127.0.0.1:11434").replace(
-    /\/$/,
-    "",
-  );
+  const model = agent.modelName || defaultLlmModel();
   const context = hits
     .map(
       (hit, index) =>
         `[${index + 1}] ${hit.title}${hit.url ? ` (${hit.url})` : ""}\n${hit.content}`,
     )
     .join("\n\n");
-  const prompt = `${agent.systemPrompt}
-
-Rules:
-- Use only the supplied context.
-- If context does not support an answer, return exactly: NOT_ENOUGH_EVIDENCE
-- Never invent a policy, number, link, action result, or customer detail.
-- Cite supporting passages using [1], [2], etc.
-- Keep the answer concise and direct.
-
-Context:
-${context}
-
-Customer question: ${question}`;
   try {
-    const response = await fetch(`${endpoint}/api/generate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model,
-        prompt,
-        stream: false,
-        options: {
-          temperature: agent.temperature,
-          num_predict: 320,
-        },
-      }),
-      signal: AbortSignal.timeout(45_000),
+    return await generateGroundedAnswer({
+      model,
+      systemPrompt: agent.systemPrompt,
+      context,
+      question,
+      temperature: agent.temperature,
     });
-    if (!response.ok) return null;
-    const data = (await response.json()) as { response?: string };
-    const answer = data.response?.trim();
-    if (!answer || answer.includes("NOT_ENOUGH_EVIDENCE")) return null;
-    return answer;
   } catch (error) {
     logger.warn({ error, model }, "Ollama generation failed");
     return null;
@@ -203,7 +177,7 @@ export async function answerQuestion(agent: Agent, question: string) {
 
   const generated =
     agent.modelProvider === "ollama"
-      ? await ollamaAnswer(agent, question, hits)
+      ? await llmAnswer(agent, question, hits)
       : null;
   const answer = generated || extractiveAnswer(question, hits);
   if (!answer) {

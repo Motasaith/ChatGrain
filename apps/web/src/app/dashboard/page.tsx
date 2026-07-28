@@ -7,7 +7,6 @@ import {
   MessageCircleMore,
   Plus,
   ShieldCheck,
-  Sparkles,
   ThumbsUp,
   UsersRound,
 } from "lucide-react";
@@ -172,7 +171,7 @@ export default async function DashboardPage() {
         <section className="first-agent-card">
           <div className="first-agent-copy">
             <span className="first-agent-icon">
-              <Sparkles size={20} />
+              <Bot size={20} />
             </span>
             <h2>Build your first support agent</h2>
             <p>

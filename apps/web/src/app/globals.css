@@ -2629,7 +2629,8 @@ button {
   align-items: center;
   gap: 10px;
   padding: 12px 15px;
-  color: #fff;
+  color: var(--chat-accent-contrast, #fff);
+  background: var(--chat-accent, var(--green));
 }
 
 .chat-brand-avatar {
@@ -2660,7 +2661,11 @@ button {
   display: flex;
   align-items: center;
   gap: 5px;
-  color: rgb(255 255 255 / 72%);
+  color: color-mix(
+    in srgb,
+    var(--chat-accent-contrast, #fff) 74%,
+    transparent
+  );
   font-size: 7px;
 }
 
@@ -2679,8 +2684,12 @@ button {
   place-items: center;
   border-radius: 8px;
   cursor: pointer;
-  color: #fff;
-  background: rgb(255 255 255 / 10%);
+  color: var(--chat-accent-contrast, #fff);
+  background: color-mix(
+    in srgb,
+    var(--chat-accent-contrast, #fff) 12%,
+    transparent
+  );
 }
 
 .chat-messages {
@@ -2723,7 +2732,14 @@ button {
   place-items: center;
   border: 1px solid #dce7df;
   border-radius: 8px;
+  color: var(--chat-accent, var(--green));
   background: #fff;
+}
+
+.chat-small-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .chat-bubble {
@@ -2739,10 +2755,10 @@ button {
 }
 
 .chat-line-user .chat-bubble {
-  border-color: #1d7250;
+  border-color: var(--chat-accent, var(--green));
   border-radius: 12px 4px 12px 12px;
-  color: #fff;
-  background: var(--green);
+  color: var(--chat-accent-contrast, #fff);
+  background: var(--chat-accent, var(--green));
 }
 
 .chat-citations {
@@ -2867,10 +2883,16 @@ button {
   border-radius: 10px;
   outline: 0;
   padding: 11px;
+  color: #172b23;
+  background: #fff;
+  caret-color: var(--chat-accent, var(--green));
   font-size: 9px;
 }
 
-.chat-composer textarea:focus { border-color: #77ad90; }
+.chat-composer textarea:focus {
+  border-color: var(--chat-accent, var(--green));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--chat-accent, var(--green)) 14%, transparent);
+}
 
 .chat-composer button {
   display: grid;
@@ -2879,7 +2901,8 @@ button {
   place-items: center;
   border-radius: 10px;
   cursor: pointer;
-  color: #fff;
+  color: var(--chat-accent-contrast, #fff);
+  background: var(--chat-accent, var(--green));
 }
 
 .chat-composer button:disabled {

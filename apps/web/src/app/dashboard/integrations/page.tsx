@@ -3,7 +3,7 @@ import { Braces, CheckCircle2, Database, HardDrive, Plug, Radio, TriangleAlert }
 const integrations = [
   { name: "PostgreSQL + pgvector", detail: "Knowledge, conversations, jobs, vectors, and analytics.", status: "connected", icon: Database },
   { name: "Transformers.js", detail: "Local multilingual-ready embedding runtime with a deterministic fallback.", status: "connected", icon: HardDrive },
-  { name: "Ollama", detail: "Optional local generative answer engine. Extractive answers work without it.", status: process.env.OLLAMA_MODEL ? "configured" : "optional", icon: Braces },
+  { name: "Ollama Cloud", detail: "Default grounded answer engine through Ollama's OpenAI-compatible cloud endpoint.", status: process.env.LLM_API_KEY ? "configured" : "needs key", icon: Braces },
   { name: "Sentry", detail: "Optional production error tracking adapter; SDK installation is intentionally deferred.", status: "optional", icon: TriangleAlert },
   { name: "Clerk", detail: "Optional hosted authentication adapter for production teams.", status: "optional", icon: Radio },
 ] as const;
@@ -11,7 +11,7 @@ const integrations = [
 export default function IntegrationsPage() {
   return (
     <>
-      <div className="page-heading"><div><span className="page-eyebrow">Integrations</span><h1>Runtime and services</h1><p>Start fully local, then connect managed services only where they help.</p></div></div>
+      <div className="page-heading"><div><span className="page-eyebrow">Integrations</span><h1>Runtime and services</h1><p>Keep retrieval local and connect cloud generation where it improves the answer.</p></div></div>
       <div className="integration-grid">
         {integrations.map((integration) => (
           <article key={integration.name}>

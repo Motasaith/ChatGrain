@@ -63,7 +63,7 @@ const selfHostedFeatures = [
   "Unlimited agents in your own deployment",
   "Website, text, and file sources",
   "Embeddable branded widget",
-  "Local embeddings and optional Ollama",
+  "Local embeddings with Ollama Cloud generation",
   "Conversations, leads, feedback, and analytics",
   "PostgreSQL and pgvector storage",
 ];

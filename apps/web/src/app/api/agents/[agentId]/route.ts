@@ -15,6 +15,7 @@ const updateAgentSchema = z
     fallbackMessage: z.string().trim().min(1).max(1_000),
     primaryColor: z.string().regex(/^#[0-9a-f]{6}$/i),
     logoUrl: z.url().nullable(),
+    iconUrl: z.url().nullable(),
     widgetPosition: z.enum(["left", "right"]),
     collectFeedback: z.boolean(),
     showCitations: z.boolean(),

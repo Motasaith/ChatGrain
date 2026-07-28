@@ -20,7 +20,8 @@ the Markdown prototype.
 - Local Transformers.js embeddings with a deterministic zero-setup fallback
 - PostgreSQL full-text search plus pgvector HNSW semantic search
 - Pinned-answer support in the data model and grounded confidence fallbacks
-- Optional local Ollama generation constrained to retrieved context
+- Ollama Cloud generation constrained to retrieved context, with extractive
+  fallback when cloud generation is unavailable
 - Durable jobs, automatic recrawls, worker recovery/heartbeat, conversations,
   messages, feedback, leads, and operator replies
 - Hosted iframe widget and a one-line asynchronous `embed.js`
@@ -57,20 +58,24 @@ npm run dev
 The hash mode is fast and deterministic, but the default local transformer has
 better semantic retrieval quality.
 
-## Local generative answers
+## Ollama Cloud answers
 
-Extractive answers require no LLM. For more natural responses, start Ollama and
-pull a small model:
+New agents use Ollama Cloud by default. Add an API key only to
+`apps/web/.env.local`:
 
 ```powershell
-docker compose --profile local-ai up -d
-docker exec docent-ollama-1 ollama pull qwen3:4b
-$env:OLLAMA_MODEL = "qwen3:4b"
+LLM_BASE_URL=https://ollama.com/v1
+LLM_API_KEY=your_rotated_key
+LLM_MODEL=gemma4:31b
+VISION_LLM_MODEL=gemma4:31b
 npm run dev
 ```
 
-Then select **Ollama** in an agent's Behavior tab. If Ollama is unavailable,
-Docent fails closed to its extractive grounded engine.
+The client uses Ollama's OpenAI-compatible chat-completions endpoint. If the
+cloud request is unavailable or the evidence is too weak, Docent fails closed
+to its extractive grounded engine. A local Ollama server remains supported by
+setting `LLM_BASE_URL=http://127.0.0.1:11434/v1`; local requests do not require
+an API key.
 
 ## Widget
 
@@ -85,7 +90,8 @@ Copy the snippet from an agent's Deploy tab:
 ```
 
 The loader uses Shadow DOM and an iframe so host-page CSS cannot corrupt the
-widget. Agent-specific color and position are loaded automatically.
+widget. The detected logo or icon, primary color, readable contrast, and
+position are loaded automatically and remain editable in the Appearance tab.
 
 ## Architecture
 

@@ -171,7 +171,10 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
           record.agent.primaryColor === "#177e51"
             ? result.brand.primaryColor
             : record.agent.primaryColor,
-        logoUrl: record.agent.logoUrl ?? result.brand.logoUrl,
+        logoUrl:
+          record.agent.logoUrl ??
+          result.brand.logoUrl ??
+          result.brand.iconUrl,
         iconUrl: record.agent.iconUrl ?? result.brand.iconUrl,
         updatedAt: new Date(),
       })

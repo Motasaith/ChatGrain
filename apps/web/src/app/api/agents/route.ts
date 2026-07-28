@@ -5,6 +5,7 @@ import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources } from "@/lib/db/schema";
 import { errorResponse, readJson } from "@/lib/http/errors";
+import { defaultLlmModel } from "@/lib/llm/client";
 import { validatePublicUrl } from "@/lib/security/public-url";
 
 const createAgentSchema = z.object({
@@ -47,6 +48,8 @@ export async function POST(request: Request) {
           status: websiteUrl ? "training" : "draft",
           systemPrompt:
             "Answer as a helpful customer support agent. Use only verified knowledge sources and be concise.",
+          modelProvider: "ollama",
+          modelName: defaultLlmModel(),
         })
         .returning();
       if (!websiteUrl) return { agent, source: null, job: null };

@@ -8,8 +8,8 @@ import {
   Check,
   Globe2,
   LoaderCircle,
+  ScanSearch,
   ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -128,7 +128,7 @@ export function NewAgentForm() {
       <aside className="create-agent-aside">
         <div className="crawl-preview">
           <div className="crawl-preview-top">
-            <span><Sparkles size={14} /> Automatic setup</span>
+            <span><ScanSearch size={14} /> Automatic setup</span>
             <i>Live</i>
           </div>
           {[
