@@ -81,11 +81,16 @@ export const users = pgTable(
     email: text("email").notNull(),
     name: text("name").notNull(),
     avatarUrl: text("avatar_url"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    retentionExempt: boolean("retention_exempt").default(false).notNull(),
     ...timestamps,
   },
   (table) => [
     uniqueIndex("users_email_unique").on(table.email),
     uniqueIndex("users_external_id_unique").on(table.externalId),
+    index("users_last_seen_idx").on(table.lastSeenAt),
   ],
 );
 
@@ -454,6 +459,56 @@ export const events = pgTable(
       table.createdAt,
     ),
     index("events_agent_created_idx").on(table.agentId, table.createdAt),
+  ],
+);
+
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, {
+      onDelete: "cascade",
+    }),
+    actorUserId: uuid("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    actorEmail: text("actor_email"),
+    action: text("action").notNull(),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    message: text("message").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+    ipAddress: text("ip_address"),
+    requestId: text("request_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("audit_logs_created_idx").on(table.createdAt),
+    index("audit_logs_workspace_created_idx").on(
+      table.workspaceId,
+      table.createdAt,
+    ),
+    index("audit_logs_actor_idx").on(table.actorUserId),
+  ],
+);
+
+export const systemLogs = pgTable(
+  "system_logs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    level: text("level").default("info").notNull(),
+    service: text("service").default("docent-web").notNull(),
+    message: text("message").notNull(),
+    context: jsonb("context").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("system_logs_created_idx").on(table.createdAt),
+    index("system_logs_level_created_idx").on(table.level, table.createdAt),
   ],
 );
 

@@ -9,6 +9,7 @@ import {
   sources,
 } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import { recordSystemLog } from "@/lib/observability/system-log";
 import { chunkText } from "@/lib/rag/chunk";
 import { embedTexts } from "@/lib/rag/embeddings";
 
@@ -205,4 +206,12 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     },
     "Crawl job completed",
   );
+  await recordSystemLog("info", "Crawl job completed", {
+    jobId,
+    sourceId,
+    agentId: record.agent.id,
+    pages: result.pages.length,
+    chunks: indexedChunks,
+    failures: result.failures.length,
+  });
 }

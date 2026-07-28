@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 
@@ -12,6 +13,7 @@ export default function DashboardError({
 }) {
   useEffect(() => {
     console.error("Dashboard render failed", error);
+    Sentry.captureException(error);
   }, [error]);
   return (
     <div className="route-error">

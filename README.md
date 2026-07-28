@@ -25,8 +25,11 @@ the Markdown prototype.
 - Durable jobs, automatic recrawls, worker recovery/heartbeat, conversations,
   messages, feedback, leads, and operator replies
 - Hosted iframe widget and a one-line asynchronous `embed.js`
-- Structured logs, request IDs, validation, rate limits, health checks, loading
-  states, 404s, and route-level error recovery
+- Clerk authentication, isolated per-user workspaces, an administrator
+  allowlist, audit logs, operational logs, database storage reporting, and
+  inactive-account retention
+- Sentry error capture, request IDs, validation, rate limits, health checks,
+  loading states, 404s, and route-level error recovery
 
 ## Quickstart
 
@@ -36,6 +39,10 @@ you use the local embedding model.
 ```powershell
 Copy-Item .env.example apps/web/.env.local
 npm install
+Push-Location apps/web
+clerk auth login
+clerk init --app app_3H8quwjQyIaOh6fqiJJEobqCSZP
+Pop-Location
 npm run services:up
 npm run db:migrate
 npm run dev
@@ -120,13 +127,116 @@ confidence threshold, strict fallback responses, low-temperature local
 generation, and citations. High-stakes deployments should add a domain-specific
 evaluation set and human escalation policy.
 
-## Authentication and hosted adapters
+## Authentication and administrators
 
-The repository intentionally ships with a local single-owner identity adapter
-so it works immediately. Do not expose that mode to the public internet.
-`src/lib/auth/session.ts` is the adapter boundary for adding Clerk later.
-Environment placeholders for Clerk and Sentry are included, but those hosted
-SDKs are not installed or presented as configured.
+Clerk is the production authentication provider. `clerk init` writes
+development keys to the ignored `apps/web/.env.local`; production keys must be
+configured on the VPS after the production domain is activated in Clerk.
+
+Administrators are controlled by a server-only, comma-separated allowlist:
+
+```dotenv
+AUTH_PROVIDER=clerk
+ADMIN_EMAILS=abdulraufazhardev@gmail.com,binacodex@gmail.com
+```
+
+Administrators receive a protected **Administration** screen with user and
+workspace counts, worker heartbeat, queue health, PostgreSQL table sizes,
+recent jobs, audit events, operational logs, retention controls, and optional
+Sentry issues. Every normal Clerk user gets a separate workspace. Setting
+`AUTH_PROVIDER=dev` remains available for a private offline installation, but
+must never be exposed to the internet.
+
+## Retention and abandoned accounts
+
+The independent worker runs account retention once per day. A non-admin user
+whose authenticated Docent activity is older than the configured window has
+their Docent user record and sole-owner workspace deleted. Cascading foreign
+keys remove that workspace's agents, sources, documents, embeddings, chats,
+and leads.
+
+```dotenv
+INACTIVE_USER_RETENTION_DAYS=30
+RETENTION_SCAN_INTERVAL_HOURS=24
+RETENTION_DELETE_CLERK_USERS=false
+SYSTEM_LOG_RETENTION_DAYS=30
+AUDIT_LOG_RETENTION_DAYS=180
+```
+
+Use **Preview retention** in the administrator dashboard before the first
+cleanup. Clerk identity deletion is disabled by default because it is
+irreversible. Set `RETENTION_DELETE_CLERK_USERS=true` only when the product
+policy and user-facing notice explicitly promise complete identity deletion.
+The two administrator emails are always retention-exempt.
+Operational logs are kept for 30 days and audit events for 180 days by
+default, preventing monitoring data from growing without a bound.
+
+## Sentry
+
+The Next.js browser, server, edge runtime, route errors, React error boundaries,
+and standalone worker are instrumented. The DSN sends errors to Sentry:
+
+```dotenv
+SENTRY_DSN=https://your-public-dsn
+NEXT_PUBLIC_SENTRY_DSN=https://your-public-dsn
+SENTRY_ORG=bina-codes
+SENTRY_PROJECT=javascript-nextjs
+SENTRY_API_BASE_URL=https://de.sentry.io
+```
+
+The DSN cannot read issues. To display recent Sentry issues in Docent's
+administrator dashboard, create a server-side Sentry token with `event:read`
+scope and set `SENTRY_AUTH_TOKEN`. Never expose that token with a
+`NEXT_PUBLIC_` prefix.
+
+## PostgreSQL and Docker disk usage
+
+The Administration screen uses PostgreSQL's own size functions and shows the
+database plus each table's data and indexes. From the VPS shell, the equivalent
+database query is:
+
+```powershell
+docker compose exec postgres psql -U docent -d docent -c "SELECT pg_size_pretty(pg_database_size(current_database()));"
+```
+
+Docker's complete image, container, and volume usage is:
+
+```powershell
+docker system df -v
+docker volume inspect docent_docent_postgres
+```
+
+The Docker volume will be larger than `pg_database_size` because it includes
+PostgreSQL's write-ahead log and internal files. Do not delete or prune the
+database volume. Back it up before upgrades.
+
+## VPS deployment
+
+A single Linux VPS can run this repository without splitting services across
+Vercel and another host. Use at least Node.js 22, Docker with Compose, Chrome or
+Chromium, a TLS reverse proxy, and enough memory for Chromium plus the local
+embedding model.
+
+```bash
+git clone https://github.com/Motasaith/docent.git
+cd docent
+cp .env.example apps/web/.env.local
+# Edit apps/web/.env.local with production URLs and secrets.
+npm ci
+docker compose up -d postgres
+npm run db:migrate
+npm run build
+npm install -g pm2
+pm2 start npm --name docent-web -- run start
+pm2 start npm --name docent-worker -- run worker -w @docent/web
+pm2 save
+```
+
+Configure Caddy or Nginx to terminate HTTPS and proxy the public domain to
+`127.0.0.1:3000`. Configure that same HTTPS domain in Clerk, set
+`NEXT_PUBLIC_APP_URL`, and ensure the reverse proxy forwards
+`X-Forwarded-Host` and `X-Forwarded-Proto`. Keep PostgreSQL port `5434` blocked
+from the public internet; only the application on the VPS needs it.
 
 ## Commands
 
@@ -146,11 +256,12 @@ npm run services:down
 
 ## Production checklist
 
-- Replace the local identity adapter with Clerk or your own session provider.
+- Activate Clerk's production instance and configure the public domain.
 - Set a long random widget/API signing secret and terminate TLS at a proxy.
 - Use durable PostgreSQL storage with backups and encryption.
 - Run the worker as an independent supervised process.
-- Configure Sentry or another error collector and centralized log transport.
+- Configure Sentry source-map upload and a server-only issue-read token if the
+  administrator dashboard should display Sentry issues.
 - Set widget allowed domains, retention rules, and per-workspace quotas.
 - Review `npm audit` advisories against your deployment threat model. As of
   this lockfile, current upstream Next.js and Transformers.js transitives report

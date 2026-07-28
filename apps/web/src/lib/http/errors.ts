@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { logger } from "@/lib/observability/logger";
@@ -44,6 +45,9 @@ export function errorResponse(error: unknown, requestId?: string) {
   }
 
   logger.error({ error, requestId }, "Unhandled request error");
+  Sentry.captureException(error, {
+    tags: { requestId: requestId ?? "unknown" },
+  });
   return NextResponse.json(
     {
       error: {

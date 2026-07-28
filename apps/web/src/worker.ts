@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, lt, lte, sql } from "drizzle-orm";
+import { cleanupInactiveUsers } from "@/lib/admin/retention";
 import { processCrawlJob } from "@/lib/crawl/process-job";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources, systemState } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import { recordSystemLog } from "@/lib/observability/system-log";
+import { captureWorkerException } from "@/lib/observability/worker-sentry";
 
 const workerId = `worker_${randomUUID().slice(0, 8)}`;
 const pollInterval = Number(process.env.WORKER_POLL_MS ?? 1_200);
 let stopping = false;
 let lastRefreshScan = 0;
+let lastRetentionScan = 0;
 
 async function heartbeat() {
   await db
@@ -55,6 +59,17 @@ async function scheduleRefreshes() {
       await db.insert(crawlJobs).values({ sourceId: source.id });
     }
   }
+}
+
+async function runRetentionCleanup() {
+  const intervalHours = Math.max(
+    1,
+    Number(process.env.RETENTION_SCAN_INTERVAL_HOURS ?? 24),
+  );
+  const intervalMs = intervalHours * 60 * 60 * 1000;
+  if (Date.now() - lastRetentionScan < intervalMs) return;
+  lastRetentionScan = Date.now();
+  await cleanupInactiveUsers();
 }
 
 async function recoverStaleJobs() {
@@ -163,15 +178,33 @@ async function failJob(
     { error, jobId: job.id, retry, attempt: job.attempt },
     "Crawl job failed",
   );
+  captureWorkerException(error, {
+    jobId: job.id,
+    sourceId: job.sourceId,
+    retry,
+    attempt: job.attempt,
+  });
+  await recordSystemLog("error", "Crawl job failed", {
+    jobId: job.id,
+    sourceId: job.sourceId,
+    retry,
+    attempt: job.attempt,
+    error: message,
+  });
 }
 
 async function run() {
   await recoverStaleJobs();
   logger.info({ workerId, pollInterval }, "Docent worker started");
+  await recordSystemLog("info", "Docent worker started", {
+    workerId,
+    pollInterval,
+  });
   while (!stopping) {
     try {
       await heartbeat();
       await scheduleRefreshes();
+      await runRetentionCleanup();
       const job = await claimJob();
       if (!job) {
         await new Promise((resolve) => setTimeout(resolve, pollInterval));
@@ -184,10 +217,16 @@ async function run() {
       }
     } catch (error) {
       logger.error({ error }, "Worker poll failed");
+      captureWorkerException(error, { workerId });
+      await recordSystemLog("error", "Worker poll failed", {
+        workerId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
       await new Promise((resolve) => setTimeout(resolve, 3_000));
     }
   }
   logger.info({ workerId }, "Docent worker stopped");
+  await recordSystemLog("info", "Docent worker stopped", { workerId });
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -198,5 +237,6 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 
 run().catch((error) => {
   logger.fatal({ error }, "Worker crashed");
+  captureWorkerException(error, { workerId });
   process.exitCode = 1;
 });

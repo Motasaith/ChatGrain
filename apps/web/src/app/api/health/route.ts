@@ -37,7 +37,11 @@ export async function GET() {
           process.env.EMBEDDING_PROVIDER === "hash"
             ? "local-hash"
             : "local-transformer",
-        generation: process.env.OLLAMA_MODEL ? "ollama" : "extractive",
+        generation: process.env.LLM_API_KEY
+          ? "ollama-cloud"
+          : process.env.LLM_BASE_URL
+            ? "ollama-compatible"
+            : "extractive",
       },
       latencyMs: Math.round(performance.now() - started),
       timestamp: new Date().toISOString(),

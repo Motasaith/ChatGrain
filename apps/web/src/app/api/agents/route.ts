@@ -6,6 +6,7 @@ import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources } from "@/lib/db/schema";
 import { errorResponse, readJson } from "@/lib/http/errors";
 import { defaultLlmModel } from "@/lib/llm/client";
+import { recordAudit } from "@/lib/observability/audit";
 import { validatePublicUrl } from "@/lib/security/public-url";
 
 const createAgentSchema = z.object({
@@ -72,6 +73,17 @@ export async function POST(request: Request) {
         .values({ sourceId: source.id })
         .returning();
       return { agent, source, job };
+    });
+    await recordAudit({
+      workspaceId: context.workspaceId,
+      actorUserId: context.userId,
+      actorEmail: context.email,
+      action: "agent.created",
+      targetType: "agent",
+      targetId: result.agent.id,
+      message: `Created agent "${result.agent.name}".`,
+      metadata: { websiteUrl: websiteUrl?.href ?? null },
+      requestId,
     });
     return NextResponse.json(
       { data: result, requestId },

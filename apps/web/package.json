@@ -16,9 +16,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.6.2",
     "@huggingface/transformers": "^4.2.0",
     "@mozilla/readability": "^0.6.0",
     "@next/env": "16.2.12",
+    "@sentry/nextjs": "^10.68.0",
+    "@sentry/node": "^10.68.0",
     "cheerio": "^1.2.0",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.2.4",

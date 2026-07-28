@@ -4,8 +4,8 @@ const integrations = [
   { name: "PostgreSQL + pgvector", detail: "Knowledge, conversations, jobs, vectors, and analytics.", status: "connected", icon: Database },
   { name: "Transformers.js", detail: "Local multilingual-ready embedding runtime with a deterministic fallback.", status: "connected", icon: HardDrive },
   { name: "Ollama Cloud", detail: "Default grounded answer engine through Ollama's OpenAI-compatible cloud endpoint.", status: process.env.LLM_API_KEY ? "configured" : "needs key", icon: Braces },
-  { name: "Sentry", detail: "Optional production error tracking adapter; SDK installation is intentionally deferred.", status: "optional", icon: TriangleAlert },
-  { name: "Clerk", detail: "Optional hosted authentication adapter for production teams.", status: "optional", icon: Radio },
+  { name: "Sentry", detail: "Browser, server, route, and worker error reporting with an administrator issue feed.", status: process.env.SENTRY_DSN ? "configured" : "needs DSN", icon: TriangleAlert },
+  { name: "Clerk", detail: "Hosted authentication with per-user Docent workspaces and protected administration.", status: process.env.AUTH_PROVIDER === "clerk" ? "configured" : "development", icon: Radio },
 ] as const;
 
 export default function IntegrationsPage() {

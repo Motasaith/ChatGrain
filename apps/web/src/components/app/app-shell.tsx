@@ -1,5 +1,6 @@
 "use client";
 
+import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -17,6 +18,7 @@ import {
   Plus,
   Plug,
   Search,
+  Shield,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
 
@@ -37,9 +39,16 @@ const buildNavigation = [
 export function AppShell({
   children,
   identity,
+  clerkEnabled,
 }: {
   children: React.ReactNode;
-  identity: { name: string; email: string };
+  identity: {
+    name: string;
+    email: string;
+    isAdmin: boolean;
+    workspaceName: string;
+  };
+  clerkEnabled: boolean;
 }) {
   const pathname = usePathname();
   const initials = identity.name
@@ -56,9 +65,11 @@ export function AppShell({
           <Logo inverse />
         </div>
         <button className="workspace-switcher" type="button">
-          <span className="workspace-avatar">M</span>
+          <span className="workspace-avatar">
+            {identity.workspaceName.slice(0, 1).toUpperCase()}
+          </span>
           <span>
-            <b>My workspace</b>
+            <b>{identity.workspaceName}</b>
             <small>Community</small>
           </span>
           <ChevronDown size={14} />
@@ -96,6 +107,23 @@ export function AppShell({
               {item.label}
             </Link>
           ))}
+          {identity.isAdmin ? (
+            <>
+              <span className="sidebar-section-label">System</span>
+              <Link
+                className={
+                  pathname === "/dashboard/admin" ||
+                  pathname.startsWith("/dashboard/admin/")
+                    ? "active"
+                    : ""
+                }
+                href="/dashboard/admin"
+              >
+                <Shield size={17} />
+                Administration
+              </Link>
+            </>
+          ) : null}
         </nav>
 
         <div className="sidebar-local">
@@ -110,7 +138,17 @@ export function AppShell({
         </div>
 
         <div className="sidebar-profile">
-          <span className="profile-avatar">{initials}</span>
+          {clerkEnabled ? (
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: "clerk-sidebar-avatar",
+                },
+              }}
+            />
+          ) : (
+            <span className="profile-avatar">{initials}</span>
+          )}
           <span>
             <b>{identity.name}</b>
             <small>{identity.email}</small>

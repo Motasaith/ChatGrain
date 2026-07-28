@@ -5,6 +5,7 @@ import { requireAgent } from "@/lib/agents/access";
 import { db } from "@/lib/db/client";
 import { agents, sources } from "@/lib/db/schema";
 import { errorResponse, readJson } from "@/lib/http/errors";
+import { recordAudit } from "@/lib/observability/audit";
 
 const updateAgentSchema = z
   .object({
@@ -51,13 +52,24 @@ export async function PATCH(request: Request, context: RouteContext) {
   const requestId = crypto.randomUUID();
   try {
     const { agentId } = await context.params;
-    await requireAgent(agentId);
+    const { context: workspace } = await requireAgent(agentId);
     const input = updateAgentSchema.parse(await readJson(request));
     const [agent] = await db
       .update(agents)
       .set({ ...input, updatedAt: new Date() })
       .where(eq(agents.id, agentId))
       .returning();
+    await recordAudit({
+      workspaceId: workspace.workspaceId,
+      actorUserId: workspace.userId,
+      actorEmail: workspace.email,
+      action: "agent.updated",
+      targetType: "agent",
+      targetId: agentId,
+      message: `Updated agent "${agent.name}".`,
+      metadata: { fields: Object.keys(input) },
+      requestId,
+    });
     return NextResponse.json({ data: agent, requestId });
   } catch (error) {
     return errorResponse(error, requestId);
@@ -69,14 +81,25 @@ export async function DELETE(_: Request, context: RouteContext) {
   try {
     const { agentId } = await context.params;
     const { context: workspace } = await requireAgent(agentId);
-    await db
+    const [deleted] = await db
       .delete(agents)
       .where(
         and(
           eq(agents.id, agentId),
           eq(agents.workspaceId, workspace.workspaceId),
         ),
-      );
+      )
+      .returning({ name: agents.name });
+    await recordAudit({
+      workspaceId: workspace.workspaceId,
+      actorUserId: workspace.userId,
+      actorEmail: workspace.email,
+      action: "agent.deleted",
+      targetType: "agent",
+      targetId: agentId,
+      message: `Deleted agent "${deleted?.name ?? agentId}".`,
+      requestId,
+    });
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     return errorResponse(error, requestId);

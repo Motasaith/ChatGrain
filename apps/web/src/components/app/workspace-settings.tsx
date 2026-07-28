@@ -39,8 +39,9 @@ export function WorkspaceSettings({ initialName, slug, email, authProvider }: { 
           <div><dt>Production guard</dt><dd>{authProvider === "dev" ? "Development only" : "Enabled"}</dd></div>
         </dl>
         <div className="config-note">
-          Set <code>AUTH_PROVIDER=clerk</code> after installing Clerk and adding
-          its middleware adapter. Production rejects accidental dev auth.
+          Clerk authentication is installed and each user receives an isolated
+          workspace. Keep <code>AUTH_PROVIDER=dev</code> limited to private
+          local development.
         </div>
       </aside>
     </div>

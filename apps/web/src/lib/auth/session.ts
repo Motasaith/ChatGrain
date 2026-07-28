@@ -1,5 +1,7 @@
 import "server-only";
 
+import { AppError } from "@/lib/http/errors";
+
 export type AuthIdentity = {
   externalId: string;
   email: string;
@@ -7,17 +9,60 @@ export type AuthIdentity = {
   avatarUrl?: string;
 };
 
-/**
- * Authentication adapter boundary.
- *
- * Local development intentionally has no hosted dependency. The Clerk adapter
- * will implement this same function when AUTH_PROVIDER=clerk is enabled.
- */
+export function getAdminEmails() {
+  return new Set(
+    (process.env.ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+export function isAdminEmail(email: string) {
+  return getAdminEmails().has(email.trim().toLowerCase());
+}
+
 export async function getCurrentIdentity(): Promise<AuthIdentity> {
   if (process.env.AUTH_PROVIDER === "clerk") {
-    throw new Error(
-      "AUTH_PROVIDER=clerk was selected, but the Clerk adapter has not been installed yet.",
-    );
+    const { auth, currentUser } = await import("@clerk/nextjs/server");
+    const authentication = await auth();
+    if (!authentication.userId) {
+      throw new AppError(
+        "AUTHENTICATION_REQUIRED",
+        "Sign in to continue.",
+        401,
+      );
+    }
+
+    const user = await currentUser();
+    if (!user) {
+      throw new AppError(
+        "AUTHENTICATION_REQUIRED",
+        "Your signed-in user could not be loaded.",
+        401,
+      );
+    }
+    const email =
+      user.primaryEmailAddress?.emailAddress ??
+      user.emailAddresses[0]?.emailAddress;
+    if (!email) {
+      throw new AppError(
+        "EMAIL_REQUIRED",
+        "A verified email address is required to use Docent.",
+        403,
+      );
+    }
+    const name =
+      [user.firstName, user.lastName].filter(Boolean).join(" ").trim() ||
+      user.username ||
+      email.split("@")[0];
+
+    return {
+      externalId: user.id,
+      email: email.toLowerCase(),
+      name,
+      avatarUrl: user.imageUrl,
+    };
   }
 
   return {
@@ -25,4 +70,16 @@ export async function getCurrentIdentity(): Promise<AuthIdentity> {
     email: process.env.DEV_USER_EMAIL ?? "owner@docent.local",
     name: process.env.DEV_USER_NAME ?? "Local Owner",
   };
+}
+
+export async function requireAdminIdentity() {
+  const identity = await getCurrentIdentity();
+  if (!isAdminEmail(identity.email)) {
+    throw new AppError(
+      "ADMIN_REQUIRED",
+      "This operation is restricted to Docent administrators.",
+      403,
+    );
+  }
+  return identity;
 }

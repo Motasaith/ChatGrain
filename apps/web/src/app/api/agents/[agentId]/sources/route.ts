@@ -5,6 +5,7 @@ import { requireAgent } from "@/lib/agents/access";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources } from "@/lib/db/schema";
 import { errorResponse, readJson } from "@/lib/http/errors";
+import { recordAudit } from "@/lib/observability/audit";
 import { validatePublicUrl } from "@/lib/security/public-url";
 
 const websiteSourceSchema = z.object({
@@ -22,7 +23,7 @@ export async function POST(request: Request, context: RouteContext) {
   const requestId = crypto.randomUUID();
   try {
     const { agentId } = await context.params;
-    await requireAgent(agentId);
+    const { context: workspace } = await requireAgent(agentId);
     const input = websiteSourceSchema.parse(await readJson(request));
     const url = await validatePublicUrl(input.url);
     const result = await db.transaction(async (tx) => {
@@ -65,6 +66,17 @@ export async function POST(request: Request, context: RouteContext) {
         .set({ status: "training", updatedAt: new Date() })
         .where(eq(agents.id, agentId));
       return { source, job };
+    });
+    await recordAudit({
+      workspaceId: workspace.workspaceId,
+      actorUserId: workspace.userId,
+      actorEmail: workspace.email,
+      action: "source.training_queued",
+      targetType: "source",
+      targetId: result.source.id,
+      message: `Queued training for ${url.hostname}.`,
+      metadata: { url: url.href, jobId: result.job.id },
+      requestId,
     });
     return NextResponse.json(
       { data: result, requestId },

@@ -92,7 +92,7 @@ const faqs = [
   {
     question: "Is it ready for sensitive production data?",
     answer:
-      "The current build includes workspace boundaries, signed widget tokens, URL safety checks, rate limits, and structured errors. A serious production deployment should still add real authentication, encrypted backups, secret management, audit retention, and a reviewed privacy policy.",
+      "The current build includes Clerk authentication, isolated workspaces, administrator controls, audit logs, signed widget tokens, URL safety checks, rate limits, retention, and Sentry instrumentation. A serious deployment still needs encrypted backups, managed secrets, a reviewed privacy policy, and recovery testing.",
   },
 ];
 
