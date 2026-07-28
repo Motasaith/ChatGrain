@@ -23,6 +23,18 @@ export function GET(request: Request) {
   const frame = document.createElement('iframe');
   frame.title = 'Chat support';
   frame.allow = 'clipboard-write';
+  const focusComposer = () => {
+    if (!root.hasAttribute('data-open')) return;
+    frame.focus({ preventScroll: true });
+    try { frame.contentWindow.focus(); } catch {}
+    try {
+      frame.contentWindow.postMessage({ type: 'docent:focus-composer' }, origin);
+    } catch {}
+  };
+  frame.addEventListener('load', () => {
+    window.setTimeout(focusComposer, 60);
+    window.setTimeout(focusComposer, 240);
+  });
   const button = document.createElement('button');
   button.type = 'button';
   button.setAttribute('aria-label', 'Open chat');
@@ -52,6 +64,13 @@ export function GET(request: Request) {
     const open = root.toggleAttribute('data-open');
     renderLauncher(open);
     button.setAttribute('aria-label', open ? 'Close chat' : 'Open chat');
+    if (open) {
+      window.requestAnimationFrame(focusComposer);
+      window.setTimeout(focusComposer, 100);
+      window.setTimeout(focusComposer, 320);
+    } else {
+      button.focus({ preventScroll: true });
+    }
   });
   fetch(origin + '/api/public/agents/' + encodeURIComponent(agentId))
     .then(r => r.ok ? r.json() : Promise.reject())

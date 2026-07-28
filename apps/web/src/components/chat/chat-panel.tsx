@@ -134,6 +134,23 @@ export function ChatPanel({
     }
   }, [messages, busy]);
 
+  useEffect(() => {
+    function focusFromEmbed(event: MessageEvent) {
+      if (
+        event.source !== window.parent ||
+        event.data?.type !== "docent:focus-composer"
+      ) {
+        return;
+      }
+      const field = inputRef.current;
+      if (!field || field.disabled) return;
+      focusGuardUntilRef.current = Date.now() + 500;
+      field.focus({ preventScroll: true });
+    }
+    window.addEventListener("message", focusFromEmbed);
+    return () => window.removeEventListener("message", focusFromEmbed);
+  }, []);
+
   async function send(event: React.FormEvent) {
     event.preventDefault();
     const content = inputRef.current?.value.trim() ?? "";
