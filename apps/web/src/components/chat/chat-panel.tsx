@@ -80,6 +80,7 @@ export function ChatPanel({
   const [error, setError] = useState("");
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const focusGuardUntilRef = useRef(0);
   const volatileSessionRef = useRef<string | undefined>(undefined);
   const initializedRef = useRef(false);
   const brandImage = logoUrl || iconUrl;
@@ -99,6 +100,27 @@ export function ChatPanel({
       volatileSessionRef.current ??= crypto.randomUUID();
       return volatileSessionRef.current;
     }
+  }
+
+  function restoreComposerFocus() {
+    const field = inputRef.current;
+    if (
+      !field ||
+      field.disabled ||
+      Date.now() > focusGuardUntilRef.current
+    ) {
+      return;
+    }
+    if (document.activeElement !== field) {
+      field.focus({ preventScroll: true });
+    }
+  }
+
+  function guardComposerFocus() {
+    focusGuardUntilRef.current = Date.now() + 500;
+    window.requestAnimationFrame(restoreComposerFocus);
+    window.setTimeout(restoreComposerFocus, 60);
+    window.setTimeout(restoreComposerFocus, 180);
   }
 
   useEffect(() => {
@@ -280,6 +302,8 @@ export function ChatPanel({
           aria-label="Message"
           autoComplete="off"
           disabled={busy}
+          onBlur={restoreComposerFocus}
+          onPointerDown={guardComposerFocus}
           placeholder="Ask a question..."
           ref={inputRef}
           type="text"
