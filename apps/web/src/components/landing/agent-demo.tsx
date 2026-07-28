@@ -1,77 +1,102 @@
 "use client";
 
-import { useState } from "react";
+import { FormEvent, useState } from "react";
 import { ArrowUp, Bot, ExternalLink } from "lucide-react";
 
-const answers: Record<string, string> = {
-  refund:
-    "Yes. Duplicate charges are refunded in full to the original payment method within 3–5 business days.",
-  api: "The Scale plan includes 100 API requests per minute, with short bursts up to twice that limit.",
+const answers = {
+  refund: {
+    question: "What happens if I am charged twice?",
+    answer:
+      "Duplicate charges are refunded in full to the original payment method within 3–5 business days.",
+    source: "refund-policy.md · paragraph 7",
+  },
+  api: {
+    question: "What are the API limits?",
+    answer:
+      "The Scale plan includes 100 requests per minute, with short bursts up to twice that limit.",
+    source: "api-reference.md · rate limits",
+  },
+  security: {
+    question: "Where is customer data stored?",
+    answer:
+      "In the self-hosted edition, sources and conversations stay in the PostgreSQL database you operate.",
+    source: "deployment.md · data ownership",
+  },
 };
 
+type AnswerKey = keyof typeof answers;
+
+function matchAnswer(value: string): AnswerKey {
+  if (/api|rate|limit/i.test(value)) return "api";
+  if (/data|store|security|private/i.test(value)) return "security";
+  return "refund";
+}
+
 export function AgentDemo() {
-  const [question, setQuestion] = useState(
-    "What happens if I’m charged twice?",
-  );
-  const [answer, setAnswer] = useState(answers.refund);
+  const [question, setQuestion] = useState(answers.refund.question);
+  const [draft, setDraft] = useState("");
+  const [current, setCurrent] = useState<AnswerKey>("refund");
   const [typing, setTyping] = useState(false);
 
-  function ask(kind: "refund" | "api") {
-    setQuestion(
-      kind === "refund"
-        ? "What happens if I’m charged twice?"
-        : "What are the API limits?",
-    );
+  function ask(kind: AnswerKey, customQuestion?: string) {
+    setQuestion(customQuestion || answers[kind].question);
     setTyping(true);
     window.setTimeout(() => {
-      setAnswer(answers[kind]);
+      setCurrent(kind);
       setTyping(false);
     }, 420);
   }
 
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = draft.trim();
+    if (!value) return;
+    ask(matchAnswer(value), value);
+    setDraft("");
+  }
+
   return (
-    <div className="agent-window">
-      <div className="agent-window-head">
-        <span className="agent-avatar">
-          <Bot size={19} />
-        </span>
+    <div className="home-agent">
+      <div className="home-agent-head">
+        <span className="home-agent-avatar"><Bot size={18} /></span>
         <span>
           <b>Sofia</b>
-          <small>
-            <i /> Answers from verified sources
-          </small>
+          <small><i /> Uses verified sources</small>
         </span>
-        <em>LIVE</em>
+        <em>Live demo</em>
       </div>
-      <div className="agent-messages">
-        <div className="agent-message user-message">{question}</div>
+      <div className="home-agent-messages" aria-live="polite">
+        <div className="home-agent-user">{question}</div>
         {typing ? (
-          <div className="agent-message bot-message typing-message">
-            <i />
-            <i />
-            <i />
+          <div className="home-agent-answer home-agent-typing">
+            <i /><i /><i />
           </div>
         ) : (
-          <div className="agent-message bot-message">
-            {answer}
+          <div className="home-agent-answer">
+            <p>{answers[current].answer}</p>
             <a href="#workflow">
               <ExternalLink size={11} />
-              refund-policy.md · §7
+              {answers[current].source}
             </a>
           </div>
         )}
       </div>
-      <div className="agent-suggestions">
-        <button onClick={() => ask("refund")}>Refunds</button>
-        <button onClick={() => ask("api")}>API limits</button>
+      <div className="home-agent-chips">
+        <button type="button" onClick={() => ask("refund")}>Refunds</button>
+        <button type="button" onClick={() => ask("api")}>API limits</button>
+        <button type="button" onClick={() => ask("security")}>Data</button>
       </div>
-      <div className="agent-input">
-        <span>Ask a question…</span>
-        <button aria-label="Send demo question">
-          <ArrowUp size={16} />
+      <form className="home-agent-input" onSubmit={submit}>
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder="Ask about refunds, APIs, or data"
+          aria-label="Ask the demo agent"
+        />
+        <button type="submit" aria-label="Send question">
+          <ArrowUp size={15} />
         </button>
-      </div>
-      <div className="agent-powered">POWERED BY DOCENT</div>
+      </form>
     </div>
   );
 }
