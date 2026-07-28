@@ -154,10 +154,11 @@ export function CustomSignUp() {
     if (!signUp) return;
     setLocalError(null);
     setSocialBusy(strategy);
+    const origin = window.location.origin;
     const { error } = await signUp.sso({
       strategy,
-      redirectUrl: destination,
-      redirectCallbackUrl: "/sso-callback",
+      redirectUrl: new URL(destination, origin).toString(),
+      redirectCallbackUrl: new URL("/sso-callback", origin).toString(),
     });
     if (error) {
       setSocialBusy(null);
