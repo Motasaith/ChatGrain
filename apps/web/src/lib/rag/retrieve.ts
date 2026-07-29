@@ -12,6 +12,7 @@ import { embedText } from "./embeddings";
 
 export type RetrievalHit = {
   chunkId: string;
+  documentId: string;
   content: string;
   title: string;
   url?: string;
@@ -20,6 +21,8 @@ export type RetrievalHit = {
   score: number;
   position: number;
   lexicalScore: number;
+  titleScore: number;
+  rankScore: number;
 };
 
 export async function findLatestIndexedLink(agentId: string) {
@@ -94,25 +97,55 @@ export async function hybridRetrieve(
     ...new Set(
       (query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(
         (term) =>
-          !["the", "and", "what", "where", "when", "which", "with", "from", "this", "that", "your", "how"].includes(term),
+          ![
+            "the",
+            "and",
+            "what",
+            "where",
+            "when",
+            "which",
+            "with",
+            "from",
+            "this",
+            "that",
+            "your",
+            "how",
+            "can",
+            "could",
+            "would",
+            "please",
+            "give",
+            "have",
+            "about",
+            "need",
+            "information",
+            "project",
+            "projects",
+            "raspberry",
+          ].includes(term),
       ),
     ),
   ];
-  const lexicalScore = (content: string) => {
-    const lower = content.toLowerCase();
+  const termOverlap = (value: string) => {
+    const lower = value.toLowerCase();
     return queryTerms.length
       ? queryTerms.filter((term) => lower.includes(term)).length /
           queryTerms.length
       : 0;
   };
+  const lexicalScore = (title: string, content: string) =>
+    termOverlap(`${title} ${content}`);
+  const titleScore = (title: string) => termOverlap(title);
   const vectorSimilarity =
     sql<number>`1 - (${cosineDistance(chunks.embedding, embedding)})`;
   const keywordRank = sql<number>`
     ts_rank_cd(
-      to_tsvector('english', ${chunks.content}),
+      setweight(to_tsvector('english', coalesce(${documents.title}, '')), 'A')
+      ||
+      setweight(to_tsvector('english', ${chunks.content}), 'B'),
       websearch_to_tsquery('english', ${query})
     )
-    + case when ${chunks.position} = 0 then 0.35 else 0 end
+    + case when ${chunks.position} = 0 then 0.08 else 0 end
     - case
         when ${chunks.content} ~* '(isbn|retrieved [0-9]|archived from|bibliography|references)'
         then 2.0
@@ -124,6 +157,7 @@ export async function hybridRetrieve(
     db
       .select({
         chunkId: chunks.id,
+        documentId: chunks.documentId,
         content: chunks.content,
         metadata: chunks.metadata,
         title: documents.title,
@@ -141,6 +175,7 @@ export async function hybridRetrieve(
     db
       .select({
         chunkId: chunks.id,
+        documentId: chunks.documentId,
         content: chunks.content,
         metadata: chunks.metadata,
         title: documents.title,
@@ -153,7 +188,11 @@ export async function hybridRetrieve(
       .where(
         and(
           eq(chunks.agentId, agentId),
-          sql`to_tsvector('english', ${chunks.content}) @@ websearch_to_tsquery('english', ${query})`,
+          sql`(
+            setweight(to_tsvector('english', coalesce(${documents.title}, '')), 'A')
+            ||
+            setweight(to_tsvector('english', ${chunks.content}), 'B')
+          ) @@ websearch_to_tsquery('english', ${query})`,
         ),
       )
       .orderBy(desc(keywordRank))
@@ -164,6 +203,7 @@ export async function hybridRetrieve(
   vectorRows.forEach((row, index) => {
     combined.set(row.chunkId, {
       chunkId: row.chunkId,
+      documentId: row.documentId,
       content: row.content,
       title: row.title,
       url: row.url ?? undefined,
@@ -171,7 +211,9 @@ export async function hybridRetrieve(
       keywordScore: 0,
       score: 1 / (60 + index + 1),
       position: row.position,
-      lexicalScore: lexicalScore(row.content),
+      lexicalScore: lexicalScore(row.title, row.content),
+      titleScore: titleScore(row.title),
+      rankScore: 0,
     });
   });
   keywordRows.forEach((row, index) => {
@@ -182,6 +224,7 @@ export async function hybridRetrieve(
     } else {
       combined.set(row.chunkId, {
         chunkId: row.chunkId,
+        documentId: row.documentId,
         content: row.content,
         title: row.title,
         url: row.url ?? undefined,
@@ -189,24 +232,25 @@ export async function hybridRetrieve(
         keywordScore: Number(row.score ?? 0),
         score: 1 / (60 + index + 1),
         position: row.position,
-        lexicalScore: lexicalScore(row.content),
+        lexicalScore: lexicalScore(row.title, row.content),
+        titleScore: titleScore(row.title),
+        rankScore: 0,
       });
     }
   });
 
   return [...combined.values()]
-    .sort((a, b) => {
-      const aQuality =
-        a.vectorScore * 0.5 +
-        Math.max(-1, Math.min(a.keywordScore, 1)) * 0.35 +
-        a.lexicalScore * 0.2 +
-        (a.position === 0 && a.keywordScore > 0 ? 0.65 : 0);
-      const bQuality =
-        b.vectorScore * 0.5 +
-        Math.max(-1, Math.min(b.keywordScore, 1)) * 0.35 +
-        b.lexicalScore * 0.2 +
-        (b.position === 0 && b.keywordScore > 0 ? 0.65 : 0);
-      return bQuality - aQuality || b.score - a.score;
+    .map((hit) => {
+      hit.rankScore =
+        hit.vectorScore * 0.45 +
+        Math.max(-1, Math.min(hit.keywordScore, 1)) * 0.35 +
+        hit.lexicalScore * 0.25 +
+        hit.titleScore * 0.9 +
+        (hit.position === 0 && hit.keywordScore > 0 ? 0.05 : 0);
+      return hit;
     })
+    .sort(
+      (a, b) => b.rankScore - a.rankScore || b.score - a.score,
+    )
     .slice(0, limit);
 }

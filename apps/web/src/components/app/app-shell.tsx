@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BarChart3,
+  Bell,
   Bot,
   Boxes,
   Braces,
@@ -40,6 +41,7 @@ export function AppShell({
   children,
   identity,
   clerkEnabled,
+  pendingHandoffs,
 }: {
   children: React.ReactNode;
   identity: {
@@ -49,6 +51,7 @@ export function AppShell({
     workspaceName: string;
   };
   clerkEnabled: boolean;
+  pendingHandoffs: number;
 }) {
   const pathname = usePathname();
   const initials = identity.name
@@ -90,6 +93,11 @@ export function AppShell({
             >
               <item.icon size={17} />
               {item.label}
+              {item.href === "/dashboard/activity" && pendingHandoffs > 0 ? (
+                <em className="sidebar-count">
+                  {pendingHandoffs > 99 ? "99+" : pendingHandoffs}
+                </em>
+              ) : null}
             </Link>
           ))}
           <span className="sidebar-section-label">Build</span>
@@ -165,6 +173,16 @@ export function AppShell({
             <kbd>⌘ K</kbd>
           </div>
           <div className="app-header-actions">
+            <Link
+              className="header-notification"
+              href="/dashboard/activity"
+              aria-label={`${pendingHandoffs} pending handoff requests`}
+            >
+              <Bell size={18} />
+              {pendingHandoffs > 0 ? (
+                <i>{pendingHandoffs > 99 ? "99+" : pendingHandoffs}</i>
+              ) : null}
+            </Link>
             <Link href="/dashboard/docs" aria-label="Documentation">
               <CircleHelp size={18} />
             </Link>

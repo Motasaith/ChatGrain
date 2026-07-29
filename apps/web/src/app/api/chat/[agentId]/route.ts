@@ -91,6 +91,7 @@ export async function POST(request: Request, context: RouteContext) {
         role: messages.role,
         content: messages.content,
         citations: messages.citations,
+        grounded: messages.grounded,
       })
       .from(messages)
       .where(eq(messages.conversationId, conversation.id))

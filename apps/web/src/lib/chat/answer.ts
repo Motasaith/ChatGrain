@@ -32,12 +32,28 @@ function asksForContextualLink(question: string) {
 export type AnswerHistoryMessage = {
   role: "user" | "assistant";
   content: string;
+  grounded?: boolean | null;
   citations?: Array<{
     chunkId: string;
     title: string;
     url?: string;
     excerpt: string;
   }> | null;
+};
+
+export type ChatUiAction = {
+  type: "lead_form";
+  title: string;
+  description: string;
+  submitLabel: string;
+};
+
+const handoffAction: ChatUiAction = {
+  type: "lead_form",
+  title: "Ask the team to contact you",
+  description:
+    "Share an email address or phone number and your message will appear in the website team's Docent inbox.",
+  submitLabel: "Request a reply",
 };
 
 function terms(value: string) {
@@ -67,7 +83,7 @@ function pageSpecificity(value: string) {
     const segments = url.pathname.split("/").filter(Boolean);
     if (!segments.length) return -10;
     const generic = segments.some((segment) =>
-      /^(?:category|categories|tag|tags|search|author|page|blog|articles|posts)$/i.test(
+      /^(?:category|categories|tag|tags|search|author|page|blog|articles|posts|project|projects|archive|archives)$/i.test(
         segment,
       ),
     );
@@ -76,6 +92,127 @@ function pageSpecificity(value: string) {
   } catch {
     return -10;
   }
+}
+
+function sourceSpecificity(url: string, title: string) {
+  const genericTitle =
+    /\b(?:archives?|faq|about us|all projects|project library|project list|advanced view)\b/i.test(
+      title,
+    );
+  return pageSpecificity(url) - (genericTitle ? 4 : 0);
+}
+
+export function asksForHumanSupport(question: string) {
+  return (
+    /\b(?:talk|speak|chat|connect|transfer|reach)\b.{0,45}\b(?:human|person|someone|support|admin|owner|agent|team|staff)\b/i.test(
+      question,
+    ) ||
+    /\b(?:human|person|someone|support|admin|owner|agent|team|staff)\b.{0,45}\b(?:talk|speak|chat|contact|call|reply|reach)\b/i.test(
+      question,
+    ) ||
+    /\b(?:phone number|direct email|email address)\b/i.test(question)
+  );
+}
+
+function contactPageScore(hit: RetrievalHit) {
+  let pathname = "";
+  try {
+    pathname = new URL(hit.url ?? "").pathname;
+  } catch {
+    // A title can still identify a contact page when no URL exists.
+  }
+  if (/\b(?:non-contact|contactless)\b/i.test(hit.title)) return -10;
+  if (
+    /(?:^|\/)contact(?:-us)?(?:\/|$)/i.test(pathname) ||
+    /^(?:contact|contact us)(?:\s*[-|—].*)?$/i.test(hit.title.trim())
+  ) {
+    return 5;
+  }
+  if (
+    /(?:^|\/)(?:support|help|help-center|customer-service)(?:\/|$)/i.test(
+      pathname,
+    ) ||
+    /^(?:support|customer support|help center)(?:\s*[-|—].*)?$/i.test(
+      hit.title.trim(),
+    )
+  ) {
+    return 3;
+  }
+  if (
+    /(?:^|\/)(?:about|about-us|faq)(?:\/|$)/i.test(pathname) ||
+    /^(?:about us|faq)(?:\s*[-|—].*)?$/i.test(hit.title.trim())
+  ) {
+    return 1;
+  }
+  return -10;
+}
+
+function contactDetails(content: string) {
+  const emails = [
+    ...new Set(
+      content.match(
+        /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+      ) ?? [],
+    ),
+  ].slice(0, 2);
+  const phones = [
+    ...new Set(
+      (content.match(/(?:\+?\d[\d\s().-]{7,}\d)/g) ?? [])
+        .map((value) => value.trim())
+        .filter((value) => {
+          const digits = value.replace(/\D/g, "").length;
+          return digits >= 8 && digits <= 15;
+        }),
+    ),
+  ].slice(0, 2);
+  return { emails, phones };
+}
+
+async function humanSupportAnswer(agent: Agent) {
+  const hits = await hybridRetrieve(
+    agent.id,
+    "contact us support email phone customer service",
+    10,
+  );
+  const contactHit = hits
+    .filter((hit) => hit.url)
+    .sort((a, b) => contactPageScore(b) - contactPageScore(a))[0];
+  const validContactHit =
+    contactHit && contactPageScore(contactHit) > 0
+      ? contactHit
+      : undefined;
+  const details =
+    validContactHit && contactPageScore(validContactHit) >= 3
+    ? contactDetails(validContactHit.content)
+    : { emails: [], phones: [] };
+  const direct = [
+    details.emails.length
+      ? `Email: ${details.emails.join(", ")}`
+      : "",
+    details.phones.length
+      ? `Phone: ${details.phones.join(", ")}`
+      : "",
+  ].filter(Boolean);
+  const contactLink =
+    validContactHit?.url
+      ? `\n\nYou can also use [${validContactHit.title}](${validContactHit.url}).`
+      : "";
+  return {
+    answer:
+      `I can ask the website team to contact you. Submit your details below and they can follow up.${direct.length ? `\n\n${direct.join("\n")}` : ""}${contactLink}`,
+    grounded: true,
+    confidence: 1,
+    citations:
+      agent.showCitations && validContactHit
+        ? [{
+            chunkId: validContactHit.chunkId,
+            title: validContactHit.title,
+            url: validContactHit.url,
+            excerpt: validContactHit.content.slice(0, 260),
+          }]
+        : [],
+    action: handoffAction,
+  };
 }
 
 export function contextualCitation(
@@ -95,7 +232,8 @@ export function contextualCitation(
   const candidates = previous.citations
     .filter(
       (citation): citation is typeof citation & { url: string } =>
-        Boolean(citation.url) && pageSpecificity(citation.url!) > 0,
+        Boolean(citation.url) &&
+        sourceSpecificity(citation.url!, citation.title) > 0,
     )
     .map((citation, index) => {
       const evidenceTerms = terms(`${citation.title} ${citation.excerpt}`);
@@ -106,7 +244,7 @@ export function contextualCitation(
         citation,
         score:
           overlap * 4 +
-          pageSpecificity(citation.url) * 0.25 -
+          sourceSpecificity(citation.url, citation.title) * 0.25 -
           index * 0.08,
       };
     })
@@ -188,15 +326,26 @@ function sentenceScore(question: string, sentence: string) {
   return overlap / Math.max(1, query.size);
 }
 
+function cleanEvidenceSentence(value: string) {
+  return value
+    .replace(
+      /(?:^|\s)(?:id|title|categories|_smart_summary|permalink):\s*/gi,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function extractiveAnswer(question: string, hits: RetrievalHit[]) {
   const seen = new Set<string>();
-  return hits
+  const selected = hits
     .slice(0, 4)
     .flatMap((hit, hitIndex) =>
       (hit.content.match(/[^.!?]+[.!?]+|[^.!?]+$/g) ?? [
         hit.content,
       ]).map((sentence) => ({
-        sentence: sentence.trim(),
+        hit,
+        sentence: cleanEvidenceSentence(sentence),
         score:
           sentenceScore(question, sentence) +
           Math.max(0, hit.vectorScore) * 0.08 +
@@ -220,10 +369,57 @@ function extractiveAnswer(question: string, hits: RetrievalHit[]) {
       seen.add(normalized);
       return true;
     })
-    .slice(0, 3)
-    .map((item) => item.sentence)
-    .join(" ")
-    .slice(0, 1_200);
+    .slice(0, 2);
+  return {
+    answer: selected
+      .map((item) => item.sentence)
+      .join(" ")
+      .slice(0, 800),
+    hits: selected.map((item) => item.hit),
+  };
+}
+
+function coherentEvidence(hits: RetrievalHit[]) {
+  const best = hits[0];
+  if (!best) return [];
+  if (best.titleScore >= 0.5) {
+    const sameDocument = hits
+      .filter((hit) => hit.documentId === best.documentId)
+      .slice(0, 5);
+    if (sameDocument.length) return sameDocument;
+  }
+  return hits.slice(0, 5);
+}
+
+function citedEvidence(answer: string, hits: RetrievalHit[]) {
+  const indices = [
+    ...new Set(
+      [...answer.matchAll(/\[([\d,\s]{1,30})\]/g)]
+        .flatMap((match) => match[1].split(","))
+        .map((value) => Number(value.trim()) - 1)
+        .filter((index) => index >= 0 && index < hits.length),
+    ),
+  ];
+  const selected = indices.length
+    ? indices.map((index) => hits[index])
+    : hits.slice(0, 2);
+  const seen = new Set<string>();
+  return selected
+    .filter((hit) => {
+      const key = hit.url || hit.documentId;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4);
+}
+
+export function cleanGeneratedAnswer(answer: string) {
+  return answer
+    .replace(/\s*\[[\d,\s]{1,30}\](?=[\s,.;:!?)]|$)/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 async function llmAnswer(
@@ -276,6 +472,10 @@ export async function answerQuestion(
     };
   }
 
+  if (asksForHumanSupport(question)) {
+    return humanSupportAnswer(agent);
+  }
+
   if (asksForLatestLink(question)) {
     const latest = await findLatestIndexedLink(agent.id);
     if (latest) {
@@ -305,7 +505,8 @@ export async function answerQuestion(
   if (asksForContextualLink(question)) {
     const specificHit = hits.find(
       (hit): hit is RetrievalHit & { url: string } =>
-        Boolean(hit.url) && pageSpecificity(hit.url!) > 0,
+        Boolean(hit.url) &&
+        sourceSpecificity(hit.url!, hit.title) > 0,
     );
     if (specificHit) {
       const citation = {
@@ -328,27 +529,42 @@ export async function answerQuestion(
         0,
         Math.min(
           1,
-          best.vectorScore * 0.55 +
-            Math.max(0, Math.min(best.keywordScore, 0.8)) * 0.25 +
-            best.lexicalScore * 0.35,
+          best.vectorScore * 0.4 +
+            Math.max(0, Math.min(best.keywordScore, 0.8)) * 0.22 +
+            best.lexicalScore * 0.2 +
+            best.titleScore * 0.35,
         ),
       )
     : 0;
   const threshold = agent.strictMode ? 0.3 : 0.18;
   if (!best || confidence < threshold) {
+    const previousFailures = history.filter(
+      (message) =>
+        message.role === "assistant" && message.grounded === false,
+    ).length;
     return {
-      answer: agent.fallbackMessage,
+      answer:
+        previousFailures > 0
+          ? `${agent.fallbackMessage}\n\nIf you would like, leave your contact details and the website team can follow up.`
+          : agent.fallbackMessage,
       grounded: false,
       confidence,
       citations: [],
+      action: previousFailures > 0 ? handoffAction : undefined,
     };
   }
 
+  const evidenceHits = coherentEvidence(hits);
   const generated =
     agent.modelProvider === "ollama"
-      ? await llmAnswer(agent, question, hits, history)
+      ? await llmAnswer(agent, question, evidenceHits, history)
       : null;
-  const answer = generated || extractiveAnswer(question, hits);
+  const extracted = generated
+    ? null
+    : extractiveAnswer(question, evidenceHits);
+  const answer = generated
+    ? cleanGeneratedAnswer(generated)
+    : extracted?.answer ?? "";
   if (!answer) {
     return {
       answer: agent.fallbackMessage,
@@ -362,7 +578,11 @@ export async function answerQuestion(
     grounded: true,
     confidence,
     citations: agent.showCitations
-      ? hits.slice(0, 4).map((hit) => ({
+      ? (
+          generated
+            ? citedEvidence(generated, evidenceHits)
+            : extracted?.hits ?? []
+        ).map((hit) => ({
           chunkId: hit.chunkId,
           title: hit.title,
           url: hit.url,

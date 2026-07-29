@@ -1,5 +1,12 @@
-import { ContactRound, Mail, Phone, UserRound } from "lucide-react";
+import {
+  ContactRound,
+  ExternalLink,
+  Mail,
+  Phone,
+  UserRound,
+} from "lucide-react";
 import { desc, eq } from "drizzle-orm";
+import Link from "next/link";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, leads } from "@/lib/db/schema";
@@ -18,13 +25,23 @@ export default async function LeadsPage() {
     <>
       <div className="page-heading"><div><span className="page-eyebrow">Leads</span><h1>Visitor contacts</h1><p>Contacts collected by lead forms and conversations.</p></div></div>
       <section className="data-card">
-        <div className="data-toolbar"><span><ContactRound size={15} /> Captured leads</span><i>{rows.length} total</i></div>
+        <div className="data-toolbar"><span><ContactRound size={15} /> Captured leads and handoffs</span><i>{rows.length} total</i></div>
         {rows.length ? (
           <div className="lead-table">
-            <div className="table-head"><span>Contact</span><span>Agent</span><span>Phone</span><span>Captured</span></div>
+            <div className="table-head"><span>Contact</span><span>Request</span><span>Agent</span><span>Phone</span><span>Captured</span></div>
             {rows.map(({ lead, agentName }) => (
               <div key={lead.id}>
                 <span className="lead-person"><i><UserRound size={13} /></i><span><b>{lead.name || "Unnamed lead"}</b><small><Mail size={10} /> {lead.email || "No email"}</small></span></span>
+                <span className="lead-request">
+                  {typeof lead.data?.request === "string"
+                    ? lead.data.request
+                    : "Contact request"}
+                  {lead.conversationId ? (
+                    <Link href={`/dashboard/activity/${lead.conversationId}`}>
+                      Open conversation <ExternalLink size={9} />
+                    </Link>
+                  ) : null}
+                </span>
                 <span>{agentName}</span>
                 <span>{lead.phone ? <><Phone size={11} /> {lead.phone}</> : "—"}</span>
                 <time>{relativeTime(lead.createdAt)}</time>

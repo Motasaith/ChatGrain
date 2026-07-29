@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  asksForHumanSupport,
+  cleanGeneratedAnswer,
   contextualCitation,
   type AnswerHistoryMessage,
 } from "./answer";
@@ -58,5 +60,50 @@ describe("conversation-aware article links", () => {
         },
       ]),
     ).toBeNull();
+  });
+
+  it("rejects archive pages when resolving a specific article", () => {
+    expect(
+      contextualCitation("Can I have a link to this project?", [
+        {
+          role: "assistant",
+          content: "The controller supports scheduled wake-up.",
+          citations: [
+            {
+              chunkId: "archive",
+              title: "Other Projects Archives",
+              url: "https://example.com/projects/other-projects/",
+              excerpt: "Browse controller projects.",
+            },
+            {
+              chunkId: "article",
+              title: "Power Controller: Shutdown and Wake-Up",
+              url: "https://example.com/power-controller-shutdown-wake-up/",
+              excerpt: "The controller supports scheduled wake-up.",
+            },
+          ],
+        },
+      ]),
+    ).toMatchObject({ chunkId: "article" });
+  });
+});
+
+describe("answer presentation", () => {
+  it("recognizes explicit human handoff requests", () => {
+    expect(asksForHumanSupport("Can I talk to customer support?")).toBe(true);
+    expect(
+      asksForHumanSupport("Is there a direct email for my enquiry?"),
+    ).toBe(true);
+    expect(asksForHumanSupport("How does this circuit work?")).toBe(false);
+  });
+
+  it("removes internal evidence markers including grouped references", () => {
+    expect(
+      cleanGeneratedAnswer(
+        "It supports timed wake-ups [1, 3]. It uses low standby power [2].",
+      ),
+    ).toBe(
+      "It supports timed wake-ups. It uses low standby power.",
+    );
   });
 });

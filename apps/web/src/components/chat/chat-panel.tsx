@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowUp,
+  CheckCircle2,
   ExternalLink,
   LoaderCircle,
   MessageCircle,
@@ -11,6 +12,7 @@ import {
   ThumbsDown,
   ThumbsUp,
 } from "lucide-react";
+import type { ChatUiAction } from "@/lib/chat/answer";
 
 type ChatMessage = {
   id: string;
@@ -23,6 +25,7 @@ type ChatMessage = {
     url?: string;
     excerpt: string;
   }>;
+  action?: ChatUiAction;
 };
 
 function safeHttpUrl(value: string) {
@@ -34,9 +37,9 @@ function safeHttpUrl(value: string) {
   }
 }
 
-function LinkedMessage({ content }: { content: string }) {
+function InlineMarkdown({ content }: { content: string }) {
   const pattern =
-    /\[([^\]\n]{1,240})\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)/gi;
+    /\[([^\]\n]{1,240})\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|`([^`\n]+)`|\*([^*\n]+)\*/gi;
   const output: React.ReactNode[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -44,13 +47,13 @@ function LinkedMessage({ content }: { content: string }) {
     if (match.index > cursor) {
       output.push(content.slice(cursor, match.index));
     }
-    const rawUrl = match[2] || match[3];
+    const rawUrl = match[2] || match[3] || "";
     const trailing =
       match[3]?.match(/[.,!?;:]+$/)?.[0] ?? "";
     const linkValue = trailing
       ? rawUrl.slice(0, -trailing.length)
       : rawUrl;
-    const href = safeHttpUrl(linkValue);
+    const href = rawUrl ? safeHttpUrl(linkValue) : null;
     if (href) {
       output.push(
         <a
@@ -64,6 +67,16 @@ function LinkedMessage({ content }: { content: string }) {
         </a>,
       );
       if (trailing) output.push(trailing);
+    } else if (match[4] || match[5]) {
+      output.push(
+        <strong key={`strong-${match.index}`}>
+          {match[4] || match[5]}
+        </strong>,
+      );
+    } else if (match[6]) {
+      output.push(<code key={`code-${match.index}`}>{match[6]}</code>);
+    } else if (match[7]) {
+      output.push(<em key={`em-${match.index}`}>{match[7]}</em>);
     } else {
       output.push(match[0]);
     }
@@ -71,6 +84,193 @@ function LinkedMessage({ content }: { content: string }) {
   }
   if (cursor < content.length) output.push(content.slice(cursor));
   return output;
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  const blocks: React.ReactNode[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+    const unordered = line.match(/^\s*[-*]\s+(.+)$/);
+    const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (unordered || ordered) {
+      const items: string[] = [];
+      const orderedList = Boolean(ordered);
+      while (index < lines.length) {
+        const match = orderedList
+          ? lines[index].match(/^\s*\d+[.)]\s+(.+)$/)
+          : lines[index].match(/^\s*[-*]\s+(.+)$/);
+        if (!match) break;
+        items.push(match[1]);
+        index += 1;
+      }
+      const children = items.map((item, itemIndex) => (
+        <li key={itemIndex}><InlineMarkdown content={item} /></li>
+      ));
+      blocks.push(
+        orderedList
+          ? <ol key={`ol-${index}`}>{children}</ol>
+          : <ul key={`ul-${index}`}>{children}</ul>,
+      );
+      continue;
+    }
+    const heading = line.match(/^#{1,3}\s+(.+)$/);
+    if (heading) {
+      blocks.push(
+        <strong className="chat-markdown-heading" key={`h-${index}`}>
+          <InlineMarkdown content={heading[1]} />
+        </strong>,
+      );
+      index += 1;
+      continue;
+    }
+    const paragraph: string[] = [];
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !/^\s*(?:[-*]\s+|\d+[.)]\s+|#{1,3}\s+)/.test(lines[index])
+    ) {
+      paragraph.push(lines[index]);
+      index += 1;
+    }
+    blocks.push(
+      <p key={`p-${index}`}>
+        {paragraph.map((item, lineIndex) => (
+          <span key={lineIndex}>
+            {lineIndex > 0 ? <br /> : null}
+            <InlineMarkdown content={item} />
+          </span>
+        ))}
+      </p>,
+    );
+  }
+  return blocks;
+}
+
+function LeadCapture({
+  action,
+  agentId,
+  conversationId,
+  requestText,
+  getSessionId,
+  embedToken,
+}: {
+  action: ChatUiAction;
+  agentId: string;
+  conversationId?: string;
+  requestText: string;
+  getSessionId: () => string;
+  embedToken?: string;
+}) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [note, setNote] = useState(requestText);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!email.trim() && !phone.trim()) {
+      setError("Add an email address or phone number.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          agentId,
+          conversationId,
+          sessionId: getSessionId(),
+          embedToken,
+          name: name.trim() || undefined,
+          email: email.trim() || undefined,
+          phone: phone.trim() || undefined,
+          data: {
+            request: note.trim() || requestText,
+            source: "human_handoff",
+          },
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          payload.error?.message || "Could not submit your request.",
+        );
+      }
+      setSubmitted(true);
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not submit your request.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (submitted) {
+    return (
+      <div className="chat-lead-success">
+        <CheckCircle2 size={15} />
+        <span><b>Request sent</b><small>The website team can now follow up from their Docent inbox.</small></span>
+      </div>
+    );
+  }
+
+  return (
+    <form className="chat-lead-form" onSubmit={submit}>
+      <div>
+        <b>{action.title}</b>
+        <small>{action.description}</small>
+      </div>
+      <input
+        aria-label="Your name"
+        maxLength={120}
+        onChange={(event) => setName(event.target.value)}
+        placeholder="Name (optional)"
+        value={name}
+      />
+      <input
+        aria-label="Email address"
+        onChange={(event) => setEmail(event.target.value)}
+        placeholder="Email address"
+        type="email"
+        value={email}
+      />
+      <input
+        aria-label="Phone number"
+        maxLength={40}
+        onChange={(event) => setPhone(event.target.value)}
+        placeholder="Phone number"
+        type="tel"
+        value={phone}
+      />
+      <textarea
+        aria-label="How can the team help?"
+        maxLength={1_000}
+        onChange={(event) => setNote(event.target.value)}
+        placeholder="How can the team help?"
+        rows={3}
+        value={note}
+      />
+      {error ? <span className="chat-lead-error">{error}</span> : null}
+      <button disabled={busy}>
+        {busy ? <LoaderCircle className="spin" size={13} /> : null}
+        {busy ? "Sending…" : action.submitLabel}
+      </button>
+    </form>
+  );
 }
 
 function sessionKey(agentId: string) {
@@ -237,6 +437,7 @@ export function ChatPanel({
           answer: string;
           grounded: boolean;
           citations: ChatMessage["citations"];
+          action?: ChatUiAction;
         };
         error?: { message?: string };
       };
@@ -252,6 +453,7 @@ export function ChatPanel({
           content: payload.data!.answer,
           grounded: payload.data!.grounded,
           citations: payload.data!.citations,
+          action: payload.data!.action,
         },
       ]);
     } catch (cause) {
@@ -300,7 +502,7 @@ export function ChatPanel({
       </header>
       <div className="chat-messages" aria-live="polite" ref={messagesRef}>
         <div className="chat-date">Today</div>
-        {messages.map((message) => (
+        {messages.map((message, messageIndex) => (
           <div className={`chat-line chat-line-${message.role}`} key={message.id}>
             {message.role === "assistant" && (
               <span className="chat-small-avatar">
@@ -315,7 +517,7 @@ export function ChatPanel({
             <div>
               <div className="chat-bubble">
                 {message.role === "assistant" ? (
-                  <LinkedMessage content={message.content} />
+                  <MarkdownMessage content={message.content} />
                 ) : (
                   message.content
                 )}
@@ -324,7 +526,7 @@ export function ChatPanel({
                 <details className="chat-citations">
                   <summary>
                     <ShieldCheck size={11} />
-                    {message.citations.length} verified source{message.citations.length === 1 ? "" : "s"}
+                    {message.citations.length} source{message.citations.length === 1 ? "" : "s"} used
                   </summary>
                   <div>
                     {message.citations.map((citation) => (
@@ -341,6 +543,22 @@ export function ChatPanel({
                     ))}
                   </div>
                 </details>
+              ) : null}
+              {message.role === "assistant" && message.action ? (
+                <LeadCapture
+                  action={message.action}
+                  agentId={agentId}
+                  conversationId={conversationId}
+                  embedToken={embedToken}
+                  getSessionId={getSessionId}
+                  requestText={
+                    [...messages]
+                      .slice(0, messageIndex)
+                      .reverse()
+                      .find((item) => item.role === "user")
+                      ?.content ?? ""
+                  }
+                />
               ) : null}
               {collectFeedback && message.role === "assistant" && message.id !== "welcome" && (
                 <div className="chat-rating">

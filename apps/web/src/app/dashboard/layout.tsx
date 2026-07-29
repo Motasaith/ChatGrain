@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
+import { and, count, eq } from "drizzle-orm";
 import { AppShell } from "@/components/app/app-shell";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
+import { db } from "@/lib/db/client";
+import { agents, conversations } from "@/lib/db/schema";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -21,6 +24,16 @@ export default async function DashboardLayout({
     }
   }
   const context = await getWorkspaceContext();
+  const [handoffs] = await db
+    .select({ count: count(conversations.id) })
+    .from(conversations)
+    .innerJoin(agents, eq(agents.id, conversations.agentId))
+    .where(
+      and(
+        eq(agents.workspaceId, context.workspaceId),
+        eq(conversations.status, "escalated"),
+      ),
+    );
   return (
     <AppShell
       identity={{
@@ -30,6 +43,7 @@ export default async function DashboardLayout({
         workspaceName: context.workspaceName,
       }}
       clerkEnabled={process.env.AUTH_PROVIDER === "clerk"}
+      pendingHandoffs={handoffs?.count ?? 0}
     >
       {children}
     </AppShell>
