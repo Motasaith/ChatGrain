@@ -62,6 +62,7 @@ type Source = {
 
 type Job = {
   id: string;
+  sourceId: string;
   status: string;
   progress: number;
   pagesDiscovered: number;
@@ -109,6 +110,7 @@ export function AgentStudio({
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [workerHealthy, setWorkerHealthy] = useState<boolean | null>(null);
   const [textOpen, setTextOpen] = useState(false);
   const [textName, setTextName] = useState("");
   const [textContent, setTextContent] = useState("");
@@ -123,8 +125,11 @@ export function AgentStudio({
     const timer = window.setInterval(async () => {
       const response = await fetch(`/api/jobs/${jobId}`);
       if (!response.ok) return;
-      const payload = await response.json() as { data: { job: Job; source: Source } };
+      const payload = await response.json() as {
+        data: { job: Job; source: Source; workerHealthy: boolean };
+      };
       setJob(payload.data.job);
+      setWorkerHealthy(payload.data.workerHealthy);
       setSources((current) => current.map((source) =>
         source.id === payload.data.source.id
           ? { ...source, ...payload.data.source }
@@ -326,6 +331,26 @@ export function AgentStudio({
   }
 
   const embedCode = `<script src="${typeof window === "undefined" ? "" : window.location.origin}/embed.js" data-agent-id="${agent.id}" async></script>`;
+  const jobSource = job
+    ? sources.find((source) => source.id === job.sourceId)
+    : undefined;
+  const crawlTarget = job?.pagesDiscovered
+    ? Math.min(job.pagesDiscovered, jobSource?.pageLimit ?? job.pagesDiscovered)
+    : jobSource?.pageLimit;
+  const processedTowardTarget =
+    job && crawlTarget
+      ? Math.min(job.pagesProcessed, crawlTarget)
+      : (job?.pagesProcessed ?? 0);
+  const visibleProgress =
+    job?.status === "running" && crawlTarget
+      ? Math.max(
+          job.progress,
+          Math.min(
+            68,
+            Math.round((processedTowardTarget / crawlTarget) * 68),
+          ),
+        )
+      : (job?.progress ?? 0);
 
   return (
     <>
@@ -373,13 +398,23 @@ export function AgentStudio({
         <div className="training-banner">
           <span><LoaderCircle className="spin" size={17} /></span>
           <div>
-            <b>{job.status === "queued" ? "Waiting for the worker" : "Training your agent"}</b>
+            <b>
+              {job.status === "queued"
+                ? workerHealthy === false
+                  ? "Worker is offline"
+                  : "Waiting for the worker"
+                : "Training your agent"}
+            </b>
             <small>
-              {job.pagesProcessed} of {job.pagesDiscovered || "?"} discovered pages processed
+              {job.status === "queued" && workerHealthy === false
+                ? "Start the worker to begin discovering pages."
+                : job.pagesDiscovered
+                  ? `${processedTowardTarget} of ${crawlTarget} selected pages processed · ${job.pagesDiscovered.toLocaleString()} URLs discovered`
+                  : "Preparing page discovery"}
             </small>
           </div>
-          <div className="training-progress"><i style={{ width: `${Math.max(4, job.progress)}%` }} /></div>
-          <strong>{job.progress}%</strong>
+          <div className="training-progress"><i style={{ width: `${Math.max(4, visibleProgress)}%` }} /></div>
+          <strong>{visibleProgress}%</strong>
         </div>
       )}
       {job?.status === "failed" && (

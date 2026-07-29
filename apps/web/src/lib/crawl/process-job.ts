@@ -41,21 +41,32 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     .set({ status: "training", updatedAt: new Date() })
     .where(eq(agents.id, record.agent.id));
 
+  let crawlProgress = 0;
   const result = await crawlWebsite({
     url: record.source.rootUrl,
     pageLimit: record.source.pageLimit,
     includePaths: record.source.includePaths,
     excludePaths: record.source.excludePaths,
     onProgress: async ({ discovered, processed }) => {
+      const crawlTarget = Math.max(
+        1,
+        Math.min(discovered, record.source.pageLimit),
+      );
+      crawlProgress = Math.max(
+        crawlProgress,
+        Math.min(
+          68,
+          Math.round(
+            (Math.min(processed, crawlTarget) / crawlTarget) * 68,
+          ),
+        ),
+      );
       await db
         .update(crawlJobs)
         .set({
           pagesDiscovered: discovered,
           pagesProcessed: processed,
-          progress: Math.min(
-            68,
-            Math.round((processed / Math.max(discovered, 1)) * 68),
-          ),
+          progress: crawlProgress,
           updatedAt: new Date(),
         })
         .where(eq(crawlJobs.id, jobId));

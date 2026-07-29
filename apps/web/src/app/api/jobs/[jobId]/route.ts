@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
-import { agents, crawlJobs, sources } from "@/lib/db/schema";
+import { agents, crawlJobs, sources, systemState } from "@/lib/db/schema";
 import { AppError, errorResponse } from "@/lib/http/errors";
 
 type RouteContext = { params: Promise<{ jobId: string }> };
@@ -22,15 +22,31 @@ export async function GET(_: Request, context: RouteContext) {
     if (!result) {
       throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
     }
-    const [owner] = await db
-      .select({ workspaceId: agents.workspaceId })
-      .from(agents)
-      .where(eq(agents.id, result.source.agentId))
-      .limit(1);
+    const [owners, workerStates] = await Promise.all([
+      db
+        .select({ workspaceId: agents.workspaceId })
+        .from(agents)
+        .where(eq(agents.id, result.source.agentId))
+        .limit(1),
+      db
+        .select({ updatedAt: systemState.updatedAt })
+        .from(systemState)
+        .where(eq(systemState.key, "worker"))
+        .limit(1),
+    ]);
+    const owner = owners[0];
     if (owner?.workspaceId !== workspace.workspaceId) {
       throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
     }
-    return NextResponse.json({ data: result, requestId });
+    const workerUpdatedAt = workerStates[0]?.updatedAt;
+    const workerHealthy = Boolean(
+      workerUpdatedAt &&
+        Date.now() - workerUpdatedAt.getTime() < 15_000,
+    );
+    return NextResponse.json({
+      data: { ...result, workerHealthy },
+      requestId,
+    });
   } catch (error) {
     return errorResponse(error, requestId);
   }

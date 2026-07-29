@@ -10,6 +10,10 @@ import { captureWorkerException } from "@/lib/observability/worker-sentry";
 
 const workerId = `worker_${randomUUID().slice(0, 8)}`;
 const pollInterval = Number(process.env.WORKER_POLL_MS ?? 1_200);
+const heartbeatInterval = Math.max(
+  2_000,
+  Number(process.env.WORKER_HEARTBEAT_MS ?? 5_000),
+);
 let stopping = false;
 let lastRefreshScan = 0;
 let lastRetentionScan = 0;
@@ -200,30 +204,40 @@ async function run() {
     workerId,
     pollInterval,
   });
-  while (!stopping) {
-    try {
-      await heartbeat();
-      await scheduleRefreshes();
-      await runRetentionCleanup();
-      const job = await claimJob();
-      if (!job) {
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
-        continue;
-      }
+  await heartbeat();
+  const heartbeatTimer = setInterval(() => {
+    void heartbeat().catch((error) => {
+      logger.warn({ error, workerId }, "Worker heartbeat failed");
+      captureWorkerException(error, { workerId, operation: "heartbeat" });
+    });
+  }, heartbeatInterval);
+  try {
+    while (!stopping) {
       try {
-        await processCrawlJob(job.id, job.sourceId);
+        await scheduleRefreshes();
+        await runRetentionCleanup();
+        const job = await claimJob();
+        if (!job) {
+          await new Promise((resolve) => setTimeout(resolve, pollInterval));
+          continue;
+        }
+        try {
+          await processCrawlJob(job.id, job.sourceId);
+        } catch (error) {
+          await failJob(job, error);
+        }
       } catch (error) {
-        await failJob(job, error);
+        logger.error({ error }, "Worker poll failed");
+        captureWorkerException(error, { workerId });
+        await recordSystemLog("error", "Worker poll failed", {
+          workerId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
       }
-    } catch (error) {
-      logger.error({ error }, "Worker poll failed");
-      captureWorkerException(error, { workerId });
-      await recordSystemLog("error", "Worker poll failed", {
-        workerId,
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
     }
+  } finally {
+    clearInterval(heartbeatTimer);
   }
   logger.info({ workerId }, "Docent worker stopped");
   await recordSystemLog("info", "Docent worker stopped", { workerId });

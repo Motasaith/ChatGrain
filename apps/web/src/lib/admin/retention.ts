@@ -1,6 +1,5 @@
-import "server-only";
-
 import { and, count, eq, lt, notInArray } from "drizzle-orm";
+import { getAdminEmails } from "@/lib/auth/admin-emails";
 import { db } from "@/lib/db/client";
 import {
   auditLogs,
@@ -10,7 +9,6 @@ import {
   users,
   workspaces,
 } from "@/lib/db/schema";
-import { getAdminEmails } from "@/lib/auth/session";
 import { recordSystemLog } from "@/lib/observability/system-log";
 
 type CleanupResult = {

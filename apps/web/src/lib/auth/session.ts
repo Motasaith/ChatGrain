@@ -1,6 +1,9 @@
 import "server-only";
 
 import { AppError } from "@/lib/http/errors";
+import { isAdminEmail } from "./admin-emails";
+
+export { getAdminEmails, isAdminEmail } from "./admin-emails";
 
 export type AuthIdentity = {
   externalId: string;
@@ -8,19 +11,6 @@ export type AuthIdentity = {
   name: string;
   avatarUrl?: string;
 };
-
-export function getAdminEmails() {
-  return new Set(
-    (process.env.ADMIN_EMAILS ?? "")
-      .split(",")
-      .map((email) => email.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
-
-export function isAdminEmail(email: string) {
-  return getAdminEmails().has(email.trim().toLowerCase());
-}
 
 export async function getCurrentIdentity(): Promise<AuthIdentity> {
   if (process.env.AUTH_PROVIDER === "clerk") {

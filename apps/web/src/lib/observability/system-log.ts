@@ -1,5 +1,3 @@
-import "server-only";
-
 import { db } from "@/lib/db/client";
 import { systemLogs } from "@/lib/db/schema";
 import { logger } from "./logger";
@@ -23,4 +21,3 @@ export async function recordSystemLog(
     logger.warn({ error, message }, "Could not persist system log");
   }
 }
-
