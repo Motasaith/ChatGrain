@@ -8,12 +8,13 @@ import { errorResponse, readJson } from "@/lib/http/errors";
 import { defaultLlmModel } from "@/lib/llm/client";
 import { recordAudit } from "@/lib/observability/audit";
 import { validatePublicUrl } from "@/lib/security/public-url";
+import { enforceCrawlPageLimit } from "@/lib/usage/limits";
 
 const createAgentSchema = z.object({
   name: z.string().trim().min(2).max(80),
   description: z.string().trim().max(500).default(""),
   websiteUrl: z.url().optional(),
-  pageLimit: z.number().int().min(1).max(500).default(100),
+  pageLimit: z.number().int().min(1).max(2_147_483_647).default(100),
 });
 
 export async function GET() {
@@ -35,10 +36,11 @@ export async function POST(request: Request) {
   const requestId = crypto.randomUUID();
   try {
     const input = createAgentSchema.parse(await readJson(request));
+    const context = await getWorkspaceContext();
+    const pageLimit = enforceCrawlPageLimit(input.pageLimit, context.isAdmin);
     const websiteUrl = input.websiteUrl
       ? await validatePublicUrl(input.websiteUrl)
       : null;
-    const context = await getWorkspaceContext();
     const result = await db.transaction(async (tx) => {
       const [agent] = await tx
         .insert(agents)
@@ -64,7 +66,7 @@ export async function POST(request: Request) {
           type: "website",
           name: root.hostname.replace(/^www\./, ""),
           rootUrl: root.href,
-          pageLimit: input.pageLimit,
+          pageLimit,
           status: "pending",
         })
         .returning();

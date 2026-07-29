@@ -21,7 +21,13 @@ type CreateResponse = {
   error?: { message?: string };
 };
 
-export function NewAgentForm() {
+export function NewAgentForm({
+  crawlLimit,
+  isAdmin,
+}: {
+  crawlLimit: number;
+  isAdmin: boolean;
+}) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -108,7 +114,18 @@ export function NewAgentForm() {
               <option value={100}>100 pages</option>
               <option value={250}>250 pages</option>
               <option value={500}>500 pages</option>
+              {isAdmin && crawlLimit > 500 ? (
+                <option value={crawlLimit}>
+                  Entire site (up to {crawlLimit.toLocaleString()} pages)
+                </option>
+              ) : null}
             </select>
+            {isAdmin ? (
+              <small>
+                Administrator crawl allowance. Raise
+                {" "}ADMIN_CRAWL_MAX_PAGES on larger deployments.
+              </small>
+            ) : null}
           </label>
           {error && <div className="form-error">{error}</div>}
           <button className="app-primary-button create-submit" disabled={busy}>

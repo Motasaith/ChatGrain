@@ -25,6 +25,54 @@ type ChatMessage = {
   }>;
 };
 
+function safeHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function LinkedMessage({ content }: { content: string }) {
+  const pattern =
+    /\[([^\]\n]{1,240})\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)/gi;
+  const output: React.ReactNode[] = [];
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(content))) {
+    if (match.index > cursor) {
+      output.push(content.slice(cursor, match.index));
+    }
+    const rawUrl = match[2] || match[3];
+    const trailing =
+      match[3]?.match(/[.,!?;:]+$/)?.[0] ?? "";
+    const linkValue = trailing
+      ? rawUrl.slice(0, -trailing.length)
+      : rawUrl;
+    const href = safeHttpUrl(linkValue);
+    if (href) {
+      output.push(
+        <a
+          href={href}
+          key={`${match.index}-${href}`}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          {match[1] || linkValue}
+          <ExternalLink aria-hidden="true" size={10} />
+        </a>,
+      );
+      if (trailing) output.push(trailing);
+    } else {
+      output.push(match[0]);
+    }
+    cursor = pattern.lastIndex;
+  }
+  if (cursor < content.length) output.push(content.slice(cursor));
+  return output;
+}
+
 function sessionKey(agentId: string) {
   return `docent-session-${agentId}`;
 }
@@ -263,7 +311,11 @@ export function ChatPanel({
             )}
             <div>
               <div className="chat-bubble">
-                {message.content}
+                {message.role === "assistant" ? (
+                  <LinkedMessage content={message.content} />
+                ) : (
+                  message.content
+                )}
               </div>
               {message.role === "assistant" && message.citations?.length ? (
                 <details className="chat-citations">

@@ -7,11 +7,12 @@ import { agents, crawlJobs, sources } from "@/lib/db/schema";
 import { errorResponse, readJson } from "@/lib/http/errors";
 import { recordAudit } from "@/lib/observability/audit";
 import { validatePublicUrl } from "@/lib/security/public-url";
+import { enforceCrawlPageLimit } from "@/lib/usage/limits";
 
 const websiteSourceSchema = z.object({
   type: z.literal("website"),
   url: z.string().min(1),
-  pageLimit: z.number().int().min(1).max(500).default(100),
+  pageLimit: z.number().int().min(1).max(2_147_483_647).default(100),
   includePaths: z.array(z.string().startsWith("/")).max(50).default([]),
   excludePaths: z.array(z.string().startsWith("/")).max(50).default([]),
   refreshIntervalHours: z.number().int().min(1).max(8_760).nullable().default(168),
@@ -25,6 +26,10 @@ export async function POST(request: Request, context: RouteContext) {
     const { agentId } = await context.params;
     const { context: workspace } = await requireAgent(agentId);
     const input = websiteSourceSchema.parse(await readJson(request));
+    const pageLimit = enforceCrawlPageLimit(
+      input.pageLimit,
+      workspace.isAdmin,
+    );
     const url = await validatePublicUrl(input.url);
     const result = await db.transaction(async (tx) => {
       const [existing] = await tx
@@ -35,7 +40,7 @@ export async function POST(request: Request, context: RouteContext) {
         )
         .limit(1);
       const values = {
-        pageLimit: input.pageLimit,
+        pageLimit,
         includePaths: input.includePaths,
         excludePaths: input.excludePaths,
         refreshIntervalHours: input.refreshIntervalHours,

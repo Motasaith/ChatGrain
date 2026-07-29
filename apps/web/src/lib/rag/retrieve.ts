@@ -7,7 +7,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { chunks, documents } from "@/lib/db/schema";
+import { chunks, documents, sources } from "@/lib/db/schema";
 import { embedText } from "./embeddings";
 
 export type RetrievalHit = {
@@ -21,6 +21,68 @@ export type RetrievalHit = {
   position: number;
   lexicalScore: number;
 };
+
+export async function findLatestIndexedLink(agentId: string) {
+  const rows = await db
+    .select({
+      chunkId: chunks.id,
+      content: chunks.content,
+      title: documents.title,
+      url: documents.canonicalUrl,
+      metadata: documents.metadata,
+      fetchedAt: documents.fetchedAt,
+      rootUrl: sources.rootUrl,
+    })
+    .from(documents)
+    .innerJoin(
+      chunks,
+      and(eq(chunks.documentId, documents.id), eq(chunks.position, 0)),
+    )
+    .innerJoin(sources, eq(sources.id, documents.sourceId))
+    .where(
+      and(
+        eq(chunks.agentId, agentId),
+        isNotNull(documents.canonicalUrl),
+      ),
+    )
+    .limit(20_000);
+  if (!rows.length) return null;
+
+  const published = rows
+    .map((row) => ({
+      row,
+      value: Date.parse(String(row.metadata?.publishedAt ?? "")),
+    }))
+    .filter((item) => Number.isFinite(item.value))
+    .sort((a, b) => b.value - a.value);
+  const numeric = rows
+    .map((row) => ({
+      row,
+      value: Number(row.metadata?.sortValue),
+    }))
+    .filter((item) => Number.isFinite(item.value))
+    .sort((a, b) => b.value - a.value);
+  const crawled = rows
+    .filter((row) => row.url !== row.rootUrl)
+    .map((row) => ({
+      row,
+      value: Number(row.metadata?.crawlOrder),
+    }))
+    .filter((item) => Number.isFinite(item.value))
+    .sort((a, b) => a.value - b.value);
+  const selected =
+    published[0]?.row ??
+    numeric[0]?.row ??
+    crawled[0]?.row ??
+    rows.sort((a, b) => b.fetchedAt.getTime() - a.fetchedAt.getTime())[0];
+  if (!selected?.url) return null;
+  return {
+    chunkId: selected.chunkId,
+    title: selected.title,
+    url: selected.url,
+    excerpt: selected.content.slice(0, 260),
+  };
+}
 
 export async function hybridRetrieve(
   agentId: string,

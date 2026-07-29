@@ -7,7 +7,18 @@ import {
   generateGroundedAnswer,
 } from "@/lib/llm/client";
 import { logger } from "@/lib/observability/logger";
-import { hybridRetrieve, type RetrievalHit } from "@/lib/rag/retrieve";
+import {
+  findLatestIndexedLink,
+  hybridRetrieve,
+  type RetrievalHit,
+} from "@/lib/rag/retrieve";
+
+function asksForLatestLink(question: string) {
+  return (
+    /\b(?:latest|newest|most\s+recent|recent)\b/i.test(question) &&
+    /\b(?:url|link|post|article|page|news)\b/i.test(question)
+  );
+}
 
 function terms(value: string) {
   return new Set(
@@ -150,6 +161,18 @@ export async function answerQuestion(agent: Agent, question: string) {
           ]
         : [],
     };
+  }
+
+  if (asksForLatestLink(question)) {
+    const latest = await findLatestIndexedLink(agent.id);
+    if (latest) {
+      return {
+        answer: `Here is the latest indexed post:\n[${latest.title}](${latest.url})`,
+        grounded: true,
+        confidence: 1,
+        citations: agent.showCitations ? [latest] : [],
+      };
+    }
   }
 
   const hits = await hybridRetrieve(agent.id, question);

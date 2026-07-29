@@ -28,6 +28,7 @@ import {
   WorkflowExplorer,
 } from "@/components/landing/home-interactions";
 import { Logo } from "@/components/logo";
+import { HomepageSupport } from "@/components/landing/homepage-support";
 
 const benchmark = [
   ["92", "sitemap URLs found"],
@@ -510,6 +511,7 @@ export default function Home() {
           </div>
         </div>
       </footer>
+      <HomepageSupport agentId={process.env.DOCENT_SITE_AGENT_ID} />
     </main>
   );
 }

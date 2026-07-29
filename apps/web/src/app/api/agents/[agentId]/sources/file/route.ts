@@ -3,9 +3,13 @@ import * as cheerio from "cheerio";
 import { requireAgent } from "@/lib/agents/access";
 import { AppError, errorResponse } from "@/lib/http/errors";
 import { rateLimit } from "@/lib/http/rate-limit";
+import { ingestCsvSource } from "@/lib/sources/ingest-csv";
 import { ingestTextSource } from "@/lib/sources/ingest-text";
+import {
+  fileUploadLimit,
+  formatByteLimit,
+} from "@/lib/usage/limits";
 
-const MAX_FILE_BYTES = 5_000_000;
 const accepted = new Set([
   "text/plain",
   "text/markdown",
@@ -21,21 +25,46 @@ export async function POST(
   const requestId = crypto.randomUUID();
   try {
     const { agentId } = await params;
-    await requireAgent(agentId);
+    const { context } = await requireAgent(agentId);
     rateLimit(`file:${agentId}`, 20, 60_000);
+    const maximumBytes = fileUploadLimit(context.isAdmin);
+    const limitLabel = formatByteLimit(maximumBytes);
     const declaredSize = Number(request.headers.get("content-length") ?? 0);
-    if (declaredSize > MAX_FILE_BYTES + 100_000) {
-      throw new AppError("FILE_TOO_LARGE", "Files are limited to 5 MB.", 413);
+    if (
+      maximumBytes !== null &&
+      declaredSize > maximumBytes + 100_000
+    ) {
+      throw new AppError(
+        "FILE_TOO_LARGE",
+        `Files are limited to ${limitLabel}.`,
+        413,
+      );
     }
     const form = await request.formData();
     const value = form.get("file");
     if (!(value instanceof File)) {
       throw new AppError("FILE_REQUIRED", "Choose a file to upload.", 422);
     }
-    if (value.size > MAX_FILE_BYTES) {
-      throw new AppError("FILE_TOO_LARGE", "Files are limited to 5 MB.", 413);
+    if (maximumBytes !== null && value.size > maximumBytes) {
+      throw new AppError(
+        "FILE_TOO_LARGE",
+        `Files are limited to ${limitLabel}.`,
+        413,
+      );
     }
-    if (!accepted.has(value.type)) {
+    const extension = value.name.toLowerCase().split(".").pop();
+    const acceptedExtension = new Set([
+      "txt",
+      "md",
+      "markdown",
+      "csv",
+      "json",
+      "html",
+    ]);
+    if (
+      !accepted.has(value.type) &&
+      (!extension || !acceptedExtension.has(extension))
+    ) {
       throw new AppError(
         "UNSUPPORTED_FILE",
         "Supported files are TXT, Markdown, CSV, JSON, and HTML.",
@@ -56,14 +85,25 @@ export async function POST(
         422,
       );
     }
-    const result = await ingestTextSource({
+    const result =
+      value.type === "text/csv" || value.name.toLowerCase().endsWith(".csv")
+        ? await ingestCsvSource({
+            agentId,
+            name: value.name.slice(0, 160),
+            content,
+          })
+        : null;
+    const ingested = result ?? await ingestTextSource({
       agentId,
       name: value.name.slice(0, 160),
       content,
       type: "file",
       mimeType: value.type,
     });
-    return NextResponse.json({ data: result, requestId }, { status: 201 });
+    return NextResponse.json(
+      { data: ingested, requestId },
+      { status: 201 },
+    );
   } catch (error) {
     return errorResponse(error, requestId);
   }

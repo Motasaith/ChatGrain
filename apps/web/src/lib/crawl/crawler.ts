@@ -15,6 +15,7 @@ import {
   type ExtractedPage,
   type SiteBrand,
 } from "./extract";
+import { systemCrawlPageLimit } from "@/lib/usage/limits";
 
 export type CrawlOptions = {
   url: string;
@@ -73,21 +74,34 @@ async function loadRobots(origin: string, fetchPublic: SafeFetcher) {
   }
 }
 
-async function discoverSitemap(root: URL, fetchPublic: SafeFetcher) {
-  const candidates = [
+async function discoverSitemap(
+  root: URL,
+  fetchPublic: SafeFetcher,
+  maximumUrls: number,
+) {
+  const queue = [
     new URL("/sitemap.xml", root),
     new URL("/sitemap_index.xml", root),
   ];
+  const visited = new Set<string>();
   const urls = new Set<string>();
-  for (const candidate of candidates) {
+  while (
+    queue.length &&
+    visited.size < 100 &&
+    urls.size < maximumUrls
+  ) {
+    const candidate = queue.shift()!;
+    if (visited.has(candidate.href)) continue;
+    visited.add(candidate.href);
     try {
       const { response } = await fetchPublic(candidate, {
         timeoutMs: 8_000,
-        maxBytes: 2_000_000,
+        maxBytes: 5_000_000,
         headers: { accept: "application/xml,text/xml" },
       });
       if (!response.ok) continue;
       const xml = await response.text();
+      const sitemapIndex = /<sitemapindex(?:\s|>)/i.test(xml);
       for (const match of xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)) {
         const value = match[1]
           .replaceAll("&amp;", "&")
@@ -95,12 +109,20 @@ async function discoverSitemap(root: URL, fetchPublic: SafeFetcher) {
           .replaceAll("&gt;", ">");
         try {
           const url = new URL(value);
-          if (url.origin === root.origin) urls.add(url.href);
+          if (url.origin !== root.origin) continue;
+          if (
+            sitemapIndex ||
+            /\.(?:xml|xml\.gz)(?:$|\?)/i.test(url.pathname)
+          ) {
+            if (!visited.has(url.href)) queue.push(url);
+          } else {
+            urls.add(url.href);
+            if (urls.size >= maximumUrls) break;
+          }
         } catch {
           continue;
         }
       }
-      if (urls.size) break;
     } catch {
       continue;
     }
@@ -179,7 +201,7 @@ export async function crawlWebsite({
   onProgress,
 }: CrawlOptions): Promise<CrawlResult> {
   const root = await validatePublicUrl(input);
-  const limit = Math.max(1, Math.min(500, pageLimit));
+  const limit = Math.max(1, Math.min(systemCrawlPageLimit(), pageLimit));
   const fetchPublic = createSafeFetcher();
   const browserRenderer = createBrowserRenderer();
   const allowedByRobots = await loadRobots(root.origin, fetchPublic);
@@ -191,8 +213,9 @@ export async function crawlWebsite({
     );
   }
 
-  const sitemapUrls = (await discoverSitemap(root, fetchPublic)).slice(
-    0,
+  const sitemapUrls = await discoverSitemap(
+    root,
+    fetchPublic,
     limit * 8,
   );
   const queue = [

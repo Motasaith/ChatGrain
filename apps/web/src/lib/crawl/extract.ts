@@ -10,6 +10,7 @@ export type ExtractedPage = {
   contentHash: string;
   links: string[];
   description?: string;
+  publishedAt?: string;
 };
 
 export type SiteBrand = {
@@ -252,6 +253,14 @@ export function extractPage(html: string, pageUrl: URL): ExtractedPage {
     $("meta[property='og:title']").attr("content")?.trim() ||
     $("title").text().trim() ||
     pageUrl.pathname;
+  const publishedValue =
+    $("meta[property='article:published_time']").attr("content") ??
+    $("meta[name='date']").attr("content") ??
+    $("meta[name='publish-date']").attr("content") ??
+    $("time[datetime]").first().attr("datetime");
+  const publishedDate = publishedValue
+    ? new Date(publishedValue)
+    : undefined;
 
   return {
     url: pageUrl.href,
@@ -262,5 +271,9 @@ export function extractPage(html: string, pageUrl: URL): ExtractedPage {
     description:
       article?.excerpt ??
       $("meta[name='description']").attr("content")?.trim(),
+    publishedAt:
+      publishedDate && !Number.isNaN(publishedDate.getTime())
+        ? publishedDate.toISOString()
+        : undefined,
   };
 }

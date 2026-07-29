@@ -11,6 +11,11 @@ import {
   sources,
 } from "@/lib/db/schema";
 import { createWidgetToken } from "@/lib/security/widget-token";
+import {
+  crawlPageLimit,
+  fileUploadLimit,
+  formatByteLimit,
+} from "@/lib/usage/limits";
 
 export default async function AgentPage({
   params,
@@ -64,6 +69,11 @@ export default async function AgentPage({
       initialJob={job}
       initialPinned={pinned}
       initialSources={sourceList}
+      isAdmin={workspace.isAdmin}
+      crawlLimit={crawlPageLimit(workspace.isAdmin)}
+      fileLimitLabel={formatByteLimit(
+        fileUploadLimit(workspace.isAdmin),
+      )}
       previewToken={previewToken}
     />
   );

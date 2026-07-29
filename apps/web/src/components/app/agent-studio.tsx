@@ -92,12 +92,18 @@ export function AgentStudio({
   initialJob,
   previewToken,
   initialPinned,
+  isAdmin,
+  crawlLimit,
+  fileLimitLabel,
 }: {
   initialAgent: Agent;
   initialSources: Source[];
   initialJob?: Job | null;
   previewToken: string;
   initialPinned: PinnedAnswer[];
+  isAdmin: boolean;
+  crawlLimit: number;
+  fileLimitLabel: string;
 }) {
   const [agent, setAgent] = useState(initialAgent);
   const [sources, setSources] = useState(initialSources);
@@ -107,6 +113,9 @@ export function AgentStudio({
     initialAgent.status === "ready" ? "playground" : "knowledge",
   );
   const [sourceUrl, setSourceUrl] = useState("");
+  const [sourcePageLimit, setSourcePageLimit] = useState(
+    isAdmin ? crawlLimit : Math.min(100, crawlLimit),
+  );
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -192,7 +201,7 @@ export function AgentStudio({
       body: JSON.stringify({
         type: "website",
         url: sourceUrl,
-        pageLimit: 100,
+        pageLimit: sourcePageLimit,
       }),
     });
     const payload = await response.json();
@@ -247,7 +256,7 @@ export function AgentStudio({
           ...payload.data.source,
           rootUrl: null,
           errorMessage: null,
-          documentCount: 1,
+          documentCount: payload.data.documentCount ?? 1,
         },
         ...current,
       ]);
@@ -440,6 +449,23 @@ export function AgentStudio({
                 type="url"
                 value={sourceUrl}
               />
+              <select
+                aria-label="Maximum pages"
+                onChange={(event) =>
+                  setSourcePageLimit(Number(event.target.value))
+                }
+                value={sourcePageLimit}
+              >
+                <option value={100}>100 pages</option>
+                <option value={Math.min(500, crawlLimit)}>
+                  {Math.min(500, crawlLimit)} pages
+                </option>
+                {isAdmin && crawlLimit > 500 ? (
+                  <option value={crawlLimit}>
+                    Entire site · {crawlLimit.toLocaleString()}
+                  </option>
+                ) : null}
+              </select>
               <button disabled={saving}><Plus size={14} /> Add website</button>
             </form>
             <div className="knowledge-tools">
@@ -463,6 +489,12 @@ export function AgentStudio({
                 <Pin size={13} /> Pin an answer
               </button>
             </div>
+            <small className="knowledge-limit-note">
+              File uploads: {fileLimitLabel}.
+              {isAdmin
+                ? ` Full-site crawling is available up to ${crawlLimit.toLocaleString()} pages.`
+                : ""}
+            </small>
             {textOpen && (
               <form className="knowledge-inline-editor" onSubmit={addText}>
                 <label className="field"><span>Source name</span><input onChange={(event) => setTextName(event.target.value)} placeholder="Product overview" required value={textName} /></label>

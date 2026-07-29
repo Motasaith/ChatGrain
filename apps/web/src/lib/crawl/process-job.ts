@@ -80,6 +80,7 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
 
   const prepared: Array<{
     page: (typeof result.pages)[number];
+    crawlOrder: number;
     chunks: Array<{
       position: number;
       content: string;
@@ -106,7 +107,7 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
         })),
       );
     }
-    prepared.push({ page, chunks: embeddedChunks });
+    prepared.push({ page, crawlOrder: pageIndex, chunks: embeddedChunks });
 
     await db
       .update(crawlJobs)
@@ -135,7 +136,11 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
           title: item.page.title,
           contentHash: item.page.contentHash,
           characterCount: item.page.text.length,
-          metadata: { description: item.page.description },
+          metadata: {
+            description: item.page.description,
+            publishedAt: item.page.publishedAt,
+            crawlOrder: item.crawlOrder,
+          },
         })
         .returning();
       if (item.chunks.length) {
