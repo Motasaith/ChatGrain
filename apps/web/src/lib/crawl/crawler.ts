@@ -22,6 +22,7 @@ export type CrawlOptions = {
   pageLimit: number;
   includePaths?: string[];
   excludePaths?: string[];
+  trustedInternal?: boolean;
   onProgress?: (progress: {
     discovered: number;
     processed: number;
@@ -198,12 +199,19 @@ export async function crawlWebsite({
   pageLimit,
   includePaths = [],
   excludePaths = [],
+  trustedInternal = false,
   onProgress,
 }: CrawlOptions): Promise<CrawlResult> {
-  const root = await validatePublicUrl(input);
+  const root = await validatePublicUrl(input, {
+    allowPrivate: trustedInternal,
+  });
   const limit = Math.max(1, Math.min(systemCrawlPageLimit(), pageLimit));
-  const fetchPublic = createSafeFetcher();
-  const browserRenderer = createBrowserRenderer();
+  const fetchPublic = createSafeFetcher({
+    allowPrivate: trustedInternal,
+  });
+  const browserRenderer = createBrowserRenderer({
+    allowPrivate: trustedInternal,
+  });
   const allowedByRobots = await loadRobots(root.origin, fetchPublic);
   if (!allowedByRobots(root)) {
     throw new AppError(

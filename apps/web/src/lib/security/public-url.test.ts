@@ -1,21 +1,46 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+const dnsResult = vi.hoisted(() => ({ address: "93.184.216.34" }));
 
 vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(async () => [
     {
-      address: "93.184.216.34",
+      address: dnsResult.address,
       family: 4,
     },
   ]),
 }));
 
-import { createSafeFetcher, safeFetch } from "./public-url";
+import {
+  createSafeFetcher,
+  safeFetch,
+  validatePublicUrl,
+} from "./public-url";
 
 afterEach(() => {
+  dnsResult.address = "93.184.216.34";
   vi.unstubAllGlobals();
 });
 
 describe("safeFetch", () => {
+  it("keeps private network URLs blocked by default", async () => {
+    dnsResult.address = "127.0.0.1";
+
+    await expect(validatePublicUrl("http://localhost:3000")).rejects.toMatchObject({
+      code: "PRIVATE_URL_BLOCKED",
+    });
+  });
+
+  it("allows a private URL only when an internal caller opts in", async () => {
+    dnsResult.address = "127.0.0.1";
+
+    await expect(
+      validatePublicUrl("http://localhost:3000", { allowPrivate: true }),
+    ).resolves.toMatchObject({
+      hostname: "localhost",
+      port: "3000",
+    });
+  });
+
   it("retains cookies through a Clerk-style cross-origin handshake", async () => {
     const requests: Array<{ url: string; cookie: string | null }> = [];
     const fetchMock = vi.fn(

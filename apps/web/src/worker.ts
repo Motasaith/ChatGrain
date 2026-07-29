@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, lt, lte, sql } from "drizzle-orm";
 import { cleanupInactiveUsers } from "@/lib/admin/retention";
+import { ensureHomepageAgent } from "@/lib/agents/homepage-agent";
 import { processCrawlJob } from "@/lib/crawl/process-job";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources, systemState } from "@/lib/db/schema";
@@ -198,6 +199,20 @@ async function failJob(
 }
 
 async function run() {
+  try {
+    const homepageAgentId = await ensureHomepageAgent();
+    if (homepageAgentId) {
+      logger.info(
+        { agentId: homepageAgentId },
+        "Homepage support agent is configured",
+      );
+    }
+  } catch (error) {
+    logger.warn({ error }, "Homepage support agent setup failed");
+    await recordSystemLog("warn", "Homepage support agent setup failed", {
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
   await recoverStaleJobs();
   logger.info({ workerId, pollInterval }, "Docent worker started");
   await recordSystemLog("info", "Docent worker started", {

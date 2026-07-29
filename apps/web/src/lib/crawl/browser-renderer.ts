@@ -78,7 +78,9 @@ export type BrowserRenderer = {
   close: () => Promise<void>;
 };
 
-export function createBrowserRenderer(): BrowserRenderer {
+export function createBrowserRenderer({
+  allowPrivate = false,
+}: { allowPrivate?: boolean } = {}): BrowserRenderer {
   const renderTimeoutMs = boundedNumber(
     process.env.CRAWL_RENDER_TIMEOUT_MS,
     10_000,
@@ -145,7 +147,7 @@ export function createBrowserRenderer(): BrowserRenderer {
               await route.abort("blockedbyclient");
               return;
             }
-            await validatePublicUrl(requestUrl.href);
+            await validatePublicUrl(requestUrl.href, { allowPrivate });
             await route.continue();
           } catch {
             await route.abort("blockedbyclient");
@@ -160,7 +162,7 @@ export function createBrowserRenderer(): BrowserRenderer {
   return {
     render: (url) =>
       withSlot(async () => {
-        await validatePublicUrl(url.href);
+        await validatePublicUrl(url.href, { allowPrivate });
         const context = await getContext();
         let lastError: unknown;
         for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -197,7 +199,9 @@ export function createBrowserRenderer(): BrowserRenderer {
                 { timeout: renderTimeoutMs },
               )
               .catch(() => undefined);
-            const finalUrl = await validatePublicUrl(page.url());
+            const finalUrl = await validatePublicUrl(page.url(), {
+              allowPrivate,
+            });
             const renderedText = (await page.locator("body").innerText())
               .replace(/\s+/g, " ")
               .trim();

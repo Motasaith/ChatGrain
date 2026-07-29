@@ -27,7 +27,10 @@ function isPrivateIp(address: string) {
   );
 }
 
-export async function validatePublicUrl(value: string) {
+export async function validatePublicUrl(
+  value: string,
+  { allowPrivate = false }: { allowPrivate?: boolean } = {},
+) {
   let url: URL;
   try {
     url = new URL(value);
@@ -49,7 +52,11 @@ export async function validatePublicUrl(value: string) {
     );
   }
   const records = await lookup(url.hostname, { all: true, verbatim: true });
-  if (!records.length || records.some((record) => isPrivateIp(record.address))) {
+  if (
+    !records.length ||
+    (!allowPrivate &&
+      records.some((record) => isPrivateIp(record.address)))
+  ) {
     throw new AppError(
       "PRIVATE_URL_BLOCKED",
       "Private and local network URLs are not allowed.",
@@ -63,6 +70,7 @@ export async function validatePublicUrl(value: string) {
 type SafeFetchInit = RequestInit & {
   timeoutMs?: number;
   maxBytes?: number;
+  allowPrivate?: boolean;
 };
 
 export type SafeFetcher = (
@@ -79,13 +87,14 @@ async function fetchWithRedirects(
   if (redirectCount > 5) {
     throw new AppError("TOO_MANY_REDIRECTS", "Too many redirects.", 422);
   }
-  const url = await validatePublicUrl(String(input));
   const {
     timeoutMs = 15_000,
     maxBytes = 3_000_000,
+    allowPrivate = false,
     headers: customHeaders,
     ...fetchInit
   } = init;
+  const url = await validatePublicUrl(String(input), { allowPrivate });
   const headers = new Headers({
     "user-agent": "DocentBot/0.2 (+self-hosted knowledge crawler)",
     accept:
@@ -174,8 +183,14 @@ export async function safeFetch(
   return fetchWithRedirects(input, init, new CookieJar());
 }
 
-export function createSafeFetcher(): SafeFetcher {
+export function createSafeFetcher({
+  allowPrivate = false,
+}: { allowPrivate?: boolean } = {}): SafeFetcher {
   const cookieJar = new CookieJar();
   return (input, init = {}) =>
-    fetchWithRedirects(input, init, cookieJar);
+    fetchWithRedirects(
+      input,
+      { ...init, allowPrivate },
+      cookieJar,
+    );
 }

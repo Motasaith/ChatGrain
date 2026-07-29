@@ -47,6 +47,10 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     pageLimit: record.source.pageLimit,
     includePaths: record.source.includePaths,
     excludePaths: record.source.excludePaths,
+    trustedInternal:
+      process.env.NODE_ENV !== "production" &&
+      record.source.metadata?.managedBy === "docent-homepage" &&
+      record.source.metadata?.trustedInternal === true,
     onProgress: async ({ discovered, processed }) => {
       const crawlTarget = Math.max(
         1,
@@ -122,6 +126,8 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     (total, item) => total + item.chunks.length,
     0,
   );
+  const managedHomepage =
+    record.source.metadata?.managedBy === "docent-homepage";
   await db.transaction(async (tx) => {
     // The old searchable index remains live until all new embeddings exist.
     // Replacement then happens atomically, so a failed model download cannot
@@ -185,7 +191,8 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
       .set({
         status: "ready",
         primaryColor:
-          record.agent.primaryColor === "#177e51"
+          !managedHomepage &&
+            record.agent.primaryColor === "#177e51"
             ? result.brand.primaryColor
             : record.agent.primaryColor,
         logoUrl:

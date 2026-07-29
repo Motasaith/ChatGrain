@@ -51,6 +51,17 @@ npm run dev
 Open `http://localhost:3000`. The web process and crawl worker run together in
 development. PostgreSQL is exposed on local port `5434`.
 
+The worker also maintains the support agent shown on Docent's own homepage.
+Set `DOCENT_SITE_URL` to the public deployment URL and configure
+`DOCENT_SITE_REFRESH_HOURS` (one hour by default). The source is refreshed when
+the worker starts and on that schedule, so newly deployed public content is
+discovered without manually retraining the agent. `DOCENT_SITE_AGENT_ID` can
+override this behavior with an existing agent. A deployment hook can run
+`npm run site-agent:sync` to queue an immediate refresh after publishing.
+
+See the [Chatbase parity roadmap](docs/chatbase-parity.md) for the researched
+feature comparison and recommended implementation order.
+
 Chrome, Chromium, or Microsoft Edge is used only as a fallback for sites whose
 public text is rendered by JavaScript. Set `BROWSER_EXECUTABLE_PATH` if the
 worker cannot find a browser in a standard operating-system location.

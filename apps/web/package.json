@@ -6,6 +6,7 @@
     "dev": "concurrently -k -n web,worker -c green,cyan \"next dev\" \"tsx watch src/worker-entry.ts\"",
     "dev:web": "next dev",
     "worker": "tsx src/worker-entry.ts",
+    "site-agent:sync": "tsx scripts/sync-homepage-agent.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
