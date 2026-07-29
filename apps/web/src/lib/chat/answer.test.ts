@@ -5,6 +5,7 @@ import {
   contextualCitation,
   type AnswerHistoryMessage,
 } from "./answer";
+import { parseConversationIntent } from "@/lib/llm/client";
 
 describe("conversation-aware article links", () => {
   it("returns the specific article cited by the previous answer", () => {
@@ -91,10 +92,43 @@ describe("conversation-aware article links", () => {
 describe("answer presentation", () => {
   it("recognizes explicit human handoff requests", () => {
     expect(asksForHumanSupport("Can I talk to customer support?")).toBe(true);
+    expect(asksForHumanSupport("can i contact the support team")).toBe(true);
+    expect(
+      asksForHumanSupport("I need to get in touch with the website owner"),
+    ).toBe(true);
+    expect(asksForHumanSupport("Please have someone call me")).toBe(true);
     expect(
       asksForHumanSupport("Is there a direct email for my enquiry?"),
     ).toBe(true);
+    expect(
+      asksForHumanSupport("mujhe support team se baat karni hai"),
+    ).toBe(true);
+    expect(asksForHumanSupport("admin se rabta karwa dein")).toBe(true);
+    expect(asksForHumanSupport("koi mujhe call kare")).toBe(true);
+    expect(
+      asksForHumanSupport("کیا میں کسی انسان سے بات کر سکتا ہوں؟"),
+    ).toBe(true);
     expect(asksForHumanSupport("How does this circuit work?")).toBe(false);
+    expect(
+      asksForHumanSupport("Does this library support Raspberry Pi 5?"),
+    ).toBe(false);
+    expect(
+      asksForHumanSupport("How does customer support software work?"),
+    ).toBe(false);
+    expect(
+      asksForHumanSupport("What is a support vector machine?"),
+    ).toBe(false);
+  });
+
+  it("accepts only the explicit handoff label from the intent model", () => {
+    expect(parseConversationIntent("HUMAN_HANDOFF")).toBe("human_handoff");
+    expect(parseConversationIntent(" HUMAN_HANDOFF\n")).toBe(
+      "human_handoff",
+    );
+    expect(parseConversationIntent("KNOWLEDGE")).toBe("knowledge");
+    expect(parseConversationIntent("I think this is a handoff")).toBe(
+      "knowledge",
+    );
   });
 
   it("removes internal evidence markers including grouped references", () => {

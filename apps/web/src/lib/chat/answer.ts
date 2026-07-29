@@ -3,6 +3,7 @@ import type { Agent } from "@/lib/db/schema";
 import { db } from "@/lib/db/client";
 import { pinnedAnswers } from "@/lib/db/schema";
 import {
+  classifyConversationIntent,
   defaultLlmModel,
   generateGroundedAnswer,
 } from "@/lib/llm/client";
@@ -103,15 +104,55 @@ function sourceSpecificity(url: string, title: string) {
 }
 
 export function asksForHumanSupport(question: string) {
+  const normalized = question
+    .normalize("NFKC")
+    .replace(/[’']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
   return (
-    /\b(?:talk|speak|chat|connect|transfer|reach)\b.{0,45}\b(?:human|person|someone|support|admin|owner|agent|team|staff)\b/i.test(
-      question,
+    /\b(?:talk|speak|chat|contact|call|email|message|connect|transfer|reach|get in touch)\b.{0,60}\b(?:a real person|human|person|someone|support|customer service|representative|admin|owner|agent|team|staff)\b/i.test(
+      normalized,
     ) ||
-    /\b(?:human|person|someone|support|admin|owner|agent|team|staff)\b.{0,45}\b(?:talk|speak|chat|contact|call|reply|reach)\b/i.test(
-      question,
+    /\b(?:a real person|human|person|someone|support|customer service|representative|admin|owner|agent|team|staff)\b.{0,60}\b(?:talk|speak|chat|contact|call|email|message|reply|reach|get in touch)\b/i.test(
+      normalized,
     ) ||
-    /\b(?:phone number|direct email|email address)\b/i.test(question)
+    /\b(?:have|ask|get|tell)\b.{0,30}\b(?:someone|support|customer service|admin|owner|agent|team|staff)\b.{0,30}\b(?:contact|call|email|message|reply|reach)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:phone number|direct email|email address|contact details)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:mujhe|mujhse|mujh se|humain|hamein|hamain|kisi)\b.{0,55}\b(?:insan|insaan|banda|banday|bande|support|admin|owner|agent|team|staff)\b.{0,55}\b(?:baat|bat|rabta|raabta|contact|call|reply)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:support|admin|owner|agent|team|staff|insan|insaan|banda|banday|bande)\b.{0,55}\b(?:se|say)\b.{0,35}\b(?:baat|bat|rabta|raabta|contact)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:koi|ap|aap)\b.{0,35}\b(?:mujhe|mujhse|mujh se)\b.{0,35}\b(?:contact|call|reply|rabta|raabta)\b/i.test(
+      normalized,
+    ) ||
+    /(?:انسان|شخص|ایڈمن|مالک|سپورٹ|نمائندہ|ٹیم).{0,60}(?:بات|رابطہ|کال|ای میل)/u.test(
+      normalized,
+    ) ||
+    /(?:بات|رابطہ|کال|ای میل).{0,60}(?:انسان|شخص|ایڈمن|مالک|سپورٹ|نمائندہ|ٹیم)/u.test(
+      normalized,
+    )
   );
+}
+
+async function shouldOfferHumanHandoff(
+  agent: Agent,
+  question: string,
+  history: AnswerHistoryMessage[],
+) {
+  if (asksForHumanSupport(question)) return true;
+  const intent = await classifyConversationIntent({
+    message: question,
+    history: history.map(({ role, content }) => ({ role, content })),
+    model: agent.modelName,
+  });
+  return intent === "human_handoff";
 }
 
 function contactPageScore(hit: RetrievalHit) {
@@ -454,6 +495,10 @@ export async function answerQuestion(
   question: string,
   history: AnswerHistoryMessage[] = [],
 ) {
+  if (await shouldOfferHumanHandoff(agent, question, history)) {
+    return humanSupportAnswer(agent);
+  }
+
   const pinned = await findPinnedAnswer(agent.id, question);
   if (pinned) {
     return {
@@ -470,10 +515,6 @@ export async function answerQuestion(
           ]
         : [],
     };
-  }
-
-  if (asksForHumanSupport(question)) {
-    return humanSupportAnswer(agent);
   }
 
   if (asksForLatestLink(question)) {
