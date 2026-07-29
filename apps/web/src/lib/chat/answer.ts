@@ -648,8 +648,12 @@ async function llmAnswer(
   question: string,
   hits: RetrievalHit[],
   history: AnswerHistoryMessage[],
+  images: Array<{ mimeType: string; base64: string }>,
 ) {
-  const model = agent.modelName || defaultLlmModel();
+  const model =
+    (images.length ? process.env.VISION_LLM_MODEL?.trim() : "") ||
+    agent.modelName ||
+    defaultLlmModel();
   const context = hits
     .map(
       (hit, index) =>
@@ -663,6 +667,7 @@ async function llmAnswer(
       context,
       question: conversationQuestion(question, history),
       temperature: agent.temperature,
+      images,
     });
   } catch (error) {
     logger.warn({ error, model }, "Ollama generation failed");
@@ -674,6 +679,7 @@ export async function answerQuestion(
   agent: Agent,
   question: string,
   history: AnswerHistoryMessage[] = [],
+  images: Array<{ mimeType: string; base64: string }> = [],
 ) {
   if (await shouldOfferHumanHandoff(agent, question, history)) {
     return humanSupportAnswer(agent);
@@ -758,6 +764,37 @@ export async function answerQuestion(
       )
     : 0;
   const threshold = agent.strictMode ? 0.3 : 0.18;
+  if (images.length) {
+    const imageEvidence = hits.length
+      ? coherentEvidence(hits, question)
+      : [];
+    const generated = await llmAnswer(
+      agent,
+      question,
+      imageEvidence,
+      history,
+      images,
+    );
+    if (generated) {
+      return {
+        answer: addRequestedEvidenceLinks(
+          cleanGeneratedAnswer(generated),
+          question,
+          imageEvidence,
+        ),
+        grounded: true,
+        confidence: Math.max(confidence, 0.75),
+        citations: agent.showCitations
+          ? citedEvidence(generated, imageEvidence).map((hit) => ({
+              chunkId: hit.chunkId,
+              title: hit.title,
+              url: hit.url,
+              excerpt: hit.content.slice(0, 260),
+            }))
+          : [],
+      };
+    }
+  }
   if (!best || confidence < threshold) {
     const previousAssistant = [...history]
       .reverse()
@@ -778,7 +815,7 @@ export async function answerQuestion(
   const evidenceHits = coherentEvidence(hits, question);
   const generated =
     agent.modelProvider === "ollama"
-      ? await llmAnswer(agent, question, evidenceHits, history)
+      ? await llmAnswer(agent, question, evidenceHits, history, images)
       : null;
   const listFallback = generated
     ? null

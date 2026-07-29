@@ -1,9 +1,16 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { answerQuestion } from "@/lib/chat/answer";
+import { readAttachment } from "@/lib/chat/attachment-storage";
 import { db } from "@/lib/db/client";
-import { agents, conversations, messages } from "@/lib/db/schema";
+import {
+  agents,
+  conversations,
+  messageAttachments,
+  messages,
+  tickets,
+} from "@/lib/db/schema";
 import { AppError, errorResponse, readJson } from "@/lib/http/errors";
 import { rateLimit } from "@/lib/http/rate-limit";
 import {
@@ -18,6 +25,7 @@ const chatSchema = z.object({
   externalUserId: z.string().trim().max(200).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   embedToken: z.string().max(2_000).optional(),
+  attachmentIds: z.array(z.uuid()).max(3).default([]),
 });
 
 type RouteContext = { params: Promise<{ agentId: string }> };
@@ -70,9 +78,19 @@ export async function POST(request: Request, context: RouteContext) {
             eq(conversations.id, input.conversationId),
             eq(conversations.agentId, agentId),
             eq(conversations.sessionId, input.sessionId),
+            ...(input.externalUserId
+              ? [eq(conversations.externalUserId, input.externalUserId)]
+              : []),
           ),
         )
         .limit(1);
+      if (!conversation) {
+        throw new AppError(
+          "CONVERSATION_NOT_FOUND",
+          "Conversation not found.",
+          404,
+        );
+      }
     }
     if (!conversation) {
       [conversation] = await db
@@ -84,6 +102,25 @@ export async function POST(request: Request, context: RouteContext) {
           metadata: input.metadata ?? {},
         })
         .returning();
+    }
+    const attachments = input.attachmentIds.length
+      ? await db
+          .select()
+          .from(messageAttachments)
+          .where(
+            and(
+              inArray(messageAttachments.id, input.attachmentIds),
+              eq(messageAttachments.conversationId, conversation.id),
+              isNull(messageAttachments.messageId),
+            ),
+          )
+      : [];
+    if (attachments.length !== input.attachmentIds.length) {
+      throw new AppError(
+        "ATTACHMENT_NOT_FOUND",
+        "One or more attachments are not available.",
+        404,
+      );
     }
 
     const recentMessages = await db
@@ -104,12 +141,82 @@ export async function POST(request: Request, context: RouteContext) {
           role: "user" | "assistant";
         } => message.role === "user" || message.role === "assistant",
       );
-    await db.insert(messages).values({
-      conversationId: conversation.id,
-      role: "user",
-      content: input.message,
-    });
-    const result = await answerQuestion(agent, input.message, history);
+    const [userMessage] = await db
+      .insert(messages)
+      .values({
+        conversationId: conversation.id,
+        role: "user",
+        content: input.message,
+      })
+      .returning();
+    if (attachments.length) {
+      await db
+        .update(messageAttachments)
+        .set({ messageId: userMessage.id })
+        .where(inArray(messageAttachments.id, attachments.map(({ id }) => id)));
+    }
+    const [ticket] = await db
+      .select({ id: tickets.id })
+      .from(tickets)
+      .where(eq(tickets.conversationId, conversation.id))
+      .limit(1);
+    if (ticket) {
+      const now = new Date();
+      await Promise.all([
+        db
+          .update(tickets)
+          .set({
+            status: "pending",
+            lastReplyBy: "visitor",
+            resolvedAt: null,
+            updatedAt: now,
+          })
+          .where(eq(tickets.id, ticket.id)),
+        db
+          .update(conversations)
+          .set({
+            status: "escalated",
+            lastMessageAt: now,
+            updatedAt: now,
+            title:
+              conversation.title ||
+              input.message.replace(/\s+/g, " ").slice(0, 90),
+          })
+          .where(eq(conversations.id, conversation.id)),
+      ]);
+      return NextResponse.json(
+        {
+          data: {
+            conversationId: conversation.id,
+            messageId: userMessage.id,
+            answer: "",
+            grounded: true,
+            confidence: 1,
+            citations: [],
+            latencyMs: Math.round(performance.now() - startedAt),
+            queuedForOperator: true,
+          },
+          requestId,
+        },
+        { headers: { "access-control-allow-origin": "*" } },
+      );
+    }
+    const images = await Promise.all(
+      attachments
+        .filter((attachment) => attachment.kind === "image")
+        .map(async (attachment) => ({
+          mimeType: attachment.mimeType,
+          base64: (await readAttachment(attachment.storageKey)).toString(
+            "base64",
+          ),
+        })),
+    );
+    const result = await answerQuestion(
+      agent,
+      input.message,
+      history,
+      images,
+    );
     const latencyMs = Math.round(performance.now() - startedAt);
     const [assistantMessage] = await db
       .insert(messages)
@@ -124,7 +231,13 @@ export async function POST(request: Request, context: RouteContext) {
       .returning();
     await db
       .update(conversations)
-      .set({ lastMessageAt: new Date(), updatedAt: new Date() })
+      .set({
+        lastMessageAt: new Date(),
+        updatedAt: new Date(),
+        title:
+          conversation.title ||
+          input.message.replace(/\s+/g, " ").slice(0, 90),
+      })
       .where(eq(conversations.id, conversation.id));
 
     return NextResponse.json(

@@ -5,7 +5,13 @@ import { notFound } from "next/navigation";
 import { ConversationActions } from "@/components/app/conversation-actions";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
-import { agents, conversations, messages } from "@/lib/db/schema";
+import {
+  agents,
+  conversations,
+  messageAttachments,
+  messages,
+  tickets,
+} from "@/lib/db/schema";
 
 export default async function ConversationPage({ params }: { params: Promise<{ conversationId: string }> }) {
   const [{ conversationId }, workspace] = await Promise.all([params, getWorkspaceContext()]);
@@ -17,6 +23,15 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
     .limit(1);
   if (!conversation) notFound();
   const history = await db.select().from(messages).where(eq(messages.conversationId, conversationId)).orderBy(asc(messages.createdAt));
+  const attachments = await db
+    .select()
+    .from(messageAttachments)
+    .where(eq(messageAttachments.conversationId, conversationId));
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.conversationId, conversationId))
+    .limit(1);
 
   return (
     <>
@@ -34,6 +49,39 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
                 <div>
                   <small>{message.role === "operator" ? "Operator" : message.role}</small>
                   <p>{message.content}</p>
+                  {attachments.some(
+                    (attachment) => attachment.messageId === message.id,
+                  ) ? (
+                    <div className="transcript-attachments">
+                      {attachments
+                        .filter(
+                          (attachment) => attachment.messageId === message.id,
+                        )
+                        .map((attachment) =>
+                          attachment.kind === "image" ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              alt={attachment.fileName}
+                              key={attachment.id}
+                              src={`/api/conversations/${conversationId}/attachments/${attachment.id}`}
+                            />
+                          ) : attachment.kind === "audio" ? (
+                            <div key={attachment.id}>
+                              <audio
+                                controls
+                                preload="metadata"
+                                src={`/api/conversations/${conversationId}/attachments/${attachment.id}`}
+                              />
+                              {attachment.transcript ? (
+                                <small>
+                                  Transcript: {attachment.transcript}
+                                </small>
+                              ) : null}
+                            </div>
+                          ) : null,
+                        )}
+                    </div>
+                  ) : null}
                   {message.citations?.length ? (
                     <div className="transcript-sources">
                       <b><ShieldCheck size={11} /> Sources</b>
@@ -48,7 +96,19 @@ export default async function ConversationPage({ params }: { params: Promise<{ c
           </div>
         </section>
         <aside>
-          <ConversationActions conversationId={conversationId} initialStatus={conversation.conversation.status} />
+          <ConversationActions
+            conversationId={conversationId}
+            initialStatus={conversation.conversation.status}
+            ticket={
+              ticket
+                ? {
+                    reference: ticket.reference,
+                    status: ticket.status,
+                    priority: ticket.priority,
+                  }
+                : undefined
+            }
+          />
           <div className="visitor-card">
             <h3>Visitor</h3>
             <dl>

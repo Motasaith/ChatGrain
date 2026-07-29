@@ -45,6 +45,7 @@ function PreparingSupport() {
 export function HomepageSupport({ agentId }: { agentId?: string }) {
   const [open, setOpen] = useState(false);
   const [agent, setAgent] = useState<PublicAgent | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -74,6 +75,21 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
     };
   }, [agentId]);
 
+  useEffect(() => {
+    function receiveUnread(event: MessageEvent) {
+      if (
+        event.source !== window ||
+        event.data?.type !== "docent:unread" ||
+        (agent?.id && event.data.agentId !== agent.id)
+      ) {
+        return;
+      }
+      setUnreadCount(Math.max(0, Number(event.data.count) || 0));
+    }
+    window.addEventListener("message", receiveUnread);
+    return () => window.removeEventListener("message", receiveUnread);
+  }, [agent?.id]);
+
   return (
     <aside className={`home-support-widget ${open ? "is-open" : ""}`}>
       <div
@@ -83,6 +99,7 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
       >
         {agent ? (
           <ChatPanel
+            active={open}
             agentId={agent.id}
             collectFeedback={agent.collectFeedback}
             embedToken={agent.embedToken}
@@ -99,12 +116,21 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
       </div>
       <button
         aria-expanded={open}
-        aria-label={open ? "Close Docent support" : "Open Docent support"}
-        className="home-support-launcher"
+        aria-label={
+          open
+            ? "Close Docent support"
+            : unreadCount
+              ? `Open Docent support, ${unreadCount} unread ${unreadCount === 1 ? "reply" : "replies"}`
+              : "Open Docent support"
+        }
+        className={`home-support-launcher ${unreadCount ? "has-unread" : ""}`}
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
         {open ? <X size={23} /> : <MessageCircle size={23} />}
+        {!open && unreadCount ? (
+          <span>{Math.min(unreadCount, 99)}</span>
+        ) : null}
       </button>
     </aside>
   );

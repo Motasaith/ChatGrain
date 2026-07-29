@@ -3,21 +3,28 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowUp,
+  Bell,
   CheckCircle2,
   ExternalLink,
+  History,
+  ImagePlus,
   LoaderCircle,
   MessageCircle,
-  RotateCcw,
+  Mic,
+  Plus,
   ShieldCheck,
+  Square,
   ThumbsDown,
   ThumbsUp,
+  X,
 } from "lucide-react";
 import type { ChatUiAction } from "@/lib/chat/answer";
 
 type ChatMessage = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "operator" | "system";
   content: string;
+  createdAt?: string;
   grounded?: boolean;
   citations?: Array<{
     chunkId: string;
@@ -26,6 +33,33 @@ type ChatMessage = {
     excerpt: string;
   }>;
   action?: ChatUiAction;
+  attachments?: ChatAttachment[];
+};
+
+type ChatAttachment = {
+  id: string;
+  kind: "image" | "audio" | "file";
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  durationMs?: number | null;
+  transcript?: string | null;
+};
+
+type ConversationSummary = {
+  id: string;
+  sessionId: string;
+  title: string;
+  status: string;
+  lastMessageAt: string;
+  lastMessage: string;
+  lastMessageRole?: string;
+  unreadCount: number;
+  ticket?: {
+    reference: string;
+    status: string;
+    priority: string;
+  } | null;
 };
 
 function safeHttpUrl(value: string) {
@@ -159,6 +193,7 @@ function LeadCapture({
   requestText,
   getSessionId,
   embedToken,
+  onSubmitted,
 }: {
   action: ChatUiAction;
   agentId: string;
@@ -166,6 +201,7 @@ function LeadCapture({
   requestText: string;
   getSessionId: () => string;
   embedToken?: string;
+  onSubmitted?: () => void;
 }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -174,6 +210,7 @@ function LeadCapture({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [ticketReference, setTicketReference] = useState("");
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -207,7 +244,9 @@ function LeadCapture({
           payload.error?.message || "Could not submit your request.",
         );
       }
+      setTicketReference(payload.data?.ticket?.reference || "");
       setSubmitted(true);
+      onSubmitted?.();
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -223,7 +262,16 @@ function LeadCapture({
     return (
       <div className="chat-lead-success">
         <CheckCircle2 size={15} />
-        <span><b>Request sent</b><small>The website team can now follow up from their Docent inbox.</small></span>
+        <span>
+          <b>
+            Request sent
+            {ticketReference ? ` · ${ticketReference}` : ""}
+          </b>
+          <small>
+            Keep this chat in your history. New replies from the website team
+            will appear here.
+          </small>
+        </span>
       </div>
     );
   }
@@ -273,9 +321,50 @@ function LeadCapture({
   );
 }
 
-function sessionKey(agentId: string) {
-  return `docent-session-${agentId}`;
+function visitorKey(agentId: string) {
+  return `docent-visitor-${agentId}`;
 }
+
+function activeConversationKey(agentId: string) {
+  return `docent-active-conversation-${agentId}`;
+}
+
+function readLocalValue(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalValue(key: string, value?: string) {
+  try {
+    if (value === undefined) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+  } catch {
+    // The widget still works for the current page when storage is blocked.
+  }
+}
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<{
+    isFinal: boolean;
+    0: { transcript: string };
+  }>;
+};
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 function readableTextColor(hex: string) {
   const channels = hex
@@ -305,6 +394,7 @@ export function ChatPanel({
   collectFeedback = true,
   showBranding = true,
   embedToken,
+  active,
 }: {
   agentId: string;
   welcomeMessage: string;
@@ -316,41 +406,347 @@ export function ChatPanel({
   collectFeedback?: boolean;
   showBranding?: boolean;
   embedToken?: string;
+  active?: boolean;
 }) {
+  const welcome = {
+    id: "welcome",
+    role: "assistant" as const,
+    content: welcomeMessage,
+    grounded: true,
+  };
   const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: welcomeMessage,
-      grounded: true,
-    },
+    welcome,
   ]);
+  const [visitorId, setVisitorId] = useState("");
+  const [sessionId, setSessionId] = useState("");
   const [conversationId, setConversationId] = useState<string>();
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [pendingAttachments, setPendingAttachments] = useState<
+    ChatAttachment[]
+  >([]);
+  const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [embeddedActive, setEmbeddedActive] = useState(!embedded);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const focusGuardUntilRef = useRef(0);
-  const volatileSessionRef = useRef<string | undefined>(undefined);
   const initializedRef = useRef(false);
+  const conversationIdRef = useRef<string | undefined>(undefined);
+  const sessionIdRef = useRef("");
+  const visitorIdRef = useRef("");
+  const previousUnreadRef = useRef(-1);
+  const activeRef = useRef(active ?? !embedded);
+  const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined);
+  const mediaStreamRef = useRef<MediaStream | undefined>(undefined);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const speechRecognitionRef = useRef<SpeechRecognitionLike | undefined>(
+    undefined,
+  );
+  const speechTranscriptRef = useRef("");
   const brandImage = logoUrl || iconUrl;
   const contrastColor = readableTextColor(primaryColor);
   const panelStyle = {
     "--chat-accent": primaryColor,
     "--chat-accent-contrast": contrastColor,
   } as CSSProperties;
+  const isActive = active ?? embeddedActive;
 
-  function getSessionId() {
-    try {
-      const existing = window.sessionStorage.getItem(sessionKey(agentId));
-      const value = existing || crypto.randomUUID();
-      window.sessionStorage.setItem(sessionKey(agentId), value);
-      return value;
-    } catch {
-      volatileSessionRef.current ??= crypto.randomUUID();
-      return volatileSessionRef.current;
+  function authorizationHeaders(): Record<string, string> {
+    return embedToken ? { authorization: `Bearer ${embedToken}` } : {};
+  }
+
+  function activateConversation(id: string | undefined, session: string) {
+    conversationIdRef.current = id;
+    sessionIdRef.current = session;
+    setConversationId(id);
+    setSessionId(session);
+    if (id) {
+      writeLocalValue(
+        activeConversationKey(agentId),
+        JSON.stringify({ id, sessionId: session }),
+      );
+    } else {
+      writeLocalValue(activeConversationKey(agentId));
     }
   }
+
+  function getSessionId() {
+    return sessionIdRef.current || sessionId || crypto.randomUUID();
+  }
+
+  function attachmentUrl(
+    attachmentId: string,
+    targetConversationId = conversationId,
+    targetSessionId = sessionId,
+  ) {
+    if (!targetConversationId) return "";
+    const query = new URLSearchParams({
+      visitorId,
+      sessionId: targetSessionId,
+      ...(embedToken ? { token: embedToken } : {}),
+    });
+    return `/api/public/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(targetConversationId)}/attachments/${encodeURIComponent(attachmentId)}?${query}`;
+  }
+
+  function playReplyAlert() {
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (
+          window as typeof window & {
+            webkitAudioContext?: typeof AudioContext;
+          }
+        ).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const context = new AudioContextClass();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.frequency.value = 720;
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, context.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.18);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.2);
+      window.setTimeout(() => void context.close(), 350);
+    } catch {
+      // Unread badges still work when a browser blocks background audio.
+    }
+  }
+
+  function publishUnread(count: number) {
+    try {
+      window.parent.postMessage(
+        { type: "docent:unread", agentId, count },
+        "*",
+      );
+    } catch {
+      // The standalone widget has no parent integration.
+    }
+    if (
+      previousUnreadRef.current >= 0 &&
+      count > previousUnreadRef.current
+    ) {
+      playReplyAlert();
+    }
+    previousUnreadRef.current = count;
+    setUnreadCount(count);
+  }
+
+  async function refreshHistory(targetVisitorId = visitorIdRef.current) {
+    if (!targetVisitorId) return [];
+    const query = new URLSearchParams({ visitorId: targetVisitorId });
+    const response = await fetch(
+      `/api/public/agents/${encodeURIComponent(agentId)}/conversations?${query}`,
+      {
+        cache: "no-store",
+        headers: authorizationHeaders(),
+      },
+    );
+    if (!response.ok) return [];
+    const payload = (await response.json()) as {
+      data?: { conversations?: ConversationSummary[] };
+    };
+    const rows = payload.data?.conversations ?? [];
+    setConversations(rows);
+    publishUnread(
+      rows.reduce((total, conversation) => total + conversation.unreadCount, 0),
+    );
+    return rows;
+  }
+
+  async function markConversationRead(
+    id = conversationIdRef.current,
+    targetSessionId = sessionIdRef.current,
+  ) {
+    if (!id || !visitorIdRef.current || document.visibilityState === "hidden") {
+      return;
+    }
+    await fetch(
+      `/api/public/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          ...authorizationHeaders(),
+        },
+        body: JSON.stringify({
+          visitorId: visitorIdRef.current,
+          sessionId: targetSessionId,
+        }),
+      },
+    ).catch(() => undefined);
+  }
+
+  async function loadConversation(
+    summary: Pick<ConversationSummary, "id" | "sessionId">,
+    {
+      markRead = true,
+      preservePending = false,
+    }: { markRead?: boolean; preservePending?: boolean } = {},
+  ) {
+    const query = new URLSearchParams({
+      visitorId: visitorIdRef.current,
+      sessionId: summary.sessionId,
+    });
+    const response = await fetch(
+      `/api/public/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(summary.id)}?${query}`,
+      {
+        cache: "no-store",
+        headers: authorizationHeaders(),
+      },
+    );
+    if (!response.ok) return false;
+    const payload = (await response.json()) as {
+      data?: {
+        messages?: ChatMessage[];
+      };
+    };
+    const history = (payload.data?.messages ?? []).filter(
+      (message) =>
+        message.role === "user" ||
+        message.role === "assistant" ||
+        message.role === "operator" ||
+        message.role === "system",
+    );
+    activateConversation(summary.id, summary.sessionId);
+    setMessages(history.length ? history : [welcome]);
+    if (!preservePending) setPendingAttachments([]);
+    setNotice("");
+    if (markRead) {
+      await markConversationRead(summary.id, summary.sessionId);
+    }
+    return true;
+  }
+
+  async function ensureConversation() {
+    if (conversationIdRef.current) {
+      return {
+        id: conversationIdRef.current,
+        sessionId: sessionIdRef.current,
+      };
+    }
+    const nextSession = sessionIdRef.current || crypto.randomUUID();
+    const response = await fetch(
+      `/api/public/agents/${encodeURIComponent(agentId)}/conversations`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          visitorId: visitorIdRef.current,
+          sessionId: nextSession,
+          embedToken,
+          metadata: {
+            path: window.location.pathname,
+            referrer: document.referrer || undefined,
+          },
+        }),
+      },
+    );
+    const payload = (await response.json()) as {
+      data?: { id: string; sessionId: string };
+      error?: { message?: string };
+    };
+    if (!response.ok || !payload.data) {
+      throw new Error(
+        payload.error?.message || "Could not start a conversation.",
+      );
+    }
+    activateConversation(payload.data.id, payload.data.sessionId);
+    return payload.data;
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    async function initialize() {
+      const storedVisitor =
+        readLocalValue(visitorKey(agentId)) || crypto.randomUUID();
+      writeLocalValue(visitorKey(agentId), storedVisitor);
+      visitorIdRef.current = storedVisitor;
+      setVisitorId(storedVisitor);
+      const nextSession = crypto.randomUUID();
+      sessionIdRef.current = nextSession;
+      setSessionId(nextSession);
+      const rows = await refreshHistory(storedVisitor);
+      if (cancelled) return;
+      const storedActive = readLocalValue(activeConversationKey(agentId));
+      let active:
+        | { id: string; sessionId: string }
+        | undefined;
+      try {
+        active = storedActive ? JSON.parse(storedActive) : undefined;
+      } catch {
+        active = undefined;
+      }
+      const selected =
+        (active &&
+          rows.find(
+            (conversation) =>
+              conversation.id === active?.id &&
+              conversation.sessionId === active.sessionId,
+          )) ||
+        rows[0];
+      if (selected) {
+        await loadConversation(selected, { markRead: activeRef.current });
+      }
+    }
+    void initialize();
+    return () => {
+      cancelled = true;
+    };
+    // The public agent identity changes only when the widget is re-created.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, embedToken]);
+
+  useEffect(() => {
+    const timer = window.setInterval(async () => {
+      const rows = await refreshHistory();
+      const active = rows.find(
+        (conversation) => conversation.id === conversationIdRef.current,
+      );
+      if (active) {
+        await loadConversation(active, {
+          markRead:
+            activeRef.current && document.visibilityState !== "hidden",
+          preservePending: true,
+        });
+      }
+    }, 10_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, embedToken]);
+
+  useEffect(() => {
+    activeRef.current = isActive;
+    if (isActive) {
+      void markConversationRead().then(() => refreshHistory());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (embedded && window.self === window.top) {
+        setEmbeddedActive(true);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [embedded]);
+
+  useEffect(
+    () => () => {
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      speechRecognitionRef.current?.stop();
+    },
+    [],
+  );
 
   function restoreComposerFocus() {
     const field = inputRef.current;
@@ -379,19 +775,18 @@ export function ChatPanel({
       return;
     }
     const element = messagesRef.current;
-    if (element) {
-      element.scrollTop = element.scrollHeight;
-    }
-  }, [messages, busy]);
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [messages, busy, pendingAttachments]);
 
   useEffect(() => {
     function focusFromEmbed(event: MessageEvent) {
-      if (
-        event.source !== window.parent ||
-        event.data?.type !== "docent:focus-composer"
-      ) {
+      if (event.source !== window.parent) return;
+      if (event.data?.type === "docent:visibility") {
+        setEmbeddedActive(Boolean(event.data.open));
         return;
       }
+      if (event.data?.type !== "docent:focus-composer") return;
+      setEmbeddedActive(true);
       const field = inputRef.current;
       if (!field || field.disabled) return;
       focusGuardUntilRef.current = Date.now() + 500;
@@ -401,30 +796,219 @@ export function ChatPanel({
     return () => window.removeEventListener("message", focusFromEmbed);
   }, []);
 
-  async function send(event: React.FormEvent) {
-    event.preventDefault();
-    const content = inputRef.current?.value.trim() ?? "";
-    if (!content || busy) return;
-    const sessionId = getSessionId();
-    const localId = crypto.randomUUID();
-    setMessages((current) => [
-      ...current,
-      { id: localId, role: "user", content },
-    ]);
-    if (inputRef.current) {
-      inputRef.current.value = "";
-      inputRef.current.style.height = "";
-    }
-    setBusy(true);
+  async function uploadAttachment(
+    file: File,
+    kind: "image" | "audio",
+    transcript?: string,
+    durationMs?: number,
+  ) {
+    setUploading(true);
     setError("");
     try {
+      const conversation = await ensureConversation();
+      const form = new FormData();
+      form.append("visitorId", visitorIdRef.current);
+      form.append("sessionId", conversation.sessionId);
+      if (embedToken) form.append("embedToken", embedToken);
+      form.append("kind", kind);
+      form.append("file", file);
+      if (transcript?.trim()) form.append("transcript", transcript.trim());
+      if (durationMs) form.append("durationMs", String(durationMs));
+      const response = await fetch(
+        `/api/public/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(conversation.id)}/attachments`,
+        { method: "POST", body: form },
+      );
+      const payload = (await response.json()) as {
+        data?: ChatAttachment;
+        error?: { message?: string };
+      };
+      if (!response.ok || !payload.data) {
+        throw new Error(payload.error?.message || "Could not upload attachment.");
+      }
+      setPendingAttachments((current) => [...current, payload.data!]);
+      if (payload.data.transcript && inputRef.current) {
+        inputRef.current.value = [
+          inputRef.current.value.trim(),
+          payload.data.transcript,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        inputRef.current.style.height = "auto";
+        inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 104)}px`;
+      } else if (kind === "audio") {
+        setNotice(
+          "The recording is saved. Add a short message, or configure Whisper to transcribe it automatically.",
+        );
+      }
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not upload attachment.",
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function removePendingAttachment(attachment: ChatAttachment) {
+    setPendingAttachments((current) =>
+      current.filter((item) => item.id !== attachment.id),
+    );
+    const url = attachmentUrl(attachment.id);
+    if (url) {
+      await fetch(url, { method: "DELETE" }).catch(() => undefined);
+    }
+  }
+
+  async function chooseImage(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (file) await uploadAttachment(file, "image");
+  }
+
+  async function startRecording(startedAt: number) {
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setError("Voice recording is not supported by this browser.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const preferredTypes = [
+        "audio/webm;codecs=opus",
+        "audio/ogg;codecs=opus",
+        "audio/mp4",
+      ];
+      const mimeType =
+        preferredTypes.find((type) => MediaRecorder.isTypeSupported(type)) ||
+        "";
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined,
+      );
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+      speechTranscriptRef.current = "";
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = async (event) => {
+        const durationMs = Math.max(0, Math.round(event.timeStamp - startedAt));
+        const recordingType =
+          recorder.mimeType.split(";")[0] ||
+          audioChunksRef.current[0]?.type.split(";")[0] ||
+          "audio/webm";
+        const extension =
+          recordingType === "audio/ogg"
+            ? "ogg"
+            : recordingType === "audio/mp4"
+              ? "m4a"
+              : "webm";
+        const blob = new Blob(audioChunksRef.current, { type: recordingType });
+        const file = new File([blob], `voice-${Date.now()}.${extension}`, {
+          type: recordingType,
+        });
+        stream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = undefined;
+        speechRecognitionRef.current?.stop();
+        speechRecognitionRef.current = undefined;
+        setRecording(false);
+        await uploadAttachment(
+          file,
+          "audio",
+          speechTranscriptRef.current,
+          durationMs,
+        );
+      };
+      const speechWindow = window as typeof window & {
+        SpeechRecognition?: SpeechRecognitionConstructor;
+        webkitSpeechRecognition?: SpeechRecognitionConstructor;
+      };
+      const SpeechRecognitionClass =
+        speechWindow.SpeechRecognition ||
+        speechWindow.webkitSpeechRecognition;
+      if (SpeechRecognitionClass) {
+        const recognition = new SpeechRecognitionClass();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang =
+          window.navigator.language || document.documentElement.lang || "en";
+        recognition.onresult = (event) => {
+          let transcript = speechTranscriptRef.current;
+          for (
+            let index = event.resultIndex;
+            index < event.results.length;
+            index += 1
+          ) {
+            if (event.results[index].isFinal) {
+              transcript += ` ${event.results[index][0].transcript}`;
+            }
+          }
+          speechTranscriptRef.current = transcript.trim();
+        };
+        recognition.onerror = () => undefined;
+        speechRecognitionRef.current = recognition;
+        try {
+          recognition.start();
+        } catch {
+          speechRecognitionRef.current = undefined;
+        }
+      }
+      recorder.start(250);
+      setRecording(true);
+    } catch {
+      setError("Microphone access was denied or is unavailable.");
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = undefined;
+    }
+  }
+
+  async function send(event: React.FormEvent) {
+    event.preventDefault();
+    const typed = inputRef.current?.value.trim() ?? "";
+    const content =
+      typed ||
+      (pendingAttachments.some((attachment) => attachment.kind === "image")
+        ? "Please analyze the attached image in relation to my question."
+        : pendingAttachments.some((attachment) => attachment.kind === "audio")
+          ? "I want the support team to review my attached voice message."
+          : "");
+    if (!content || busy || uploading) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const conversation = await ensureConversation();
+      const localAttachments = pendingAttachments;
+      const localId = crypto.randomUUID();
+      setMessages((current) => [
+        ...current.filter((message) => message.id !== "welcome" || current.length === 1),
+        {
+          id: localId,
+          role: "user",
+          content,
+          attachments: localAttachments,
+        },
+      ]);
+      setPendingAttachments([]);
+      if (inputRef.current) {
+        inputRef.current.value = "";
+        inputRef.current.style.height = "";
+      }
       const response = await fetch(`/api/chat/${agentId}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           message: content,
-          sessionId,
-          conversationId,
+          sessionId: conversation.sessionId,
+          conversationId: conversation.id,
+          externalUserId: visitorIdRef.current,
+          attachmentIds: localAttachments.map((attachment) => attachment.id),
           metadata: {
             path: window.location.pathname,
             referrer: document.referrer || undefined,
@@ -432,7 +1016,7 @@ export function ChatPanel({
           embedToken,
         }),
       });
-      const payload = await response.json() as {
+      const payload = (await response.json()) as {
         data?: {
           conversationId: string;
           messageId: string;
@@ -440,26 +1024,34 @@ export function ChatPanel({
           grounded: boolean;
           citations: ChatMessage["citations"];
           action?: ChatUiAction;
+          queuedForOperator?: boolean;
         };
         error?: { message?: string };
       };
       if (!response.ok || !payload.data) {
         throw new Error(payload.error?.message || "The agent could not answer.");
       }
-      setConversationId(payload.data.conversationId);
-      setMessages((current) => [
-        ...current,
-        {
-          id: payload.data!.messageId,
-          role: "assistant",
-          content: payload.data!.answer,
-          grounded: payload.data!.grounded,
-          citations: payload.data!.citations,
-          action: payload.data!.action,
-        },
-      ]);
+      if (payload.data.queuedForOperator) {
+        setNotice("Message sent to the support team.");
+      } else if (payload.data.answer) {
+        setMessages((current) => [
+          ...current,
+          {
+            id: payload.data!.messageId,
+            role: "assistant",
+            content: payload.data!.answer,
+            grounded: payload.data!.grounded,
+            citations: payload.data!.citations,
+            action: payload.data!.action,
+          },
+        ]);
+      }
+      await markConversationRead(conversation.id, conversation.sessionId);
+      await refreshHistory();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not send message.");
+      setError(
+        cause instanceof Error ? cause.message : "Could not send message.",
+      );
     } finally {
       setBusy(false);
     }
@@ -473,17 +1065,26 @@ export function ChatPanel({
     });
   }
 
-  function reset() {
+  function startNewConversation() {
     const nextSession = crypto.randomUUID();
-    try {
-      window.sessionStorage.setItem(sessionKey(agentId), nextSession);
-    } catch {
-      volatileSessionRef.current = nextSession;
-    }
-    setConversationId(undefined);
-    setMessages([{ id: "welcome", role: "assistant", content: welcomeMessage }]);
+    activateConversation(undefined, nextSession);
+    setMessages([welcome]);
+    setPendingAttachments([]);
+    setHistoryOpen(false);
+    setNotice("");
     setError("");
+    window.setTimeout(() => inputRef.current?.focus(), 0);
   }
+
+  async function selectConversation(conversation: ConversationSummary) {
+    setHistoryOpen(false);
+    await loadConversation(conversation);
+    await refreshHistory();
+  }
+
+  const activeTicket = conversations.find(
+    (conversation) => conversation.id === conversationId,
+  )?.ticket;
 
   return (
     <div
@@ -498,81 +1099,205 @@ export function ChatPanel({
           ) : <MessageCircle size={18} />}
         </span>
         <span><b>{name}</b><small><i /> Online</small></span>
-        <button aria-label="Reset conversation" onClick={reset} type="button">
-          <RotateCcw size={15} />
-        </button>
+        <span className="chat-header-actions">
+          <button
+            aria-label="Conversation history"
+            className={unreadCount ? "has-unread" : ""}
+            onClick={() => setHistoryOpen((current) => !current)}
+            type="button"
+          >
+            <History size={16} />
+            {unreadCount ? <em>{Math.min(unreadCount, 99)}</em> : null}
+          </button>
+          <button
+            aria-label="Start a new conversation"
+            onClick={startNewConversation}
+            type="button"
+          >
+            <Plus size={17} />
+          </button>
+        </span>
       </header>
+      {historyOpen ? (
+        <section className="chat-history-panel">
+          <div>
+            <span>
+              <History size={15} />
+              <b>Your conversations</b>
+            </span>
+            <button
+              aria-label="Close conversation history"
+              onClick={() => setHistoryOpen(false)}
+              type="button"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <button
+            className="chat-new-conversation"
+            onClick={startNewConversation}
+            type="button"
+          >
+            <Plus size={15} /> Start a new chat
+          </button>
+          <div className="chat-history-list">
+            {conversations.length ? (
+              conversations.map((conversation) => (
+                <button
+                  className={
+                    conversation.id === conversationId ? "active" : ""
+                  }
+                  key={conversation.id}
+                  onClick={() => void selectConversation(conversation)}
+                  type="button"
+                >
+                  <span>
+                    <b>{conversation.title}</b>
+                    <small>{conversation.lastMessage || "No messages yet"}</small>
+                  </span>
+                  <span>
+                    {conversation.ticket ? (
+                      <i>{conversation.ticket.reference}</i>
+                    ) : null}
+                    {conversation.unreadCount ? (
+                      <em>{conversation.unreadCount}</em>
+                    ) : null}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <p>No previous conversations yet.</p>
+            )}
+          </div>
+        </section>
+      ) : null}
       <div className="chat-messages" aria-live="polite" ref={messagesRef}>
         <div className="chat-date">Today</div>
-        {messages.map((message, messageIndex) => (
-          <div className={`chat-line chat-line-${message.role}`} key={message.id}>
-            {message.role === "assistant" && (
-              <span className="chat-small-avatar">
-                {brandImage ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img alt="" src={brandImage} />
-                ) : (
-                  <MessageCircle size={12} />
-                )}
-              </span>
-            )}
-            <div>
-              <div className="chat-bubble">
-                {message.role === "assistant" ? (
-                  <MarkdownMessage content={message.content} />
-                ) : (
-                  message.content
-                )}
-              </div>
-              {message.role === "assistant" && message.citations?.length ? (
-                <details className="chat-citations">
-                  <summary>
-                    <ShieldCheck size={11} />
-                    {message.citations.length} source{message.citations.length === 1 ? "" : "s"} used
-                  </summary>
-                  <div>
-                    {message.citations.map((citation) => (
-                      citation.url ? (
-                        <a href={citation.url} key={citation.chunkId} rel="noreferrer" target="_blank">
-                          <span><b>{citation.title}</b><small>{citation.excerpt}</small></span>
-                          <ExternalLink size={11} />
-                        </a>
-                      ) : (
-                        <span key={citation.chunkId}>
-                          <span><b>{citation.title}</b><small>{citation.excerpt}</small></span>
-                        </span>
-                      )
-                    ))}
-                  </div>
-                </details>
-              ) : null}
-              {message.role === "assistant" && message.action ? (
-                <LeadCapture
-                  action={message.action}
-                  agentId={agentId}
-                  conversationId={conversationId}
-                  embedToken={embedToken}
-                  getSessionId={getSessionId}
-                  requestText={
-                    [...messages]
-                      .slice(0, messageIndex)
-                      .reverse()
-                      .find((item) => item.role === "user")
-                      ?.content ?? ""
-                  }
-                />
-              ) : null}
-              {collectFeedback && message.role === "assistant" && message.id !== "welcome" && (
-                <div className="chat-rating">
-                  <span>Helpful?</span>
-                  <button aria-label="Helpful" onClick={() => rate(message.id, 1)} type="button"><ThumbsUp size={11} /></button>
-                  <button aria-label="Not helpful" onClick={() => rate(message.id, -1)} type="button"><ThumbsDown size={11} /></button>
-                </div>
-              )}
-            </div>
+        {activeTicket ? (
+          <div className="chat-ticket-banner">
+            <Bell size={12} />
+            <span>
+              <b>{activeTicket.reference}</b>
+              <small>{activeTicket.status.replaceAll("_", " ")}</small>
+            </span>
           </div>
-        ))}
-        {busy && (
+        ) : null}
+        {messages.map((message, messageIndex) => {
+          if (message.role === "system") {
+            return (
+              <div className="chat-system-event" key={message.id}>
+                {message.content}
+              </div>
+            );
+          }
+          const fromTeam =
+            message.role === "assistant" || message.role === "operator";
+          return (
+            <div
+              className={`chat-line chat-line-${fromTeam ? "assistant" : "user"} ${message.role === "operator" ? "chat-line-operator" : ""}`}
+              key={message.id}
+            >
+              {fromTeam ? (
+                <span className="chat-small-avatar">
+                  {brandImage ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img alt="" src={brandImage} />
+                  ) : (
+                    <MessageCircle size={12} />
+                  )}
+                </span>
+              ) : null}
+              <div>
+                {message.role === "operator" ? (
+                  <span className="chat-operator-label">Support team</span>
+                ) : null}
+                <div className="chat-bubble">
+                  {fromTeam ? (
+                    <MarkdownMessage content={message.content} />
+                  ) : (
+                    message.content
+                  )}
+                  {message.attachments?.length ? (
+                    <div className="chat-message-attachments">
+                      {message.attachments.map((attachment) =>
+                        attachment.kind === "image" ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            alt={attachment.fileName}
+                            key={attachment.id}
+                            loading="lazy"
+                            src={attachmentUrl(attachment.id)}
+                          />
+                        ) : attachment.kind === "audio" ? (
+                          <audio
+                            controls
+                            key={attachment.id}
+                            preload="metadata"
+                            src={attachmentUrl(attachment.id)}
+                          />
+                        ) : null,
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+                {message.role === "assistant" && message.citations?.length ? (
+                  <details className="chat-citations">
+                    <summary>
+                      <ShieldCheck size={11} />
+                      {message.citations.length} source{message.citations.length === 1 ? "" : "s"} used
+                    </summary>
+                    <div>
+                      {message.citations.map((citation) => (
+                        citation.url ? (
+                          <a href={citation.url} key={citation.chunkId} rel="noreferrer" target="_blank">
+                            <span><b>{citation.title}</b><small>{citation.excerpt}</small></span>
+                            <ExternalLink size={11} />
+                          </a>
+                        ) : (
+                          <span key={citation.chunkId}>
+                            <span><b>{citation.title}</b><small>{citation.excerpt}</small></span>
+                          </span>
+                        )
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+                {message.role === "assistant" &&
+                message.action &&
+                !activeTicket ? (
+                  <LeadCapture
+                    action={message.action}
+                    agentId={agentId}
+                    conversationId={conversationId}
+                    embedToken={embedToken}
+                    getSessionId={getSessionId}
+                    onSubmitted={() => {
+                      setNotice(
+                        "Your request is saved. Keep this chat in your history for the reply.",
+                      );
+                      void refreshHistory();
+                    }}
+                    requestText={
+                      [...messages]
+                        .slice(0, messageIndex)
+                        .reverse()
+                        .find((item) => item.role === "user")
+                        ?.content ?? ""
+                    }
+                  />
+                ) : null}
+                {collectFeedback && message.role === "assistant" && message.id !== "welcome" ? (
+                  <div className="chat-rating">
+                    <span>Helpful?</span>
+                    <button aria-label="Helpful" onClick={() => rate(message.id, 1)} type="button"><ThumbsUp size={11} /></button>
+                    <button aria-label="Not helpful" onClick={() => rate(message.id, -1)} type="button"><ThumbsDown size={11} /></button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+        {busy ? (
           <div className="chat-line chat-line-assistant">
             <span className="chat-small-avatar">
               {brandImage ? (
@@ -586,14 +1311,68 @@ export function ChatPanel({
               <i /><i /><i />
             </div>
           </div>
-        )}
-        {error && <div className="chat-error">{error}</div>}
+        ) : null}
+        {notice ? <div className="chat-notice">{notice}</div> : null}
+        {error ? <div className="chat-error">{error}</div> : null}
       </div>
+      {pendingAttachments.length ? (
+        <div className="chat-pending-attachments">
+          {pendingAttachments.map((attachment) => (
+            <span key={attachment.id}>
+              {attachment.kind === "image" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img alt="" src={attachmentUrl(attachment.id)} />
+              ) : (
+                <Mic size={13} />
+              )}
+              <small>
+                {attachment.kind === "audio"
+                  ? attachment.transcript || "Voice message"
+                  : attachment.fileName}
+              </small>
+              <button
+                aria-label={`Remove ${attachment.fileName}`}
+                onClick={() => void removePendingAttachment(attachment)}
+                type="button"
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
       <form className="chat-composer" onSubmit={send}>
+        <div className="chat-composer-tools">
+          <input
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            aria-label="Attach an image"
+            hidden
+            onChange={(event) => void chooseImage(event)}
+            ref={imageInputRef}
+            type="file"
+          />
+          <button
+            aria-label="Attach an image"
+            disabled={busy || uploading || pendingAttachments.length >= 3}
+            onClick={() => imageInputRef.current?.click()}
+            type="button"
+          >
+            <ImagePlus size={17} />
+          </button>
+          <button
+            aria-label={recording ? "Stop recording" : "Record a voice message"}
+            className={recording ? "is-recording" : ""}
+            disabled={busy || uploading || pendingAttachments.length >= 3}
+            onClick={(event) => void startRecording(event.timeStamp)}
+            type="button"
+          >
+            {recording ? <Square size={14} /> : <Mic size={17} />}
+          </button>
+        </div>
         <textarea
           aria-label="Message"
           autoComplete="off"
-          disabled={busy}
+          disabled={busy || uploading}
           onBlur={restoreComposerFocus}
           onInput={(event) => {
             const field = event.currentTarget;
@@ -611,15 +1390,26 @@ export function ChatPanel({
             }
           }}
           onPointerDown={guardComposerFocus}
-          placeholder="Ask a question..."
+          placeholder={
+            recording
+              ? "Recording… tap stop when finished"
+              : uploading
+                ? "Uploading attachment…"
+                : "Ask a question..."
+          }
           ref={inputRef}
           rows={1}
         />
         <button
           aria-label="Send"
-          disabled={busy}
+          className="chat-send-button"
+          disabled={busy || uploading || recording}
         >
-          {busy ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={16} />}
+          {busy || uploading ? (
+            <LoaderCircle className="spin" size={15} />
+          ) : (
+            <ArrowUp size={16} />
+          )}
         </button>
       </form>
       {showBranding ? <footer>Powered by <b>Docent</b></footer> : null}

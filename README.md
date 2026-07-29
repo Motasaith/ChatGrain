@@ -23,7 +23,10 @@ the Markdown prototype.
 - Ollama Cloud generation constrained to retrieved context, with extractive
   fallback when cloud generation is unavailable
 - Durable jobs, automatic recrawls, worker recovery/heartbeat, conversations,
-  messages, feedback, leads, and operator replies
+  messages, persistent visitor history, unread operator replies, feedback,
+  leads, and support tickets
+- Protected image and voice attachments, Gemma 4 vision input, playable saved
+  recordings, and optional self-hosted Whisper transcription
 - Hosted iframe widget and a one-line asynchronous `embed.js`
 - Clerk authentication, isolated per-user workspaces, an administrator
   allowlist, audit logs, operational logs, database storage reporting, and
@@ -110,6 +113,45 @@ Copy the snippet from an agent's Deploy tab:
 The loader uses Shadow DOM and an iframe so host-page CSS cannot corrupt the
 widget. The detected logo or icon, primary color, readable contrast, and
 position are loaded automatically and remain editable in the Appearance tab.
+
+Visitors receive a durable local identity per agent. They can start multiple
+chats, reopen previous transcripts, retain a handoff after closing the widget,
+and see an unread badge when an operator replies. A human-support request
+creates a ticket in the dashboard, and later visitor messages remain assigned
+to the operator instead of receiving a competing AI answer.
+
+Unread replies are polled while the website tab is open and are restored on
+the visitor's next visit. A completely closed browser cannot receive a live
+alert without an additional delivery channel; add Web Push or transactional
+email before promising off-site notifications.
+
+Images up to 5 MB can be attached and are sent to the configured
+`VISION_LLM_MODEL`. Voice messages up to 12 MB are stored on disk under
+`UPLOAD_DIR` and remain playable in both visitor and operator history. Mount
+that directory on persistent VPS storage.
+
+## Voice transcription
+
+Docent records audio with the browser MediaRecorder API. Chromium-based
+browsers may also provide an immediate browser transcript. For consistent
+multilingual transcription, including Firefox, run the free `whisper.cpp`
+service:
+
+```powershell
+docker compose --profile voice up -d whisper
+```
+
+The first start downloads the Whisper base model into the
+`docent_whisper` volume. Configure the web process with:
+
+```dotenv
+WHISPER_BASE_URL=http://127.0.0.1:8080
+WHISPER_TRANSCRIBE_PATH=/inference
+```
+
+The transcript is placed in the composer and sent as text to the LLM, while
+the original recording remains attached for later playback. Without Whisper,
+the recording is still saved and can be handled by a human operator.
 
 ## Architecture
 

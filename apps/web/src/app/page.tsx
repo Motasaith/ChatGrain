@@ -51,7 +51,7 @@ const included = [
   {
     icon: Inbox,
     title: "Conversation inbox",
-    text: "Full transcripts, feedback, visitor details, operator notes, and a clear path from automation to human review.",
+    text: "Persistent visitor history, unread operator replies, tickets, attachments, feedback, and a clear path from automation to human review.",
   },
   {
     icon: MousePointerClick,
@@ -66,6 +66,7 @@ const selfHostedFeatures = [
   "Embeddable branded widget",
   "Local embeddings with Ollama Cloud generation",
   "Conversations, leads, feedback, and analytics",
+  "Image understanding and saved voice messages",
   "PostgreSQL and pgvector storage",
 ];
 

@@ -6,6 +6,10 @@ type GenerateAnswerInput = {
   context: string;
   question: string;
   temperature: number;
+  images?: Array<{
+    mimeType: string;
+    base64: string;
+  }>;
 };
 
 type ChatCompletionResponse = {
@@ -159,6 +163,7 @@ export async function generateGroundedAnswer({
   context,
   question,
   temperature,
+  images = [],
 }: GenerateAnswerInput) {
   const baseUrl = llmBaseUrl();
   const apiKey = llmApiKey();
@@ -188,7 +193,29 @@ Use only facts stated in the supplied evidence. An article that mentions a produ
         },
         {
           role: "user",
-          content: `Evidence:
+          content: images.length
+            ? [
+                {
+                  type: "text",
+                  text: `Evidence:
+${context}
+
+Customer question: ${question}
+
+Use the attached image to understand what the customer is showing. Answer the
+customer's question about it directly. Do not dump OCR text, enumerate every
+visible label, or describe unrelated visual details. Summarize only the parts
+that matter to the question in two to five sentences. Keep website-specific
+claims grounded in the supplied evidence.`,
+                },
+                ...images.map((image) => ({
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${image.mimeType};base64,${image.base64}`,
+                  },
+                })),
+              ]
+            : `Evidence:
 ${context}
 
 Customer question: ${question}`,

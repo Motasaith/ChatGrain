@@ -8,6 +8,7 @@ import {
   events,
   leads,
   messages,
+  tickets,
 } from "@/lib/db/schema";
 import { AppError, errorResponse, readJson } from "@/lib/http/errors";
 import { rateLimit } from "@/lib/http/rate-limit";
@@ -82,7 +83,7 @@ export async function POST(request: Request) {
         throw new AppError("CONVERSATION_NOT_FOUND", "Conversation not found.", 404);
       }
     }
-    const [lead] = await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const inserted = await tx
         .insert(leads)
         .values({
@@ -114,20 +115,57 @@ export async function POST(request: Request) {
           grounded: true,
         });
       }
+      const subject =
+        typeof input.data.request === "string" && input.data.request.trim()
+          ? input.data.request.trim().replace(/\s+/g, " ").slice(0, 160)
+          : "Customer requested human support";
+      const [ticket] = input.conversationId
+        ? await tx
+            .insert(tickets)
+            .values({
+              reference: `TKT-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
+              workspaceId: agent.workspaceId,
+              agentId: agent.id,
+              conversationId: input.conversationId,
+              leadId: inserted[0].id,
+              subject,
+              requesterName: input.name,
+              requesterEmail: input.email,
+              requesterPhone: input.phone,
+              lastReplyBy: "visitor",
+            })
+            .onConflictDoUpdate({
+              target: tickets.conversationId,
+              set: {
+                leadId: inserted[0].id,
+                subject,
+                status: "open",
+                requesterName: input.name,
+                requesterEmail: input.email,
+                requesterPhone: input.phone,
+                lastReplyBy: "visitor",
+                resolvedAt: null,
+                updatedAt: new Date(),
+              },
+            })
+            .returning()
+        : [];
       await tx.insert(events).values({
         workspaceId: agent.workspaceId,
         agentId: agent.id,
         type: "handoff.requested",
         properties: {
           leadId: inserted[0].id,
+          ticketId: ticket?.id ?? null,
+          ticketReference: ticket?.reference ?? null,
           conversationId: input.conversationId ?? null,
           hasEmail: Boolean(input.email),
           hasPhone: Boolean(input.phone),
         },
       });
-      return inserted;
+      return { lead: inserted[0], ticket: ticket ?? null };
     });
-    return NextResponse.json({ data: lead, requestId }, { status: 201 });
+    return NextResponse.json({ data: result, requestId }, { status: 201 });
   } catch (error) {
     return errorResponse(error, requestId);
   }

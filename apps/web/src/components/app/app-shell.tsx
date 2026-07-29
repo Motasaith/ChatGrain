@@ -20,6 +20,7 @@ import {
   Plug,
   Search,
   Shield,
+  TicketCheck,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
 
@@ -29,6 +30,7 @@ const navigation = [
   { href: "/dashboard/activity", label: "Activity", icon: Inbox },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/dashboard/leads", label: "Leads", icon: ContactRound },
+  { href: "/dashboard/tickets", label: "Tickets", icon: TicketCheck },
 ];
 
 const buildNavigation = [

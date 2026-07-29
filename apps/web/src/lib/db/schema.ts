@@ -57,6 +57,24 @@ export const messageRole = pgEnum("message_role", [
   "system",
   "tool",
 ]);
+export const attachmentKind = pgEnum("attachment_kind", [
+  "image",
+  "audio",
+  "file",
+]);
+export const ticketStatus = pgEnum("ticket_status", [
+  "open",
+  "pending",
+  "waiting_on_visitor",
+  "resolved",
+  "closed",
+]);
+export const ticketPriority = pgEnum("ticket_priority", [
+  "low",
+  "normal",
+  "high",
+  "urgent",
+]);
 export const actionType = pgEnum("action_type", [
   "lead_form",
   "webhook",
@@ -285,6 +303,13 @@ export const conversations = pgTable(
     visitorCountry: text("visitor_country"),
     sentiment: text("sentiment"),
     topic: text("topic"),
+    title: text("title"),
+    visitorLastReadAt: timestamp("visitor_last_read_at", {
+      withTimezone: true,
+    }),
+    operatorLastReadAt: timestamp("operator_last_read_at", {
+      withTimezone: true,
+    }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
     lastMessageAt: timestamp("last_message_at", { withTimezone: true })
       .defaultNow()
@@ -294,6 +319,16 @@ export const conversations = pgTable(
   (table) => [
     index("conversations_agent_last_message_idx").on(
       table.agentId,
+      table.lastMessageAt,
+    ),
+    uniqueIndex("conversations_visitor_session_unique").on(
+      table.agentId,
+      table.externalUserId,
+      table.sessionId,
+    ),
+    index("conversations_visitor_history_idx").on(
+      table.agentId,
+      table.externalUserId,
       table.lastMessageAt,
     ),
     index("conversations_session_idx").on(table.sessionId),
@@ -323,7 +358,40 @@ export const messages = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("messages_conversation_idx").on(table.conversationId)],
+  (table) => [
+    index("messages_conversation_idx").on(
+      table.conversationId,
+      table.createdAt,
+    ),
+  ],
+);
+
+export const messageAttachments = pgTable(
+  "message_attachments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    messageId: uuid("message_id").references(() => messages.id, {
+      onDelete: "cascade",
+    }),
+    kind: attachmentKind("kind").notNull(),
+    storageKey: text("storage_key").notNull().unique(),
+    fileName: text("file_name").notNull(),
+    mimeType: text("mime_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    durationMs: integer("duration_ms"),
+    transcript: text("transcript"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("message_attachments_conversation_idx").on(table.conversationId),
+    index("message_attachments_message_idx").on(table.messageId),
+  ],
 );
 
 export const feedback = pgTable(
@@ -362,6 +430,46 @@ export const leads = pgTable(
       .notNull(),
   },
   (table) => [index("leads_agent_idx").on(table.agentId)],
+);
+
+export const tickets = pgTable(
+  "tickets",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    reference: text("reference").notNull().unique(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id").references(() => leads.id, {
+      onDelete: "set null",
+    }),
+    subject: text("subject").notNull(),
+    status: ticketStatus("status").default("open").notNull(),
+    priority: ticketPriority("priority").default("normal").notNull(),
+    assigneeUserId: uuid("assignee_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    requesterName: text("requester_name"),
+    requesterEmail: text("requester_email"),
+    requesterPhone: text("requester_phone"),
+    lastReplyBy: text("last_reply_by"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("tickets_conversation_unique").on(table.conversationId),
+    index("tickets_workspace_status_idx").on(
+      table.workspaceId,
+      table.status,
+    ),
+    index("tickets_agent_idx").on(table.agentId),
+  ],
 );
 
 export const actions = pgTable(
