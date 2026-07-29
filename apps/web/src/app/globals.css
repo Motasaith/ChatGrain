@@ -8344,3 +8344,125 @@ button {
     display: none;
   }
 }
+
+/* Readable typography baseline */
+
+body .home-page.home-page :where(li, input, textarea, select) {
+  font-size: 15px;
+}
+
+body .home-page.home-page p {
+  font-size: 16px;
+}
+
+body .home-page.home-page .home-hero-copy > p {
+  font-size: 19px;
+}
+
+body .home-page.home-page :where(a, button, summary) {
+  font-size: 14px;
+}
+
+body .home-page.home-page :where(small, time, code),
+body .home-page.home-page :where([class*="eyebrow"], [class*="label"]) {
+  font-size: 12px;
+}
+
+body .app-layout.app-layout :where(p, li, label, input, textarea, select) {
+  font-size: 14px;
+}
+
+body .app-layout.app-layout :where(a, button, td, th, dt, dd) {
+  font-size: 13px;
+}
+
+body .app-layout.app-layout :where(b, strong) {
+  font-size: 14px;
+}
+
+body .app-layout.app-layout :where(small, time, code, em),
+body .app-layout.app-layout :where([class*="eyebrow"], [class*="label"]) {
+  font-size: 12px;
+}
+
+body .docent-auth-page.docent-auth-page :where(p, input) {
+  font-size: 15px;
+}
+
+body .docent-auth-page.docent-auth-page :where(a, button, label, b, strong) {
+  font-size: 14px;
+}
+
+body .docent-auth-page.docent-auth-page .docent-auth-form label > span,
+body .docent-auth-page.docent-auth-page .docent-auth-label-row {
+  font-size: 13px;
+}
+
+body .docent-auth-page.docent-auth-page :where(small, em),
+body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proof"]) {
+  font-size: 12px;
+}
+
+.chat-panel.chat-panel > header b {
+  font-size: 15px;
+}
+
+.chat-panel.chat-panel > header small {
+  font-size: 11px;
+}
+
+.chat-panel.chat-panel .chat-date {
+  font-size: 11px;
+}
+
+.chat-panel.chat-panel .chat-bubble {
+  padding: 11px 13px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.chat-panel.chat-panel .chat-lead-form b {
+  font-size: 13px;
+}
+
+.chat-panel.chat-panel .chat-lead-form small,
+.chat-panel.chat-panel .chat-lead-error,
+.chat-panel.chat-panel .chat-lead-success small {
+  font-size: 11px;
+}
+
+.chat-panel.chat-panel .chat-lead-form input,
+.chat-panel.chat-panel .chat-lead-form textarea,
+.chat-panel.chat-panel .chat-lead-form > button,
+.chat-panel.chat-panel .chat-lead-success b {
+  font-size: 13px;
+}
+
+.chat-panel.chat-panel .chat-citations summary,
+.chat-panel.chat-panel .chat-citations b {
+  font-size: 12px;
+}
+
+.chat-panel.chat-panel .chat-citations small,
+.chat-panel.chat-panel .chat-rating {
+  font-size: 11px;
+}
+
+.chat-panel.chat-panel .chat-error {
+  font-size: 13px;
+}
+
+.chat-panel.chat-panel .chat-composer textarea {
+  min-height: 46px;
+  padding: 12px 13px;
+  font-size: 14px;
+}
+
+.chat-panel.chat-panel .chat-composer button {
+  width: 46px;
+  height: 46px;
+}
+
+.chat-panel.chat-panel > footer {
+  font-size: 10px;
+}
