@@ -1,6 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { defaultAgentSystemPrompt } from "@/lib/agents/default-prompt";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources } from "@/lib/db/schema";
@@ -49,8 +50,10 @@ export async function POST(request: Request) {
           name: input.name,
           description: input.description,
           status: websiteUrl ? "training" : "draft",
-          systemPrompt:
-            "Answer as a helpful customer support agent. Use only verified knowledge sources and be concise.",
+          systemPrompt: defaultAgentSystemPrompt({
+            agentName: input.name,
+            websiteUrl: websiteUrl?.origin,
+          }),
           modelProvider: "ollama",
           modelName: defaultLlmModel(),
         })

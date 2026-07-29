@@ -5,10 +5,14 @@ import {
   cleanGeneratedAnswer,
   contextualCitation,
   contextualRetrievalQuestion,
+  projectListFallback,
   type AnswerHistoryMessage,
 } from "./answer";
 import { parseConversationIntent } from "@/lib/llm/client";
-import { retrievalQueryTerms } from "@/lib/rag/retrieve";
+import {
+  retrievalQueryTerms,
+  type RetrievalHit,
+} from "@/lib/rag/retrieve";
 
 describe("conversation-aware article links", () => {
   it("returns the specific article cited by the previous answer", () => {
@@ -116,6 +120,11 @@ describe("conversation-aware article links", () => {
         "I want more information about Fun DIY Raspberry Pi because I am working on it. Do you have a similar article?",
       ),
     ).toEqual(["fun", "diy"]);
+    expect(
+      retrievalQueryTerms(
+        "I want to build a final year project. Enlist 3 projects using Nano Raspberry and weather, with titles and URLs.",
+      ),
+    ).toEqual(["nano", "weather"]);
   });
 });
 
@@ -210,5 +219,39 @@ describe("answer presentation", () => {
     ).toContain(
       "- [First project](https://example.com/first-project/)",
     );
+    expect(
+      addRequestedEvidenceLinks(
+        "Open https://example.com/first-project/ for details.",
+        "List a related article",
+        [],
+      ),
+    ).toBe("Open https://example.com/first-project/ for details.");
+  });
+
+  it("returns the requested number of clean linked projects without a model", () => {
+    const hits = ["Weather station", "Air monitor", "Home monitor"].map(
+      (title, index): RetrievalHit => ({
+        chunkId: `chunk-${index}`,
+        documentId: `doc-${index}`,
+        content: `id: ${index}\nTitle: ${title}\nCategories: Projects\n_smart_summary: ${title} uses verified sensors and a Raspberry Pi.`,
+        title,
+        url: `https://example.com/project-${index}/`,
+        vectorScore: 0.7,
+        keywordScore: 1,
+        score: 1,
+        position: 0,
+        lexicalScore: 1,
+        titleScore: 1,
+        rankScore: 1,
+      }),
+    );
+    const result = projectListFallback(
+      "Enlist 3 projects with their titles and URLs",
+      hits,
+    );
+    expect(result?.hits).toHaveLength(3);
+    expect(result?.answer.match(/https:\/\/example\.com/g)).toHaveLength(3);
+    expect(result?.answer).not.toContain("Categories:");
+    expect(result?.answer).not.toContain("_smart_summary:");
   });
 });

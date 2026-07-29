@@ -14,6 +14,7 @@ import {
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
+import { DEFAULT_AGENT_SYSTEM_PROMPT } from "@/lib/agents/default-prompt";
 
 export const agentStatus = pgEnum("agent_status", [
   "draft",
@@ -130,7 +131,9 @@ export const agents = pgTable(
     name: text("name").notNull(),
     description: text("description").default("").notNull(),
     status: agentStatus("status").default("draft").notNull(),
-    systemPrompt: text("system_prompt").default("").notNull(),
+    systemPrompt: text("system_prompt")
+      .default(DEFAULT_AGENT_SYSTEM_PROMPT)
+      .notNull(),
     welcomeMessage: text("welcome_message")
       .default("Hi! How can I help?")
       .notNull(),

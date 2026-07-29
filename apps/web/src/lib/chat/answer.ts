@@ -432,6 +432,80 @@ function cleanEvidenceSentence(value: string) {
     .trim();
 }
 
+function cleanEvidenceDescription(value: string) {
+  const cleaned = value
+    .split(/\r?\n/)
+    .filter(
+      (line) =>
+        !/^\s*(?:id|title|categories|permalink):/i.test(line),
+    )
+    .join(" ")
+    .replace(/^\s*_smart_summary:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleanEvidenceSentence(
+    cleaned.match(/[^.!?]+[.!?]+|[^.!?]+$/)?.[0] ?? cleaned,
+  ).slice(0, 220);
+}
+
+function requestedListCount(question: string) {
+  const numeric = question.match(/\b(?:list|enlist|suggest|recommend|show|give|find)?\s*(10|[2-9])\b/i);
+  if (numeric) return Math.min(10, Number(numeric[1]));
+  const words: Record<string, number> = {
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+  };
+  const word = question.match(/\b(two|three|four|five|six)\b/i)?.[1];
+  return word ? words[word.toLowerCase()] : null;
+}
+
+function requestedProjectList(question: string) {
+  const count = requestedListCount(question);
+  return count &&
+      /\b(?:project|article|post|product|resource)s?\b/i.test(question)
+    ? count
+    : null;
+}
+
+export function projectListFallback(
+  question: string,
+  hits: RetrievalHit[],
+) {
+  const count = requestedProjectList(question);
+  if (!count) return null;
+  const seen = new Set<string>();
+  const projects = hits
+    .filter((hit): hit is RetrievalHit & { url: string } => {
+      if (
+        !hit.url ||
+        seen.has(hit.documentId) ||
+        sourceSpecificity(hit.url, hit.title) <= 0
+      ) {
+        return false;
+      }
+      seen.add(hit.documentId);
+      return true;
+    })
+    .slice(0, count);
+  if (!projects.length) return null;
+  const qualification =
+    projects.length < count
+      ? `I found ${projects.length} clearly relevant indexed ${projects.length === 1 ? "project" : "projects"}:`
+      : `Here are ${projects.length} relevant projects:`;
+  return {
+    answer: `${qualification}\n\n${projects
+      .map((hit) => {
+        const description = cleanEvidenceDescription(hit.content);
+        return `- [${hit.title}](${hit.url})${description ? ` — ${description}` : ""}`;
+      })
+      .join("\n")}`,
+    hits: projects,
+  };
+}
+
 function extractiveAnswer(question: string, hits: RetrievalHit[]) {
   const seen = new Set<string>();
   const selected = hits
@@ -484,7 +558,7 @@ function asksForRelatedContent(question: string) {
 function coherentEvidence(hits: RetrievalHit[], question: string) {
   const best = hits[0];
   if (!best) return [];
-  if (asksForRelatedContent(question)) {
+  if (asksForRelatedContent(question) || requestedProjectList(question)) {
     const seen = new Set<string>();
     return hits
       .filter((hit) => {
@@ -548,7 +622,7 @@ export function addRequestedEvidenceLinks(
   const requested =
     asksForRelatedContent(question) ||
     /\b(?:article|link|url|page|post)\b/i.test(question);
-  if (!requested || /\]\(https?:\/\/[^)]+\)/i.test(answer)) return answer;
+  if (!requested || /https?:\/\/\S+/i.test(answer)) return answer;
   const seen = new Set<string>();
   const links = hits
     .filter((hit): hit is RetrievalHit & { url: string } => {
@@ -706,16 +780,21 @@ export async function answerQuestion(
     agent.modelProvider === "ollama"
       ? await llmAnswer(agent, question, evidenceHits, history)
       : null;
+  const listFallback = generated
+    ? null
+    : projectListFallback(question, evidenceHits);
   const extracted = generated
     ? null
-    : extractiveAnswer(question, evidenceHits);
+    : listFallback
+      ? null
+      : extractiveAnswer(question, evidenceHits);
   const answer = generated
     ? addRequestedEvidenceLinks(
         cleanGeneratedAnswer(generated),
         question,
         evidenceHits,
       )
-    : extracted?.answer ?? "";
+    : listFallback?.answer ?? extracted?.answer ?? "";
   if (!answer) {
     return {
       answer: agent.fallbackMessage,
@@ -732,7 +811,7 @@ export async function answerQuestion(
       ? (
           generated
             ? citedEvidence(generated, evidenceHits)
-            : extracted?.hits ?? []
+            : listFallback?.hits ?? extracted?.hits ?? []
         ).map((hit) => ({
           chunkId: hit.chunkId,
           title: hit.title,
