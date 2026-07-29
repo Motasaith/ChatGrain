@@ -127,7 +127,7 @@ export function ChatPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const messagesRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const focusGuardUntilRef = useRef(0);
   const volatileSessionRef = useRef<string | undefined>(undefined);
   const initializedRef = useRef(false);
@@ -209,7 +209,10 @@ export function ChatPanel({
       ...current,
       { id: localId, role: "user", content },
     ]);
-    if (inputRef.current) inputRef.current.value = "";
+    if (inputRef.current) {
+      inputRef.current.value = "";
+      inputRef.current.style.height = "";
+    }
     setBusy(true);
     setError("");
     try {
@@ -367,15 +370,30 @@ export function ChatPanel({
         {error && <div className="chat-error">{error}</div>}
       </div>
       <form className="chat-composer" onSubmit={send}>
-        <input
+        <textarea
           aria-label="Message"
           autoComplete="off"
           disabled={busy}
           onBlur={restoreComposerFocus}
+          onInput={(event) => {
+            const field = event.currentTarget;
+            field.style.height = "auto";
+            field.style.height = `${Math.min(field.scrollHeight, 104)}px`;
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
           onPointerDown={guardComposerFocus}
           placeholder="Ask a question..."
           ref={inputRef}
-          type="text"
+          rows={1}
         />
         <button
           aria-label="Send"

@@ -94,6 +94,8 @@ function BuiltInGuide() {
       },
     ]);
     setValue("");
+    const field = event.currentTarget.querySelector("textarea");
+    if (field) field.style.height = "";
   }
 
   return (
@@ -134,11 +136,27 @@ function BuiltInGuide() {
         <div ref={endRef} />
       </div>
       <form className="chat-composer" onSubmit={submit}>
-        <input
+        <textarea
           aria-label="Ask Docent a question"
           autoComplete="off"
           onChange={(event) => setValue(event.target.value)}
+          onInput={(event) => {
+            const field = event.currentTarget;
+            field.style.height = "auto";
+            field.style.height = `${Math.min(field.scrollHeight, 104)}px`;
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
           placeholder="Ask about Docent..."
+          rows={1}
           value={value}
         />
         <button aria-label="Send"><ArrowUp size={16} /></button>

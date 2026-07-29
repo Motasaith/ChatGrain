@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { answerQuestion } from "@/lib/chat/answer";
@@ -86,12 +86,29 @@ export async function POST(request: Request, context: RouteContext) {
         .returning();
     }
 
+    const recentMessages = await db
+      .select({
+        role: messages.role,
+        content: messages.content,
+        citations: messages.citations,
+      })
+      .from(messages)
+      .where(eq(messages.conversationId, conversation.id))
+      .orderBy(desc(messages.createdAt))
+      .limit(12);
+    const history = recentMessages
+      .reverse()
+      .filter(
+        (message): message is typeof message & {
+          role: "user" | "assistant";
+        } => message.role === "user" || message.role === "assistant",
+      );
     await db.insert(messages).values({
       conversationId: conversation.id,
       role: "user",
       content: input.message,
     });
-    const result = await answerQuestion(agent, input.message);
+    const result = await answerQuestion(agent, input.message, history);
     const latencyMs = Math.round(performance.now() - startedAt);
     const [assistantMessage] = await db
       .insert(messages)

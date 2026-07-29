@@ -20,6 +20,26 @@ function asksForLatestLink(question: string) {
   );
 }
 
+function asksForContextualLink(question: string) {
+  return (
+    /\b(?:url|link)\b/i.test(question) &&
+    /\b(?:this|that|it|article|post|page|one|above|mentioned)\b/i.test(
+      question,
+    )
+  );
+}
+
+export type AnswerHistoryMessage = {
+  role: "user" | "assistant";
+  content: string;
+  citations?: Array<{
+    chunkId: string;
+    title: string;
+    url?: string;
+    excerpt: string;
+  }> | null;
+};
+
 function terms(value: string) {
   return new Set(
     (value.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(
@@ -39,6 +59,94 @@ function terms(value: string) {
         ]).has(word),
     ),
   );
+}
+
+function pageSpecificity(value: string) {
+  try {
+    const url = new URL(value);
+    const segments = url.pathname.split("/").filter(Boolean);
+    if (!segments.length) return -10;
+    const generic = segments.some((segment) =>
+      /^(?:category|categories|tag|tags|search|author|page|blog|articles|posts)$/i.test(
+        segment,
+      ),
+    );
+    return segments.length + (segments.at(-1)!.length > 12 ? 1 : 0) -
+      (generic ? 4 : 0);
+  } catch {
+    return -10;
+  }
+}
+
+export function contextualCitation(
+  question: string,
+  history: AnswerHistoryMessage[],
+) {
+  if (!asksForContextualLink(question)) return null;
+  const previous = [...history]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        message.citations?.some((citation) => citation.url),
+    );
+  if (!previous?.citations?.length) return null;
+  const previousTerms = terms(previous.content);
+  const candidates = previous.citations
+    .filter(
+      (citation): citation is typeof citation & { url: string } =>
+        Boolean(citation.url) && pageSpecificity(citation.url!) > 0,
+    )
+    .map((citation, index) => {
+      const evidenceTerms = terms(`${citation.title} ${citation.excerpt}`);
+      const overlap = [...previousTerms].filter((term) =>
+        evidenceTerms.has(term)
+      ).length / Math.max(1, previousTerms.size);
+      return {
+        citation,
+        score:
+          overlap * 4 +
+          pageSpecificity(citation.url) * 0.25 -
+          index * 0.08,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+  return candidates[0]?.citation ?? null;
+}
+
+function contextualRetrievalQuestion(
+  question: string,
+  history: AnswerHistoryMessage[],
+) {
+  const refersBack =
+    /\b(?:this|that|it|its|they|their|them|those|these|above|previous|same)\b/i.test(
+      question,
+    ) ||
+    /^(?:and|also|what about|how about|does|is|can|where|when)\b/i.test(
+      question.trim(),
+    );
+  if (!refersBack) return question;
+  const previousUser = [...history]
+    .reverse()
+    .find((message) => message.role === "user");
+  return previousUser
+    ? `${previousUser.content}\nFollow-up: ${question}`
+    : question;
+}
+
+function conversationQuestion(
+  question: string,
+  history: AnswerHistoryMessage[],
+) {
+  if (!history.length) return question;
+  const transcript = history
+    .slice(-8)
+    .map(
+      (message) =>
+        `${message.role === "user" ? "Customer" : "Assistant"}: ${message.content.slice(0, 800)}`,
+    )
+    .join("\n");
+  return `Recent conversation:\n${transcript}\n\nCurrent customer question: ${question}`;
 }
 
 async function findPinnedAnswer(agentId: string, question: string) {
@@ -122,6 +230,7 @@ async function llmAnswer(
   agent: Agent,
   question: string,
   hits: RetrievalHit[],
+  history: AnswerHistoryMessage[],
 ) {
   const model = agent.modelName || defaultLlmModel();
   const context = hits
@@ -135,7 +244,7 @@ async function llmAnswer(
       model,
       systemPrompt: agent.systemPrompt,
       context,
-      question,
+      question: conversationQuestion(question, history),
       temperature: agent.temperature,
     });
   } catch (error) {
@@ -144,7 +253,11 @@ async function llmAnswer(
   }
 }
 
-export async function answerQuestion(agent: Agent, question: string) {
+export async function answerQuestion(
+  agent: Agent,
+  question: string,
+  history: AnswerHistoryMessage[] = [],
+) {
   const pinned = await findPinnedAnswer(agent.id, question);
   if (pinned) {
     return {
@@ -175,7 +288,40 @@ export async function answerQuestion(agent: Agent, question: string) {
     }
   }
 
-  const hits = await hybridRetrieve(agent.id, question);
+  if (asksForContextualLink(question)) {
+    const priorCitation = contextualCitation(question, history);
+    if (priorCitation?.url) {
+      return {
+        answer: `Here is the article you were discussing:\n[${priorCitation.title}](${priorCitation.url})`,
+        grounded: true,
+        confidence: 1,
+        citations: agent.showCitations ? [priorCitation] : [],
+      };
+    }
+  }
+
+  const retrievalQuestion = contextualRetrievalQuestion(question, history);
+  const hits = await hybridRetrieve(agent.id, retrievalQuestion);
+  if (asksForContextualLink(question)) {
+    const specificHit = hits.find(
+      (hit): hit is RetrievalHit & { url: string } =>
+        Boolean(hit.url) && pageSpecificity(hit.url!) > 0,
+    );
+    if (specificHit) {
+      const citation = {
+        chunkId: specificHit.chunkId,
+        title: specificHit.title,
+        url: specificHit.url,
+        excerpt: specificHit.content.slice(0, 260),
+      };
+      return {
+        answer: `Here is the most relevant article:\n[${citation.title}](${citation.url})`,
+        grounded: true,
+        confidence: 0.9,
+        citations: agent.showCitations ? [citation] : [],
+      };
+    }
+  }
   const best = hits[0];
   const confidence = best
     ? Math.max(
@@ -200,7 +346,7 @@ export async function answerQuestion(agent: Agent, question: string) {
 
   const generated =
     agent.modelProvider === "ollama"
-      ? await llmAnswer(agent, question, hits)
+      ? await llmAnswer(agent, question, hits, history)
       : null;
   const answer = generated || extractiveAnswer(question, hits);
   if (!answer) {
