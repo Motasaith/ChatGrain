@@ -303,6 +303,7 @@ export function ChatPanel({
   iconUrl,
   embedded = false,
   collectFeedback = true,
+  showBranding = true,
   embedToken,
 }: {
   agentId: string;
@@ -313,6 +314,7 @@ export function ChatPanel({
   iconUrl?: string | null;
   embedded?: boolean;
   collectFeedback?: boolean;
+  showBranding?: boolean;
   embedToken?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -620,7 +622,7 @@ export function ChatPanel({
           {busy ? <LoaderCircle className="spin" size={15} /> : <ArrowUp size={16} />}
         </button>
       </form>
-      <footer>Powered by <b>Docent</b></footer>
+      {showBranding ? <footer>Powered by <b>Docent</b></footer> : null}
     </div>
   );
 }

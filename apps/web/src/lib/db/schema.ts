@@ -141,6 +141,7 @@ export const agents = pgTable(
     logoUrl: text("logo_url"),
     iconUrl: text("icon_url"),
     widgetPosition: text("widget_position").default("right").notNull(),
+    showBranding: boolean("show_branding").default(true).notNull(),
     collectFeedback: boolean("collect_feedback").default(true).notNull(),
     showCitations: boolean("show_citations").default(true).notNull(),
     strictMode: boolean("strict_mode").default(true).notNull(),

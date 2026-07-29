@@ -39,6 +39,7 @@ type Agent = {
   logoUrl: string | null;
   iconUrl: string | null;
   widgetPosition: string;
+  showBranding: boolean;
   collectFeedback: boolean;
   showCitations: boolean;
   strictMode: boolean;
@@ -172,6 +173,7 @@ export function AgentStudio({
         logoUrl: agent.logoUrl,
         iconUrl: agent.iconUrl,
         widgetPosition: agent.widgetPosition,
+        ...(isAdmin ? { showBranding: agent.showBranding } : {}),
         collectFeedback: agent.collectFeedback,
         showCitations: agent.showCitations,
         strictMode: agent.strictMode,
@@ -585,6 +587,7 @@ export function AgentStudio({
             logoUrl={agent.logoUrl}
             name={agent.name}
             primaryColor={agent.primaryColor}
+            showBranding={agent.showBranding}
             welcomeMessage={agent.welcomeMessage}
           />
         </div>
@@ -656,10 +659,18 @@ export function AgentStudio({
               </label>
             </div>
             <label className="field"><span>Widget position</span><select value={agent.widgetPosition} onChange={(event) => patch("widgetPosition", event.target.value)}><option value="right">Bottom right</option><option value="left">Bottom left</option></select></label>
+            {isAdmin ? (
+              <Toggle
+                detail="Hide or show the Docent attribution below the composer."
+                label='Show "Powered by Docent"'
+                onChange={(value) => patch("showBranding", value)}
+                value={agent.showBranding}
+              />
+            ) : null}
           </section>
           <div className="appearance-preview">
             <span>Preview</span>
-            <ChatPanel agentId={agent.id} collectFeedback={agent.collectFeedback} embedToken={previewToken} iconUrl={agent.iconUrl} logoUrl={agent.logoUrl} name={agent.name} primaryColor={agent.primaryColor} welcomeMessage={agent.welcomeMessage} />
+            <ChatPanel agentId={agent.id} collectFeedback={agent.collectFeedback} embedToken={previewToken} iconUrl={agent.iconUrl} logoUrl={agent.logoUrl} name={agent.name} primaryColor={agent.primaryColor} showBranding={agent.showBranding} welcomeMessage={agent.welcomeMessage} />
           </div>
         </div>
       )}

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { requireAgent } from "@/lib/agents/access";
 import { db } from "@/lib/db/client";
 import { agents, sources } from "@/lib/db/schema";
-import { errorResponse, readJson } from "@/lib/http/errors";
+import { AppError, errorResponse, readJson } from "@/lib/http/errors";
 import { recordAudit } from "@/lib/observability/audit";
 
 const updateAgentSchema = z
@@ -18,6 +18,7 @@ const updateAgentSchema = z
     logoUrl: z.url().nullable(),
     iconUrl: z.url().nullable(),
     widgetPosition: z.enum(["left", "right"]),
+    showBranding: z.boolean(),
     collectFeedback: z.boolean(),
     showCitations: z.boolean(),
     strictMode: z.boolean(),
@@ -54,6 +55,13 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { agentId } = await context.params;
     const { context: workspace } = await requireAgent(agentId);
     const input = updateAgentSchema.parse(await readJson(request));
+    if (input.showBranding !== undefined && !workspace.isAdmin) {
+      throw new AppError(
+        "ADMIN_REQUIRED",
+        "Only a Docent administrator can change widget branding.",
+        403,
+      );
+    }
     const [agent] = await db
       .update(agents)
       .set({ ...input, updatedAt: new Date() })

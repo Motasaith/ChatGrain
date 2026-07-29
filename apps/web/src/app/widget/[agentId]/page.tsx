@@ -28,6 +28,7 @@ export default async function WidgetPage({
       logoUrl: agents.logoUrl,
       iconUrl: agents.iconUrl,
       collectFeedback: agents.collectFeedback,
+      showBranding: agents.showBranding,
     })
     .from(agents)
     .where(eq(agents.id, agentId))
@@ -44,6 +45,7 @@ export default async function WidgetPage({
         iconUrl={agent.iconUrl}
         name={agent.name}
         primaryColor={agent.primaryColor}
+        showBranding={agent.showBranding}
         welcomeMessage={agent.welcomeMessage}
       />
     </main>
