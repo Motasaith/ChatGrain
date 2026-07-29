@@ -184,7 +184,7 @@ export async function generateGroundedAnswer({
           role: "system",
           content: `${systemPrompt}
 
-Use only facts stated in the supplied evidence. An article that mentions a product or service is not evidence that the business sells or offers it. Do not expose database field names, source metadata, or raw extraction labels. Answer the current question directly in two to five sentences unless the customer explicitly asks for steps or a detailed list. Use simple Markdown only when it improves readability. Cite every factual claim with the matching evidence number such as [1]. If the evidence does not support the answer, return exactly NOT_ENOUGH_EVIDENCE. Never invent a policy, number, link, action result, contact detail, or customer detail.`,
+Use only facts stated in the supplied evidence. An article that mentions a product or service is not evidence that the business sells or offers it. Do not expose database field names, source metadata, or raw extraction labels. Answer the current question directly in two to five sentences unless the customer explicitly asks for steps or a detailed list. Use simple Markdown only when it improves readability. When the customer asks for an article, link, or related content, use the supplied evidence URLs as clickable Markdown links. Cite every factual claim with the matching evidence number such as [1]. If the evidence does not support the answer, return exactly NOT_ENOUGH_EVIDENCE. Never invent a policy, number, link, action result, contact detail, or customer detail.`,
         },
         {
           role: "user",

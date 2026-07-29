@@ -25,6 +25,63 @@ export type RetrievalHit = {
   rankScore: number;
 };
 
+const retrievalStopWords = new Set([
+  "the",
+  "and",
+  "what",
+  "where",
+  "when",
+  "which",
+  "with",
+  "from",
+  "this",
+  "that",
+  "you",
+  "your",
+  "our",
+  "are",
+  "was",
+  "were",
+  "will",
+  "does",
+  "its",
+  "how",
+  "can",
+  "could",
+  "would",
+  "please",
+  "give",
+  "have",
+  "about",
+  "need",
+  "want",
+  "more",
+  "information",
+  "info",
+  "because",
+  "working",
+  "similar",
+  "article",
+  "articles",
+  "website",
+  "site",
+  "know",
+  "looking",
+  "project",
+  "projects",
+  "raspberry",
+]);
+
+export function retrievalQueryTerms(query: string) {
+  return [
+    ...new Set(
+      (query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(
+        (term) => !retrievalStopWords.has(term),
+      ),
+    ),
+  ].slice(0, 24);
+}
+
 export async function findLatestIndexedLink(agentId: string) {
   const rows = await db
     .select({
@@ -93,39 +150,10 @@ export async function hybridRetrieve(
   limit = 6,
 ): Promise<RetrievalHit[]> {
   const embedding = await embedText(query);
-  const queryTerms = [
-    ...new Set(
-      (query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(
-        (term) =>
-          ![
-            "the",
-            "and",
-            "what",
-            "where",
-            "when",
-            "which",
-            "with",
-            "from",
-            "this",
-            "that",
-            "your",
-            "how",
-            "can",
-            "could",
-            "would",
-            "please",
-            "give",
-            "have",
-            "about",
-            "need",
-            "information",
-            "project",
-            "projects",
-            "raspberry",
-          ].includes(term),
-      ),
-    ),
-  ];
+  const queryTerms = retrievalQueryTerms(query);
+  const keywordQuery = queryTerms.length
+    ? queryTerms.join(" OR ")
+    : query;
   const termOverlap = (value: string) => {
     const lower = value.toLowerCase();
     return queryTerms.length
@@ -143,7 +171,7 @@ export async function hybridRetrieve(
       setweight(to_tsvector('english', coalesce(${documents.title}, '')), 'A')
       ||
       setweight(to_tsvector('english', ${chunks.content}), 'B'),
-      websearch_to_tsquery('english', ${query})
+      websearch_to_tsquery('english', ${keywordQuery})
     )
     + case when ${chunks.position} = 0 then 0.08 else 0 end
     - case
@@ -152,8 +180,14 @@ export async function hybridRetrieve(
         else 0
       end
   `;
+  const titleKeywordRank = sql<number>`
+    ts_rank_cd(
+      setweight(to_tsvector('english', coalesce(${documents.title}, '')), 'A'),
+      websearch_to_tsquery('english', ${keywordQuery})
+    )
+  `;
 
-  const [vectorRows, keywordRows] = await Promise.all([
+  const [vectorRows, keywordRows, titleRows] = await Promise.all([
     db
       .select({
         chunkId: chunks.id,
@@ -171,7 +205,7 @@ export async function hybridRetrieve(
         and(eq(chunks.agentId, agentId), isNotNull(chunks.embedding)),
       )
       .orderBy(desc(vectorSimilarity))
-      .limit(20),
+      .limit(40),
     db
       .select({
         chunkId: chunks.id,
@@ -192,11 +226,34 @@ export async function hybridRetrieve(
             setweight(to_tsvector('english', coalesce(${documents.title}, '')), 'A')
             ||
             setweight(to_tsvector('english', ${chunks.content}), 'B')
-          ) @@ websearch_to_tsquery('english', ${query})`,
+          ) @@ websearch_to_tsquery('english', ${keywordQuery})`,
         ),
       )
       .orderBy(desc(keywordRank))
-      .limit(20),
+      .limit(40),
+    db
+      .select({
+        chunkId: chunks.id,
+        documentId: chunks.documentId,
+        content: chunks.content,
+        metadata: chunks.metadata,
+        title: documents.title,
+        url: documents.canonicalUrl,
+        score: titleKeywordRank,
+        position: chunks.position,
+      })
+      .from(chunks)
+      .innerJoin(documents, eq(documents.id, chunks.documentId))
+      .where(
+        and(
+          eq(chunks.agentId, agentId),
+          eq(chunks.position, 0),
+          sql`to_tsvector('english', coalesce(${documents.title}, ''))
+            @@ websearch_to_tsquery('english', ${keywordQuery})`,
+        ),
+      )
+      .orderBy(desc(titleKeywordRank))
+      .limit(30),
   ]);
 
   const combined = new Map<string, RetrievalHit>();
@@ -220,6 +277,31 @@ export async function hybridRetrieve(
     const existing = combined.get(row.chunkId);
     if (existing) {
       existing.keywordScore = Number(row.score ?? 0);
+      existing.score += 1 / (60 + index + 1);
+    } else {
+      combined.set(row.chunkId, {
+        chunkId: row.chunkId,
+        documentId: row.documentId,
+        content: row.content,
+        title: row.title,
+        url: row.url ?? undefined,
+        vectorScore: 0,
+        keywordScore: Number(row.score ?? 0),
+        score: 1 / (60 + index + 1),
+        position: row.position,
+        lexicalScore: lexicalScore(row.title, row.content),
+        titleScore: titleScore(row.title),
+        rankScore: 0,
+      });
+    }
+  });
+  titleRows.forEach((row, index) => {
+    const existing = combined.get(row.chunkId);
+    if (existing) {
+      existing.keywordScore = Math.max(
+        existing.keywordScore,
+        Number(row.score ?? 0),
+      );
       existing.score += 1 / (60 + index + 1);
     } else {
       combined.set(row.chunkId, {

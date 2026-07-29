@@ -293,7 +293,55 @@ export function contextualCitation(
   return candidates[0]?.citation ?? null;
 }
 
-function contextualRetrievalQuestion(
+function isHandoffHistoryMessage(message: AnswerHistoryMessage) {
+  return message.role === "user"
+    ? asksForHumanSupport(message.content)
+    : /\b(?:ask the website team to contact you|submit your details below|request sent)\b/i.test(
+        message.content,
+      );
+}
+
+function standaloneTopicTerms(value: string) {
+  const ignored = new Set([
+    "want",
+    "more",
+    "information",
+    "about",
+    "because",
+    "working",
+    "similar",
+    "article",
+    "website",
+    "this",
+    "that",
+    "these",
+    "those",
+    "they",
+    "their",
+    "them",
+    "with",
+    "from",
+    "have",
+    "does",
+    "what",
+    "where",
+    "when",
+    "which",
+    "could",
+    "would",
+    "please",
+    "tell",
+    "project",
+  ]);
+  return [
+    ...new Set(
+      (value.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])
+        .filter((term) => !ignored.has(term)),
+    ),
+  ];
+}
+
+export function contextualRetrievalQuestion(
   question: string,
   history: AnswerHistoryMessage[],
 ) {
@@ -305,9 +353,13 @@ function contextualRetrievalQuestion(
       question.trim(),
     );
   if (!refersBack) return question;
+  if (standaloneTopicTerms(question).length >= 3) return question;
   const previousUser = [...history]
     .reverse()
-    .find((message) => message.role === "user");
+    .find(
+      (message) =>
+        message.role === "user" && !isHandoffHistoryMessage(message),
+    );
   return previousUser
     ? `${previousUser.content}\nFollow-up: ${question}`
     : question;
@@ -318,7 +370,10 @@ function conversationQuestion(
   history: AnswerHistoryMessage[],
 ) {
   if (!history.length) return question;
-  const transcript = history
+  const lastHandoff = history.findLastIndex(isHandoffHistoryMessage);
+  const relevantHistory = history.slice(lastHandoff + 1);
+  if (!relevantHistory.length) return question;
+  const transcript = relevantHistory
     .slice(-8)
     .map(
       (message) =>
@@ -420,9 +475,31 @@ function extractiveAnswer(question: string, hits: RetrievalHit[]) {
   };
 }
 
-function coherentEvidence(hits: RetrievalHit[]) {
+function asksForRelatedContent(question: string) {
+  return /\b(?:similar|related|alternative|another|other|more like|recommend)\b/i.test(
+    question,
+  );
+}
+
+function coherentEvidence(hits: RetrievalHit[], question: string) {
   const best = hits[0];
   if (!best) return [];
+  if (asksForRelatedContent(question)) {
+    const seen = new Set<string>();
+    return hits
+      .filter((hit) => {
+        const key = hit.documentId;
+        if (
+          seen.has(key) ||
+          (hit.url && sourceSpecificity(hit.url, hit.title) <= 0)
+        ) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 5);
+  }
   if (best.titleScore >= 0.5) {
     const sameDocument = hits
       .filter((hit) => hit.documentId === best.documentId)
@@ -461,6 +538,35 @@ export function cleanGeneratedAnswer(answer: string) {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+export function addRequestedEvidenceLinks(
+  answer: string,
+  question: string,
+  hits: RetrievalHit[],
+) {
+  const requested =
+    asksForRelatedContent(question) ||
+    /\b(?:article|link|url|page|post)\b/i.test(question);
+  if (!requested || /\]\(https?:\/\/[^)]+\)/i.test(answer)) return answer;
+  const seen = new Set<string>();
+  const links = hits
+    .filter((hit): hit is RetrievalHit & { url: string } => {
+      if (
+        !hit.url ||
+        seen.has(hit.url) ||
+        sourceSpecificity(hit.url, hit.title) <= 0
+      ) {
+        return false;
+      }
+      seen.add(hit.url);
+      return true;
+    })
+    .slice(0, asksForRelatedContent(question) ? 5 : 1);
+  if (!links.length) return answer;
+  return `${answer}\n\n${links.length > 1 ? "Related pages" : "Source"}:\n${links
+    .map((hit) => `- [${hit.title}](${hit.url})`)
+    .join("\n")}`;
 }
 
 async function llmAnswer(
@@ -579,23 +685,23 @@ export async function answerQuestion(
     : 0;
   const threshold = agent.strictMode ? 0.3 : 0.18;
   if (!best || confidence < threshold) {
-    const previousFailures = history.filter(
-      (message) =>
-        message.role === "assistant" && message.grounded === false,
-    ).length;
+    const previousAssistant = [...history]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    const repeatedFailure = previousAssistant?.grounded === false;
     return {
       answer:
-        previousFailures > 0
+        repeatedFailure
           ? `${agent.fallbackMessage}\n\nIf you would like, leave your contact details and the website team can follow up.`
           : agent.fallbackMessage,
       grounded: false,
       confidence,
       citations: [],
-      action: previousFailures > 0 ? handoffAction : undefined,
+      action: repeatedFailure ? handoffAction : undefined,
     };
   }
 
-  const evidenceHits = coherentEvidence(hits);
+  const evidenceHits = coherentEvidence(hits, question);
   const generated =
     agent.modelProvider === "ollama"
       ? await llmAnswer(agent, question, evidenceHits, history)
@@ -604,7 +710,11 @@ export async function answerQuestion(
     ? null
     : extractiveAnswer(question, evidenceHits);
   const answer = generated
-    ? cleanGeneratedAnswer(generated)
+    ? addRequestedEvidenceLinks(
+        cleanGeneratedAnswer(generated),
+        question,
+        evidenceHits,
+      )
     : extracted?.answer ?? "";
   if (!answer) {
     return {

@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  addRequestedEvidenceLinks,
   asksForHumanSupport,
   cleanGeneratedAnswer,
   contextualCitation,
+  contextualRetrievalQuestion,
   type AnswerHistoryMessage,
 } from "./answer";
 import { parseConversationIntent } from "@/lib/llm/client";
+import { retrievalQueryTerms } from "@/lib/rag/retrieve";
 
 describe("conversation-aware article links", () => {
   it("returns the specific article cited by the previous answer", () => {
@@ -87,6 +90,33 @@ describe("conversation-aware article links", () => {
       ]),
     ).toMatchObject({ chunkId: "article" });
   });
+
+  it("does not pollute an explicit new topic with an earlier handoff", () => {
+    const question =
+      "I want more information about Fun DIY Raspberry Pi because I am working on it";
+    expect(
+      contextualRetrievalQuestion(question, [
+        {
+          role: "user",
+          content: "I want to contact the admin",
+        },
+        {
+          role: "assistant",
+          content:
+            "I can ask the website team to contact you. Submit your details below.",
+          grounded: true,
+        },
+      ]),
+    ).toBe(question);
+  });
+
+  it("keeps the distinctive words for conversational searches", () => {
+    expect(
+      retrievalQueryTerms(
+        "I want more information about Fun DIY Raspberry Pi because I am working on it. Do you have a similar article?",
+      ),
+    ).toEqual(["fun", "diy"]);
+  });
 });
 
 describe("answer presentation", () => {
@@ -138,6 +168,47 @@ describe("answer presentation", () => {
       ),
     ).toBe(
       "It supports timed wake-ups. It uses low standby power.",
+    );
+  });
+
+  it("adds clickable indexed links when related articles are requested", () => {
+    expect(
+      addRequestedEvidenceLinks(
+        "Here are two related projects.",
+        "Do you have a similar article?",
+        [
+          {
+            chunkId: "one",
+            documentId: "doc-one",
+            content: "First project",
+            title: "First project",
+            url: "https://example.com/first-project/",
+            vectorScore: 0.8,
+            keywordScore: 1,
+            score: 1,
+            position: 0,
+            lexicalScore: 1,
+            titleScore: 1,
+            rankScore: 1,
+          },
+          {
+            chunkId: "two",
+            documentId: "doc-two",
+            content: "Second project",
+            title: "Second project",
+            url: "https://example.com/second-project/",
+            vectorScore: 0.7,
+            keywordScore: 1,
+            score: 1,
+            position: 0,
+            lexicalScore: 1,
+            titleScore: 1,
+            rankScore: 1,
+          },
+        ],
+      ),
+    ).toContain(
+      "- [First project](https://example.com/first-project/)",
     );
   });
 });
