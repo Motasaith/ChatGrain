@@ -17,6 +17,7 @@ import {
   Square,
   ThumbsDown,
   ThumbsUp,
+  Trash2,
   X,
 } from "lucide-react";
 import type { ChatUiAction } from "@/lib/chat/answer";
@@ -439,6 +440,8 @@ export function ChatPanel({
   const [conversationId, setConversationId] = useState<string>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [deletingConversationId, setDeletingConversationId] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingAttachments, setPendingAttachments] = useState<
     ChatAttachment[]
@@ -1142,6 +1145,53 @@ export function ChatPanel({
     await refreshHistory();
   }
 
+  async function deleteConversation(conversation: ConversationSummary) {
+    if (
+      !window.confirm(
+        `Delete ?${conversation.title}?? This permanently removes its messages and attachments.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingConversationId(conversation.id);
+    setHistoryError("");
+    try {
+      const response = await fetch(
+        `/api/public/agents/${encodeURIComponent(agentId)}/conversations/${encodeURIComponent(conversation.id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "content-type": "application/json",
+            ...authorizationHeaders(),
+          },
+          body: JSON.stringify({
+            visitorId: visitorIdRef.current,
+            sessionId: conversation.sessionId,
+          }),
+        },
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          payload?.error?.message || "Could not delete this conversation.",
+        );
+      }
+      if (conversation.id === conversationIdRef.current) {
+        startNewConversation();
+        setHistoryOpen(true);
+      }
+      await refreshHistory();
+    } catch (cause) {
+      setHistoryError(
+        cause instanceof Error
+          ? cause.message
+          : "Could not delete this conversation.",
+      );
+    } finally {
+      setDeletingConversationId("");
+    }
+  }
+
   const activeTicket = conversations.find(
     (conversation) => conversation.id === conversationId,
   )?.ticket;
@@ -1203,32 +1253,55 @@ export function ChatPanel({
           <div className="chat-history-list">
             {conversations.length ? (
               conversations.map((conversation) => (
-                <button
-                  className={
+                <div
+                  className={`chat-history-item ${
                     conversation.id === conversationId ? "active" : ""
-                  }
+                  }`}
                   key={conversation.id}
-                  onClick={() => void selectConversation(conversation)}
-                  type="button"
                 >
-                  <span>
-                    <b>{conversation.title}</b>
-                    <small>{conversation.lastMessage || "No messages yet"}</small>
-                  </span>
-                  <span>
-                    {conversation.ticket ? (
-                      <i>{conversation.ticket.reference}</i>
-                    ) : null}
-                    {conversation.unreadCount ? (
-                      <em>{conversation.unreadCount}</em>
-                    ) : null}
-                  </span>
-                </button>
+                  <button
+                    className="chat-history-select"
+                    onClick={() => void selectConversation(conversation)}
+                    type="button"
+                  >
+                    <span>
+                      <b>{conversation.title}</b>
+                      <small>
+                        {conversation.lastMessage || "No messages yet"}
+                      </small>
+                    </span>
+                    <span>
+                      {conversation.ticket ? (
+                        <i>{conversation.ticket.reference}</i>
+                      ) : null}
+                      {conversation.unreadCount ? (
+                        <em>{conversation.unreadCount}</em>
+                      ) : null}
+                    </span>
+                  </button>
+                  <button
+                    aria-label={`Delete ${conversation.title}`}
+                    className="chat-history-delete"
+                    disabled={deletingConversationId === conversation.id}
+                    onClick={() => void deleteConversation(conversation)}
+                    title="Delete conversation"
+                    type="button"
+                  >
+                    {deletingConversationId === conversation.id ? (
+                      <LoaderCircle className="spin" size={14} />
+                    ) : (
+                      <Trash2 size={14} />
+                    )}
+                  </button>
+                </div>
               ))
             ) : (
               <p>No previous conversations yet.</p>
             )}
           </div>
+          {historyError ? (
+            <p className="chat-history-error">{historyError}</p>
+          ) : null}
         </section>
       ) : null}
       <div className="chat-messages" aria-live="polite" ref={messagesRef}>

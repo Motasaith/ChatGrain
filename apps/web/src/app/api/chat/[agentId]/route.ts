@@ -1,7 +1,17 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+} from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { answerQuestion } from "@/lib/chat/answer";
+import {
+  answerQuestion,
+  referencesConversationImage,
+} from "@/lib/chat/answer";
 import { readAttachment } from "@/lib/chat/attachment-storage";
 import { db } from "@/lib/db/client";
 import {
@@ -17,6 +27,10 @@ import {
   domainAllowed,
   verifyWidgetToken,
 } from "@/lib/security/widget-token";
+import {
+  defaultLlmModel,
+  describeImagesForSearch,
+} from "@/lib/llm/client";
 
 const chatSchema = z.object({
   message: z.string().trim().min(1).max(4_000),
@@ -125,6 +139,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     const recentMessages = await db
       .select({
+        id: messages.id,
         role: messages.role,
         content: messages.content,
         citations: messages.citations,
@@ -201,21 +216,75 @@ export async function POST(request: Request, context: RouteContext) {
         { headers: { "access-control-allow-origin": "*" } },
       );
     }
+    let imageAttachments = attachments.filter(
+      (attachment) => attachment.kind === "image",
+    );
+    if (
+      !imageAttachments.length &&
+      referencesConversationImage(input.message)
+    ) {
+      const recentMessageIds = recentMessages.map((message) => message.id);
+      if (recentMessageIds.length) {
+        imageAttachments = await db
+          .select()
+          .from(messageAttachments)
+          .where(
+            and(
+              eq(messageAttachments.conversationId, conversation.id),
+              eq(messageAttachments.kind, "image"),
+              isNotNull(messageAttachments.messageId),
+              inArray(messageAttachments.messageId, recentMessageIds),
+            ),
+          )
+          .orderBy(desc(messageAttachments.createdAt))
+          .limit(1);
+      }
+    }
     const images = await Promise.all(
-      attachments
-        .filter((attachment) => attachment.kind === "image")
-        .map(async (attachment) => ({
+      imageAttachments.map(async (attachment) => ({
           mimeType: attachment.mimeType,
           base64: (await readAttachment(attachment.storageKey)).toString(
             "base64",
           ),
         })),
     );
+    let visualSearchText = imageAttachments
+      .map((attachment) => attachment.metadata?.visualSearchText)
+      .find(
+        (value): value is string =>
+          typeof value === "string" && Boolean(value.trim()),
+      );
+    if (images.length && !visualSearchText) {
+      visualSearchText =
+        (await describeImagesForSearch({
+          model:
+            process.env.VISION_LLM_MODEL?.trim() ||
+            agent.modelName ||
+            defaultLlmModel(),
+          images,
+        })) ?? undefined;
+      if (visualSearchText) {
+        await Promise.all(
+          imageAttachments.map((attachment) =>
+            db
+              .update(messageAttachments)
+              .set({
+                metadata: {
+                  ...(attachment.metadata ?? {}),
+                  visualSearchText,
+                },
+              })
+              .where(eq(messageAttachments.id, attachment.id)),
+          ),
+        );
+      }
+    }
     const result = await answerQuestion(
       agent,
       input.message,
       history,
       images,
+      visualSearchText,
     );
     const latencyMs = Math.round(performance.now() - startedAt);
     const [assistantMessage] = await db

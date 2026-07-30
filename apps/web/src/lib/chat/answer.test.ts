@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   addRequestedEvidenceLinks,
+  asksToFindPageFromImage,
   asksForHumanSupport,
   cleanGeneratedAnswer,
   contextualCitation,
   contextualRetrievalQuestion,
   projectListFallback,
+  referencesConversationImage,
   type AnswerHistoryMessage,
 } from "./answer";
 import { parseConversationIntent } from "@/lib/llm/client";
@@ -15,6 +17,21 @@ import {
 } from "@/lib/rag/retrieve";
 
 describe("conversation-aware article links", () => {
+  it("recognizes image-based page searches and conversational follow-ups", () => {
+    expect(
+      asksToFindPageFromImage("Can you find this post from the picture?"),
+    ).toBe(true);
+    expect(
+      asksToFindPageFromImage(
+        "I told you to find the post from the given pic above",
+      ),
+    ).toBe(true);
+    expect(referencesConversationImage("Tell me more about that image")).toBe(
+      true,
+    );
+    expect(asksToFindPageFromImage("How does this circuit work?")).toBe(false);
+  });
+
   it("returns the specific article cited by the previous answer", () => {
     const history: AnswerHistoryMessage[] = [
       {

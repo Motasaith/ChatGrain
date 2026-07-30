@@ -5,6 +5,7 @@ import {
   authorizePublicAgent,
   visitorConversation,
 } from "@/lib/chat/public-conversation";
+import { removeAttachment } from "@/lib/chat/attachment-storage";
 import { db } from "@/lib/db/client";
 import {
   conversations,
@@ -131,6 +132,44 @@ export async function PATCH(request: Request, context: RouteContext) {
         ),
       );
     return NextResponse.json({ data: { read: true }, requestId });
+  } catch (error) {
+    return errorResponse(error, requestId);
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  const requestId = crypto.randomUUID();
+  try {
+    const { agentId, conversationId } = await context.params;
+    const input = credentialsSchema.parse(await readJson(request, 10_000));
+    await authorizePublicAgent(agentId, bearerToken(request));
+    await visitorConversation({
+      agentId,
+      conversationId,
+      visitorId: input.visitorId,
+      sessionId: input.sessionId,
+    });
+    rateLimit(`delete-thread:${conversationId}:${input.visitorId}`, 10, 60_000);
+    const storedFiles = await db
+      .select({ storageKey: messageAttachments.storageKey })
+      .from(messageAttachments)
+      .where(eq(messageAttachments.conversationId, conversationId));
+    await db
+      .delete(conversations)
+      .where(
+        and(
+          eq(conversations.id, conversationId),
+          eq(conversations.agentId, agentId),
+          eq(conversations.externalUserId, input.visitorId),
+        ),
+      );
+    await Promise.all(
+      storedFiles.map(({ storageKey }) => removeAttachment(storageKey)),
+    );
+    return NextResponse.json({
+      data: { id: conversationId, deleted: true },
+      requestId,
+    });
   } catch (error) {
     return errorResponse(error, requestId);
   }

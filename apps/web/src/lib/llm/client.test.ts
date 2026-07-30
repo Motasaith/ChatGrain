@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { generateGroundedAnswer } from "./client";
+import {
+  describeImagesForSearch,
+  generateGroundedAnswer,
+} from "./client";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -48,5 +51,50 @@ describe("generateGroundedAnswer", () => {
       }),
     ).resolves.toBe("The image shows the support flow.");
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("describeImagesForSearch", () => {
+  it("extracts a short visual query before website retrieval", async () => {
+    vi.stubEnv("LLM_BASE_URL", "http://127.0.0.1:11434/v1");
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        expect(body.temperature).toBe(0);
+        expect(body.messages[0].content).toContain(
+          "Read the exact visible article",
+        );
+        expect(body.messages[1].content).toEqual(
+          expect.arrayContaining([
+            {
+              type: "image_url",
+              image_url: {
+                url: "data:image/png;base64,aW1hZ2U=",
+              },
+            },
+          ]),
+        );
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content:
+                  "Water Tank Overflow Alarm DIY Raspberry Pi Alert Guide LM324 CD4011",
+              },
+            },
+          ],
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      describeImagesForSearch({
+        model: "gemma4:31b",
+        images: [{ mimeType: "image/png", base64: "aW1hZ2U=" }],
+      }),
+    ).resolves.toBe(
+      "Water Tank Overflow Alarm DIY Raspberry Pi Alert Guide LM324 CD4011",
+    );
   });
 });

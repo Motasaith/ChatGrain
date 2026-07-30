@@ -8539,7 +8539,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   z-index: 20;
   inset: 67px 0 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 12px;
   padding: 16px;
   background: #f8faf7;
@@ -8590,21 +8590,19 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   overflow-y: auto;
 }
 
-.chat-history-list > button {
+.chat-history-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: stretch;
   width: 100%;
   border: 1px solid #dce5df;
   border-radius: 10px;
-  padding: 11px;
-  cursor: pointer;
   color: #263b31;
   background: #fff;
-  text-align: left;
+  overflow: hidden;
 }
 
-.chat-history-list > button.active {
+.chat-history-item.active {
   border-color: color-mix(
     in srgb,
     var(--chat-accent, var(--green)) 48%,
@@ -8617,15 +8615,51 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   );
 }
 
-.chat-history-list > button > span {
+.chat-history-select {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  min-width: 0;
+  border: 0;
+  padding: 11px;
+  cursor: pointer;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.chat-history-select > span {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
-.chat-history-list > button > span:last-child {
+.chat-history-select > span:last-child {
   align-content: start;
   justify-items: end;
+}
+
+.chat-history-delete {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  align-self: center;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #839087;
+  background: transparent;
+}
+
+.chat-history-delete:hover:not(:disabled),
+.chat-history-delete:focus-visible {
+  color: #bd2929;
+  background: #fff0f0;
+}
+
+.chat-history-delete:disabled {
+  cursor: wait;
 }
 
 .chat-history-list b {
@@ -8669,6 +8703,13 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   margin: 30px 0;
   color: #718178;
   font-size: 13px;
+  text-align: center;
+}
+
+.chat-history-error {
+  margin: 0;
+  color: #bd2929;
+  font-size: 11px;
   text-align: center;
 }
 

@@ -12,6 +12,14 @@ type GenerateAnswerInput = {
   }>;
 };
 
+type DescribeImagesInput = {
+  model?: string | null;
+  images: Array<{
+    mimeType: string;
+    base64: string;
+  }>;
+};
+
 /**
  * Written-chat rules: Markdown and bracketed citations are wanted on screen.
  */
@@ -183,6 +191,88 @@ KNOWLEDGE`,
   } catch (error) {
     logger.warn({ error }, "Conversation intent routing failed");
     return "knowledge";
+  }
+}
+
+/**
+ * Turns an image into a short retrieval query before the knowledge-base
+ * search runs. This is deliberately separate from answer generation: searching
+ * for "the post in this picture" cannot work until the visible title and other
+ * identifiers have been read from the picture.
+ */
+export async function describeImagesForSearch({
+  model,
+  images,
+}: DescribeImagesInput) {
+  if (!images.length) return null;
+  const baseUrl = llmBaseUrl();
+  const apiKey = llmApiKey();
+  if (new URL(baseUrl).hostname === "ollama.com" && !apiKey) {
+    logger.warn(
+      "Ollama Cloud is configured for visual search, but LLM_API_KEY is missing",
+    );
+    return null;
+  }
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model:
+          model?.trim() ||
+          process.env.VISION_LLM_MODEL?.trim() ||
+          defaultLlmModel(),
+        messages: [
+          {
+            role: "system",
+            content: `Create a website-search query from customer images.
+Read the exact visible article, product, project, or page title when one is
+present. Add at most five distinctive visible names or technical identifiers.
+Do not answer the customer, explain the image, guess missing words, or add
+labels such as "title" or "keywords". Return one plain-text line only.`,
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Extract the most precise search query visible in the attached image.",
+              },
+              ...images.map((image) => ({
+                type: "image_url",
+                image_url: {
+                  url: `data:${image.mimeType};base64,${image.base64}`,
+                },
+              })),
+            ],
+          },
+        ],
+        temperature: 0,
+        max_tokens: 120,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(35_000),
+    });
+    if (!response.ok) {
+      logger.warn(
+        { status: response.status },
+        "Ollama-compatible visual search extraction failed",
+      );
+      return null;
+    }
+    const payload = (await response.json()) as ChatCompletionResponse;
+    const query = payload.choices?.[0]?.message?.content
+      ?.replace(/\s+/g, " ")
+      .replace(/^["']|["']$/g, "")
+      .trim()
+      .slice(0, 500);
+    return query || null;
+  } catch (error) {
+    logger.warn({ error }, "Visual search extraction failed");
+    return null;
   }
 }
 

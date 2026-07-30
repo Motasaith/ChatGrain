@@ -5,6 +5,7 @@ import { pinnedAnswers } from "@/lib/db/schema";
 import {
   classifyConversationIntent,
   defaultLlmModel,
+  describeImagesForSearch,
   generateGroundedAnswer,
   streamGroundedAnswer,
 } from "@/lib/llm/client";
@@ -29,6 +30,22 @@ function asksForContextualLink(question: string) {
       question,
     )
   );
+}
+
+export function referencesConversationImage(question: string) {
+  return /\b(?:image|images|pic|pics|picture|photo|screenshot|diagram|circuit|attached|attachment|above|shown|visible|given)\b/i.test(
+    question,
+  ) ||
+    /\b(?:this|that|it|same)\b.{0,35}\b(?:post|article|page|project|product)\b/i.test(
+      question,
+    );
+}
+
+export function asksToFindPageFromImage(question: string) {
+  return referencesConversationImage(question) &&
+    /\b(?:find|locate|identify|match|search|which|where|link|url|post|article|page|project|product)\b/i.test(
+      question,
+    );
 }
 
 export type AnswerHistoryMessage = {
@@ -690,6 +707,7 @@ export async function answerQuestion(
   question: string,
   history: AnswerHistoryMessage[] = [],
   images: Array<{ mimeType: string; base64: string }> = [],
+  cachedVisualSearchText?: string | null,
 ) {
   if (await shouldOfferHumanHandoff(agent, question, history)) {
     return humanSupportAnswer(agent);
@@ -725,7 +743,7 @@ export async function answerQuestion(
     }
   }
 
-  if (asksForContextualLink(question)) {
+  if (!images.length && asksForContextualLink(question)) {
     const priorCitation = contextualCitation(question, history);
     if (priorCitation?.url) {
       return {
@@ -737,8 +755,57 @@ export async function answerQuestion(
     }
   }
 
-  const retrievalQuestion = contextualRetrievalQuestion(question, history);
+  const visualSearchText =
+    cachedVisualSearchText?.trim() ||
+    (images.length
+      ? await describeImagesForSearch({
+          model:
+            process.env.VISION_LLM_MODEL?.trim() ||
+            agent.modelName ||
+            defaultLlmModel(),
+          images,
+        })
+      : null);
+  const retrievalQuestion = [
+    visualSearchText,
+    contextualRetrievalQuestion(question, history),
+  ]
+    .filter(Boolean)
+    .join("\n");
   const hits = await hybridRetrieve(agent.id, retrievalQuestion);
+  if (images.length && asksToFindPageFromImage(question)) {
+    const matched = hits.find(
+      (hit): hit is RetrievalHit & { url: string } =>
+        Boolean(hit.url) &&
+        sourceSpecificity(hit.url!, hit.title) > 0 &&
+        (
+          hit.titleScore >= 0.34 ||
+          (hit.titleScore >= 0.2 && hit.lexicalScore >= 0.2)
+        ),
+    );
+    if (matched) {
+      const citation = {
+        chunkId: matched.chunkId,
+        title: matched.title,
+        url: matched.url,
+        excerpt: matched.content.slice(0, 260),
+      };
+      return {
+        answer: `I found the matching page:\n[${matched.title}](${matched.url})`,
+        grounded: true,
+        confidence: Math.max(0.9, matched.titleScore),
+        citations: agent.showCitations ? [citation] : [],
+      };
+    }
+    return {
+      answer: visualSearchText
+        ? `I could read “${visualSearchText}” from the image, but I couldn’t match it confidently to an indexed page on this website.`
+        : "I couldn’t read enough identifying text from the image to match it confidently to an indexed page on this website.",
+      grounded: false,
+      confidence: 0,
+      citations: [],
+    };
+  }
   if (asksForContextualLink(question)) {
     const specificHit = hits.find(
       (hit): hit is RetrievalHit & { url: string } =>
