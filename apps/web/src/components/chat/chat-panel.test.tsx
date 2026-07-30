@@ -24,3 +24,19 @@ describe("widget branding", () => {
     ).not.toContain("Powered by");
   });
 });
+
+describe("widget help center", () => {
+  it("shows the help center control by default", () => {
+    expect(
+      renderToStaticMarkup(<ChatPanel {...requiredProps} />),
+    ).toContain('aria-label="Help center"');
+  });
+
+  it("can be disabled per agent", () => {
+    expect(
+      renderToStaticMarkup(
+        <ChatPanel {...requiredProps} helpCenterEnabled={false} />,
+      ),
+    ).not.toContain('aria-label="Help center"');
+  });
+});

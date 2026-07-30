@@ -162,6 +162,20 @@ export const agents = pgTable(
     logoUrl: text("logo_url"),
     iconUrl: text("icon_url"),
     widgetPosition: text("widget_position").default("right").notNull(),
+    teaserMessages: text("teaser_messages")
+      .array()
+      .default([
+        "Hey! Have a question?",
+        "I can help you find the right answer.",
+      ])
+      .notNull(),
+    attentionMessage: text("attention_message")
+      .default("We're here!")
+      .notNull(),
+    helpCenterEnabled: boolean("help_center_enabled").default(true).notNull(),
+    helpCenterGreeting: text("help_center_greeting")
+      .default("How can we help?")
+      .notNull(),
     showBranding: boolean("show_branding").default(true).notNull(),
     collectFeedback: boolean("collect_feedback").default(true).notNull(),
     showCitations: boolean("show_citations").default(true).notNull(),

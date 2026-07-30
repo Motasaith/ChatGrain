@@ -8,6 +8,7 @@ import {
   ExternalLink,
   History,
   ImagePlus,
+  LifeBuoy,
   LoaderCircle,
   MessageCircle,
   Mic,
@@ -16,6 +17,7 @@ import {
   ShieldCheck,
   ThumbsDown,
   ThumbsUp,
+  TicketCheck,
   Trash2,
   X,
 } from "lucide-react";
@@ -408,6 +410,8 @@ export function ChatPanel({
   iconUrl,
   embedded = false,
   collectFeedback = true,
+  helpCenterEnabled = true,
+  helpCenterGreeting = "How can we help?",
   showBranding = true,
   embedToken,
   active,
@@ -420,6 +424,8 @@ export function ChatPanel({
   iconUrl?: string | null;
   embedded?: boolean;
   collectFeedback?: boolean;
+  helpCenterEnabled?: boolean;
+  helpCenterGreeting?: string;
   showBranding?: boolean;
   embedToken?: string;
   active?: boolean;
@@ -438,6 +444,7 @@ export function ChatPanel({
   const [conversationId, setConversationId] = useState<string>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [helpCenterOpen, setHelpCenterOpen] = useState(false);
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
@@ -1045,6 +1052,7 @@ export function ChatPanel({
     setMessages([welcome]);
     setPendingAttachments([]);
     setHistoryOpen(false);
+    setHelpCenterOpen(false);
     setNotice("");
     setError("");
     window.setTimeout(() => inputRef.current?.focus(), 0);
@@ -1052,8 +1060,20 @@ export function ChatPanel({
 
   async function selectConversation(conversation: ConversationSummary) {
     setHistoryOpen(false);
+    setHelpCenterOpen(false);
     await loadConversation(conversation);
     await refreshHistory();
+  }
+
+  function prepareNewConversation(message = "") {
+    startNewConversation();
+    window.setTimeout(() => {
+      const field = inputRef.current;
+      if (!field) return;
+      field.value = message;
+      field.style.height = message ? `${Math.min(field.scrollHeight, 104)}px` : "";
+      field.focus({ preventScroll: true });
+    }, 0);
   }
 
   async function deleteConversation(conversation: ConversationSummary) {
@@ -1106,6 +1126,9 @@ export function ChatPanel({
   const activeTicket = conversations.find(
     (conversation) => conversation.id === conversationId,
   )?.ticket;
+  const ticketConversations = conversations.filter(
+    (conversation) => conversation.ticket,
+  );
 
   return (
     <div
@@ -1121,10 +1144,26 @@ export function ChatPanel({
         </span>
         <span><b>{name}</b><small><i /> Online</small></span>
         <span className="chat-header-actions">
+          {helpCenterEnabled ? (
+            <button
+              aria-label="Help center"
+              className={helpCenterOpen ? "active" : ""}
+              onClick={() => {
+                setHistoryOpen(false);
+                setHelpCenterOpen((current) => !current);
+              }}
+              type="button"
+            >
+              <LifeBuoy size={16} />
+            </button>
+          ) : null}
           <button
             aria-label="Conversation history"
             className={unreadCount ? "has-unread" : ""}
-            onClick={() => setHistoryOpen((current) => !current)}
+            onClick={() => {
+              setHelpCenterOpen(false);
+              setHistoryOpen((current) => !current);
+            }}
             type="button"
           >
             <History size={16} />
@@ -1139,6 +1178,83 @@ export function ChatPanel({
           </button>
         </span>
       </header>
+      {helpCenterEnabled && helpCenterOpen ? (
+        <section className="chat-help-panel">
+          <div className="chat-help-heading">
+            <span>
+              <LifeBuoy size={15} />
+              <b>Help center</b>
+            </span>
+            <button
+              aria-label="Close help center"
+              onClick={() => setHelpCenterOpen(false)}
+              type="button"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="chat-help-intro">
+            <span><LifeBuoy size={19} /></span>
+            <div>
+              <h2>{helpCenterGreeting}</h2>
+              <p>Ask the assistant now or continue a request with the support team.</p>
+            </div>
+          </div>
+          <div className="chat-help-actions">
+            <button
+              onClick={() => prepareNewConversation()}
+              type="button"
+            >
+              <MessageCircle size={17} />
+              <span>
+                <b>Ask a question</b>
+                <small>Get an answer from the website knowledge base.</small>
+              </span>
+            </button>
+            <button
+              onClick={() =>
+                prepareNewConversation("I would like to contact the support team.")
+              }
+              type="button"
+            >
+              <TicketCheck size={17} />
+              <span>
+                <b>Contact support</b>
+                <small>Send a request and receive replies in this widget.</small>
+              </span>
+            </button>
+          </div>
+          <div className="chat-help-tickets">
+            <span>
+              <b>Your support tickets</b>
+              <small>{ticketConversations.length}</small>
+            </span>
+            {ticketConversations.length ? (
+              ticketConversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  onClick={() => void selectConversation(conversation)}
+                  type="button"
+                >
+                  <TicketCheck size={15} />
+                  <span>
+                    <b>{conversation.ticket?.reference}</b>
+                    <small>{conversation.title}</small>
+                  </span>
+                  <i>{conversation.ticket?.status.replaceAll("_", " ")}</i>
+                  {conversation.unreadCount ? (
+                    <em>{conversation.unreadCount}</em>
+                  ) : null}
+                </button>
+              ))
+            ) : (
+              <p>
+                No tickets yet. Contact support above when you need a person.
+              </p>
+            )}
+          </div>
+        </section>
+      ) : null}
       {historyOpen ? (
         <section className="chat-history-panel">
           <div>

@@ -8504,6 +8504,10 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   margin: 0;
 }
 
+.chat-panel.chat-panel > header .chat-header-actions button.active {
+  background: rgb(255 255 255 / 26%);
+}
+
 .chat-header-actions button.has-unread::after {
   position: absolute;
   top: -4px;
@@ -8711,6 +8715,246 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   color: #bd2929;
   font-size: 11px;
   text-align: center;
+}
+
+.chat-help-panel {
+  position: absolute;
+  z-index: 21;
+  inset: 67px 0 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 13px;
+  padding: 16px;
+  background:
+    radial-gradient(
+      circle at 85% 0,
+      color-mix(in srgb, var(--chat-accent, var(--green)) 10%, transparent),
+      transparent 34%
+    ),
+    #f8faf7;
+}
+
+.chat-help-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-help-heading > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.chat-help-heading > button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid #dbe4dd;
+  border-radius: 9px;
+  cursor: pointer;
+  color: #334a3e;
+  background: #fff;
+}
+
+.chat-help-intro {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid
+    color-mix(in srgb, var(--chat-accent, var(--green)) 20%, #dce5df);
+  border-radius: 13px;
+  padding: 13px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgb(31 57 45 / 7%);
+}
+
+.chat-help-intro > span {
+  display: grid;
+  width: 39px;
+  height: 39px;
+  flex: none;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--chat-accent-contrast, #fff);
+  background: var(--chat-accent, var(--green));
+}
+
+.chat-help-intro h2,
+.chat-help-intro p {
+  margin: 0;
+}
+
+.chat-help-intro h2 {
+  color: #1d3328;
+  font-size: 15px;
+}
+
+.chat-help-intro p {
+  margin-top: 3px;
+  color: #6d7e75;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.chat-help-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.chat-help-actions > button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  border: 1px solid #dce5df;
+  border-radius: 11px;
+  padding: 11px;
+  cursor: pointer;
+  color: #2b4437;
+  background: #fff;
+  text-align: left;
+}
+
+.chat-help-actions > button:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--chat-accent, var(--green)) 42%,
+    #dce5df
+  );
+}
+
+.chat-help-actions > button > svg {
+  color: var(--chat-accent, var(--green));
+}
+
+.chat-help-actions span,
+.chat-help-tickets > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chat-help-actions b {
+  font-size: 12px;
+}
+
+.chat-help-actions small {
+  color: #718178;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.chat-help-tickets {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat-help-tickets > span {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 3px 2px;
+}
+
+.chat-help-tickets > span b {
+  font-size: 12px;
+}
+
+.chat-help-tickets > span small {
+  display: grid;
+  min-width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--chat-accent, var(--green));
+  background: color-mix(
+    in srgb,
+    var(--chat-accent, var(--green)) 11%,
+    #fff
+  );
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.chat-help-tickets > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #dce5df;
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  color: #2b4437;
+  background: #fff;
+  text-align: left;
+}
+
+.chat-help-tickets > button > svg {
+  color: var(--chat-accent, var(--green));
+}
+
+.chat-help-tickets > button > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chat-help-tickets > button b,
+.chat-help-tickets > button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-help-tickets > button b {
+  font-size: 11px;
+}
+
+.chat-help-tickets > button small {
+  color: #718178;
+  font-size: 10px;
+}
+
+.chat-help-tickets > button i {
+  color: #65786e;
+  font-size: 9px;
+  font-style: normal;
+  text-transform: capitalize;
+}
+
+.chat-help-tickets > button em {
+  display: grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  background: #d7463a;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.chat-help-tickets > p {
+  margin: 20px 12px;
+  color: #718178;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+@media (max-width: 410px) {
+  .chat-help-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .chat-ticket-banner {

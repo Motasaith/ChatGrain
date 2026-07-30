@@ -39,6 +39,10 @@ type Agent = {
   logoUrl: string | null;
   iconUrl: string | null;
   widgetPosition: string;
+  teaserMessages: string[];
+  attentionMessage: string;
+  helpCenterEnabled: boolean;
+  helpCenterGreeting: string;
   showBranding: boolean;
   collectFeedback: boolean;
   showCitations: boolean;
@@ -173,6 +177,10 @@ export function AgentStudio({
         logoUrl: agent.logoUrl,
         iconUrl: agent.iconUrl,
         widgetPosition: agent.widgetPosition,
+        teaserMessages: agent.teaserMessages,
+        attentionMessage: agent.attentionMessage,
+        helpCenterEnabled: agent.helpCenterEnabled,
+        helpCenterGreeting: agent.helpCenterGreeting,
         ...(isAdmin ? { showBranding: agent.showBranding } : {}),
         collectFeedback: agent.collectFeedback,
         showCitations: agent.showCitations,
@@ -584,6 +592,8 @@ export function AgentStudio({
             collectFeedback={agent.collectFeedback}
             embedToken={previewToken}
             iconUrl={agent.iconUrl}
+            helpCenterEnabled={agent.helpCenterEnabled}
+            helpCenterGreeting={agent.helpCenterGreeting}
             logoUrl={agent.logoUrl}
             name={agent.name}
             primaryColor={agent.primaryColor}
@@ -659,6 +669,53 @@ export function AgentStudio({
               </label>
             </div>
             <label className="field"><span>Widget position</span><select value={agent.widgetPosition} onChange={(event) => patch("widgetPosition", event.target.value)}><option value="right">Bottom right</option><option value="left">Bottom left</option></select></label>
+            <label className="field">
+              <span>Closed-widget messages</span>
+              <textarea
+                maxLength={480}
+                onChange={(event) =>
+                  patch(
+                    "teaserMessages",
+                    event.target.value
+                      .split(/\n/)
+                      .map((item) => item.trim())
+                      .filter(Boolean)
+                      .slice(0, 3),
+                  )
+                }
+                placeholder={"Hey! Have a question?\nI can help you find the right answer."}
+                rows={3}
+                value={agent.teaserMessages.join("\n")}
+              />
+              <small>One message per line, up to three. Leave empty to hide the first-visit prompts.</small>
+            </label>
+            <div className="two-fields">
+              <label className="field">
+                <span>Returning visitor label</span>
+                <input
+                  maxLength={80}
+                  onChange={(event) => patch("attentionMessage", event.target.value)}
+                  placeholder="We're here!"
+                  value={agent.attentionMessage}
+                />
+                <small>Shown beside the launcher after a visitor has interacted.</small>
+              </label>
+              <label className="field">
+                <span>Help center heading</span>
+                <input
+                  maxLength={160}
+                  onChange={(event) => patch("helpCenterGreeting", event.target.value)}
+                  value={agent.helpCenterGreeting}
+                />
+                <small>Introduces support options and the visitor&apos;s tickets.</small>
+              </label>
+            </div>
+            <Toggle
+              detail="Let visitors open support options and revisit their tickets."
+              label="Show help center"
+              onChange={(value) => patch("helpCenterEnabled", value)}
+              value={agent.helpCenterEnabled}
+            />
             {isAdmin ? (
               <Toggle
                 detail="Hide or show the Docent attribution below the composer."
@@ -670,7 +727,7 @@ export function AgentStudio({
           </section>
           <div className="appearance-preview">
             <span>Preview</span>
-            <ChatPanel agentId={agent.id} collectFeedback={agent.collectFeedback} embedToken={previewToken} iconUrl={agent.iconUrl} logoUrl={agent.logoUrl} name={agent.name} primaryColor={agent.primaryColor} showBranding={agent.showBranding} welcomeMessage={agent.welcomeMessage} />
+            <ChatPanel agentId={agent.id} collectFeedback={agent.collectFeedback} embedToken={previewToken} helpCenterEnabled={agent.helpCenterEnabled} helpCenterGreeting={agent.helpCenterGreeting} iconUrl={agent.iconUrl} logoUrl={agent.logoUrl} name={agent.name} primaryColor={agent.primaryColor} showBranding={agent.showBranding} welcomeMessage={agent.welcomeMessage} />
           </div>
         </div>
       )}

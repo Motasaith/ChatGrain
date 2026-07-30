@@ -27,6 +27,8 @@ export default async function WidgetPage({
       primaryColor: agents.primaryColor,
       logoUrl: agents.logoUrl,
       iconUrl: agents.iconUrl,
+      helpCenterEnabled: agents.helpCenterEnabled,
+      helpCenterGreeting: agents.helpCenterGreeting,
       collectFeedback: agents.collectFeedback,
       showBranding: agents.showBranding,
     })
@@ -43,6 +45,8 @@ export default async function WidgetPage({
         embedToken={query.token}
         logoUrl={agent.logoUrl}
         iconUrl={agent.iconUrl}
+        helpCenterEnabled={agent.helpCenterEnabled}
+        helpCenterGreeting={agent.helpCenterGreeting}
         name={agent.name}
         primaryColor={agent.primaryColor}
         showBranding={agent.showBranding}
