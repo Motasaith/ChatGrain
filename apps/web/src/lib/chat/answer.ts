@@ -6,6 +6,7 @@ import {
   classifyConversationIntent,
   defaultLlmModel,
   generateGroundedAnswer,
+  streamGroundedAnswer,
 } from "@/lib/llm/client";
 import { logger } from "@/lib/observability/logger";
 import {
@@ -540,12 +541,21 @@ function extractiveAnswer(question: string, hits: RetrievalHit[]) {
       return true;
     })
     .slice(0, 2);
+  // Sentences are deduplicated above, but two of them can be drawn from the
+  // same chunk, which would cite that one source twice.
+  const citedChunks = new Set<string>();
   return {
     answer: selected
       .map((item) => item.sentence)
       .join(" ")
       .slice(0, 800),
-    hits: selected.map((item) => item.hit),
+    hits: selected
+      .map((item) => item.hit)
+      .filter((hit) => {
+        if (citedChunks.has(hit.chunkId)) return false;
+        citedChunks.add(hit.chunkId);
+        return true;
+      }),
   };
 }
 
@@ -841,6 +851,239 @@ export async function answerQuestion(
     };
   }
   return {
+    answer,
+    grounded: true,
+    confidence,
+    citations: agent.showCitations
+      ? (
+          generated
+            ? citedEvidence(generated, evidenceHits)
+            : listFallback?.hits ?? extracted?.hits ?? []
+        ).map((hit) => ({
+          chunkId: hit.chunkId,
+          title: hit.title,
+          url: hit.url,
+          excerpt: hit.content.slice(0, 260),
+        }))
+      : [],
+  };
+}
+
+export type AnswerCitation = {
+  chunkId: string;
+  title: string;
+  url?: string;
+  excerpt: string;
+};
+
+export type AnswerResult = {
+  answer: string;
+  grounded: boolean;
+  confidence: number;
+  citations: AnswerCitation[];
+  action?: ChatUiAction;
+};
+
+export type AnswerStreamEvent =
+  /** Incremental model output, safe to speak and to render as it arrives. */
+  | { type: "delta"; text: string }
+  /** Authoritative result; replaces any accumulated delta text. */
+  | ({ type: "final" } & AnswerResult);
+
+/**
+ * Streaming counterpart of `answerQuestion`, built for the realtime voice
+ * gateway.
+ *
+ * Only the model-generated branch can stream. Every other branch (handoff,
+ * pinned answers, direct link lookups, retrieval fallbacks) resolves in a
+ * single step, so those yield just a `final` event.
+ */
+export async function* answerQuestionStream(
+  agent: Agent,
+  question: string,
+  history: AnswerHistoryMessage[] = [],
+  { voice = false, signal }: { voice?: boolean; signal?: AbortSignal } = {},
+): AsyncGenerator<AnswerStreamEvent> {
+  const nonStreaming = async (): Promise<AnswerResult | null> => {
+    if (await shouldOfferHumanHandoff(agent, question, history)) {
+      return humanSupportAnswer(agent);
+    }
+    const pinned = await findPinnedAnswer(agent.id, question);
+    if (pinned) {
+      return {
+        answer: pinned.answer,
+        grounded: true,
+        confidence: 1,
+        citations: agent.showCitations
+          ? [
+              {
+                chunkId: pinned.id,
+                title: `Pinned: ${pinned.title}`,
+                excerpt: pinned.answer.slice(0, 220),
+              },
+            ]
+          : [],
+      };
+    }
+    if (asksForLatestLink(question)) {
+      const latest = await findLatestIndexedLink(agent.id);
+      if (latest) {
+        return {
+          answer: `Here is the latest indexed post:\n[${latest.title}](${latest.url})`,
+          grounded: true,
+          confidence: 1,
+          citations: agent.showCitations ? [latest] : [],
+        };
+      }
+    }
+    if (asksForContextualLink(question)) {
+      const priorCitation = contextualCitation(question, history);
+      if (priorCitation?.url) {
+        return {
+          answer: `Here is the article you were discussing:\n[${priorCitation.title}](${priorCitation.url})`,
+          grounded: true,
+          confidence: 1,
+          citations: agent.showCitations ? [priorCitation] : [],
+        };
+      }
+    }
+    return null;
+  };
+
+  const shortcut = await nonStreaming();
+  if (shortcut) {
+    yield { type: "final", ...shortcut };
+    return;
+  }
+  if (signal?.aborted) return;
+
+  const retrievalQuestion = contextualRetrievalQuestion(question, history);
+  const hits = await hybridRetrieve(agent.id, retrievalQuestion);
+  if (signal?.aborted) return;
+
+  if (asksForContextualLink(question)) {
+    const specificHit = hits.find(
+      (hit): hit is RetrievalHit & { url: string } =>
+        Boolean(hit.url) && sourceSpecificity(hit.url!, hit.title) > 0,
+    );
+    if (specificHit) {
+      const citation = {
+        chunkId: specificHit.chunkId,
+        title: specificHit.title,
+        url: specificHit.url,
+        excerpt: specificHit.content.slice(0, 260),
+      };
+      yield {
+        type: "final",
+        answer: `Here is the most relevant article:\n[${citation.title}](${citation.url})`,
+        grounded: true,
+        confidence: 0.9,
+        citations: agent.showCitations ? [citation] : [],
+      };
+      return;
+    }
+  }
+
+  const best = hits[0];
+  const confidence = best
+    ? Math.max(
+        0,
+        Math.min(
+          1,
+          best.vectorScore * 0.4 +
+            Math.max(0, Math.min(best.keywordScore, 0.8)) * 0.22 +
+            best.lexicalScore * 0.2 +
+            best.titleScore * 0.35,
+        ),
+      )
+    : 0;
+  const threshold = agent.strictMode ? 0.3 : 0.18;
+
+  if (!best || confidence < threshold) {
+    const previousAssistant = [...history]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    const repeatedFailure = previousAssistant?.grounded === false;
+    yield {
+      type: "final",
+      answer: repeatedFailure
+        ? `${agent.fallbackMessage}\n\nIf you would like, leave your contact details and the website team can follow up.`
+        : agent.fallbackMessage,
+      grounded: false,
+      confidence,
+      citations: [],
+      action: repeatedFailure ? handoffAction : undefined,
+    };
+    return;
+  }
+
+  const evidenceHits = coherentEvidence(hits, question);
+  const context = evidenceHits
+    .map(
+      (hit, index) =>
+        `[${index + 1}] ${hit.title}${hit.url ? ` (${hit.url})` : ""}\n${hit.content}`,
+    )
+    .join("\n\n");
+
+  // An empty `generated` means the model produced nothing usable, which sends
+  // the answer down the same retrieval fallbacks the non-streaming path uses.
+  let generated = "";
+
+  if (agent.modelProvider === "ollama") {
+    try {
+      for await (const chunk of streamGroundedAnswer({
+        model: agent.modelName || defaultLlmModel(),
+        systemPrompt: agent.systemPrompt,
+        context,
+        question: conversationQuestion(question, history),
+        temperature: agent.temperature,
+        voice,
+        signal,
+      })) {
+        if (chunk.type === "insufficient") {
+          generated = "";
+          break;
+        }
+        if (chunk.type === "delta") {
+          yield { type: "delta", text: chunk.text };
+        }
+        if (chunk.type === "done") generated = chunk.text;
+      }
+    } catch (error) {
+      if (signal?.aborted) return;
+      logger.warn({ error }, "Streaming voice generation failed");
+      generated = "";
+    }
+  }
+
+  if (signal?.aborted) return;
+
+  const listFallback = generated
+    ? null
+    : projectListFallback(question, evidenceHits);
+  const extracted =
+    generated || listFallback ? null : extractiveAnswer(question, evidenceHits);
+  const answer = generated
+    ? addRequestedEvidenceLinks(
+        cleanGeneratedAnswer(generated),
+        question,
+        evidenceHits,
+      )
+    : listFallback?.answer ?? extracted?.answer ?? "";
+
+  if (!answer) {
+    yield {
+      type: "final",
+      answer: agent.fallbackMessage,
+      grounded: false,
+      confidence,
+      citations: [],
+    };
+    return;
+  }
+
+  yield {
+    type: "final",
     answer,
     grounded: true,
     confidence,

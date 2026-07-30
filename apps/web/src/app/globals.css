@@ -9051,3 +9051,331 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
     display: none;
   }
 }
+
+/* Realtime voice call ---------------------------------------------------- */
+
+/* The overlay is positioned against the panel, so the panel must be a
+   containing block. */
+.chat-panel {
+  position: relative;
+}
+
+.voice-call {
+  position: absolute;
+  z-index: 6;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  inset: 0;
+  background: linear-gradient(170deg, #0f1a15 0%, #16241d 55%, #101b16 100%);
+  color: #eaf3ee;
+  gap: 4px;
+}
+
+.voice-call-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 17px 4px;
+  gap: 10px;
+}
+
+.voice-call-header > strong {
+  overflow: hidden;
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-call-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  gap: 6px;
+  letter-spacing: 0.01em;
+}
+
+.voice-call-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #7fd6a8;
+}
+
+.voice-call-status.is-listening .voice-call-dot {
+  animation: voice-dot 1.8s ease-in-out infinite;
+  background: #7fd6a8;
+}
+
+.voice-call-status.is-speaking .voice-call-dot {
+  background: #8fd0ff;
+}
+
+.voice-call-status.is-ended .voice-call-dot {
+  background: #8b9a91;
+}
+
+@keyframes voice-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.voice-call-stage {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 8px 20px;
+  gap: 16px;
+}
+
+.voice-orb {
+  position: relative;
+  display: grid;
+  width: 136px;
+  height: 136px;
+  align-items: center;
+  justify-items: center;
+  /* Level is written by React each frame; every visual below derives from it. */
+  --voice-level: 0;
+}
+
+.voice-orb-core,
+.voice-orb-ring {
+  position: absolute;
+  border-radius: 50%;
+  grid-area: 1 / 1;
+}
+
+.voice-orb-core {
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(
+    circle at 50% 42%,
+    rgb(127 214 168 / 32%) 0%,
+    rgb(24 124 82 / 14%) 55%,
+    transparent 72%
+  );
+  transform: scale(calc(0.86 + var(--voice-level) * 0.28));
+  transition: transform 90ms ease-out;
+}
+
+.voice-orb-ring {
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgb(127 214 168 / 28%);
+  opacity: calc(0.35 + var(--voice-level) * 0.65);
+  transform: scale(calc(0.94 + var(--voice-level) * 0.16));
+  transition:
+    transform 140ms ease-out,
+    opacity 140ms ease-out;
+}
+
+.voice-orb.is-connecting .voice-orb-ring,
+.voice-orb.is-thinking .voice-orb-ring {
+  animation: voice-ring 1.6s ease-in-out infinite;
+}
+
+.voice-orb.is-speaking .voice-orb-core {
+  background: radial-gradient(
+    circle at 50% 42%,
+    rgb(143 208 255 / 34%) 0%,
+    rgb(46 116 179 / 16%) 55%,
+    transparent 72%
+  );
+}
+
+.voice-orb.is-muted {
+  filter: grayscale(0.7);
+  opacity: 0.55;
+}
+
+@keyframes voice-ring {
+  50% {
+    opacity: 0.9;
+    transform: scale(1.06);
+  }
+}
+
+.voice-bars {
+  display: flex;
+  height: 54px;
+  align-items: center;
+  grid-area: 1 / 1;
+  gap: 3px;
+}
+
+.voice-bars > span {
+  display: block;
+  width: 3px;
+  height: 100%;
+  border-radius: 999px;
+  background: currentcolor;
+  color: #7fd6a8;
+  opacity: 0.85;
+  transform: scaleY(clamp(0.12, var(--bar-scale, 0.18), 1));
+  transition: transform 110ms ease-out;
+  transition-delay: var(--bar-delay, 0ms);
+}
+
+.voice-orb.is-speaking .voice-bars > span {
+  color: #8fd0ff;
+}
+
+.voice-orb.is-connecting .voice-bars > span,
+.voice-orb.is-ended .voice-bars > span {
+  color: #7c8d84;
+}
+
+.voice-call-hint {
+  min-height: 1.2em;
+  margin: 0;
+  color: rgb(234 243 238 / 62%);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.voice-call-transcript {
+  display: grid;
+  max-height: 172px;
+  align-content: start;
+  padding: 0 18px;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.voice-turn {
+  max-width: 88%;
+  margin: 0;
+  padding: 8px 11px;
+  border-radius: 12px;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.voice-turn.is-user {
+  justify-self: end;
+  border-bottom-right-radius: 4px;
+  background: rgb(127 214 168 / 16%);
+}
+
+.voice-turn.is-assistant {
+  justify-self: start;
+  border-bottom-left-radius: 4px;
+  background: rgb(255 255 255 / 7%);
+}
+
+.voice-turn-links {
+  display: grid;
+  margin-top: 6px;
+  gap: 3px;
+}
+
+.voice-turn-links > a {
+  overflow: hidden;
+  color: #9fe3c0;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-call-error {
+  margin: 0;
+  padding: 6px 18px;
+  color: #ffb4ab;
+  font-size: 0.79rem;
+  text-align: center;
+}
+
+.voice-call-fallback {
+  display: flex;
+  padding: 4px 18px;
+  gap: 7px;
+}
+
+.voice-call-fallback > input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 11px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 6%);
+  color: inherit;
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+.voice-call-fallback > button {
+  padding: 8px 13px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--chat-accent, var(--green));
+  color: var(--chat-accent-contrast, #fff);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+}
+
+.voice-call-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px 18px;
+  gap: 14px;
+}
+
+.voice-control {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  align-items: center;
+  justify-items: center;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 8%);
+  color: #eaf3ee;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+.voice-control:hover:not(:disabled) {
+  background: rgb(255 255 255 / 14%);
+}
+
+.voice-control:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.voice-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.voice-control.is-active {
+  border-color: transparent;
+  background: #d7463a;
+  color: #fff;
+}
+
+.voice-control.is-end {
+  width: 58px;
+  border-color: transparent;
+  background: #d7463a;
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-orb-core,
+  .voice-orb-ring,
+  .voice-bars > span {
+    animation: none;
+    transition: none;
+  }
+}

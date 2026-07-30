@@ -153,6 +153,75 @@ The transcript is placed in the composer and sent as text to the LLM, while
 the original recording remains attached for later playback. Without Whisper,
 the recording is still saved and can be handled by a human operator.
 
+## Realtime voice calls
+
+The phone button in the composer opens a live speech-to-speech call: the
+visitor talks, the agent answers out loud, and either side can interrupt the
+other. It is entirely self-hosted, sharing the same retrieval and grounding
+rules as the text chat.
+
+Start both speech services:
+
+```powershell
+docker compose --profile voice up -d whisper speech
+```
+
+`whisper` handles recognition and `speech` provides an OpenAI-compatible
+`/v1/audio/speech` endpoint backed by Piper voices. Configure the web process:
+
+```dotenv
+WHISPER_BASE_URL=http://127.0.0.1:8080
+TTS_BASE_URL=http://127.0.0.1:8001/v1
+TTS_VOICE=alloy
+VOICE_WS_PORT=3002
+NEXT_PUBLIC_VOICE_WS_PORT=3002
+```
+
+Calls run over a WebSocket, which Next.js route handlers cannot host — the
+connection would close when the response ends. The gateway is therefore its own
+process, alongside the crawl worker:
+
+```powershell
+npm run voice
+```
+
+`npm run dev` already starts it. In production run it as a third service and
+expose it next to the web app. Behind TLS, terminate `wss://` at your proxy and
+point `NEXT_PUBLIC_VOICE_WS_URL` at the public URL.
+
+How a turn flows:
+
+```text
+mic -> AudioWorklet (16 kHz PCM) -> voice activity detection
+    -> WebSocket -> whisper.cpp -> retrieval + grounded LLM (streaming)
+    -> sentence chunks -> Piper -> PCM back over the socket -> speakers
+```
+
+Replies are synthesized sentence by sentence, so audio starts while the model
+is still writing rather than after it finishes. Speaking over the agent aborts
+generation, synthesis, and playback together.
+
+### Latency
+
+Whisper's encoder always processes a fixed 30-second window, so recognition
+costs roughly the same whether the caller says "yes" or speaks for ten seconds.
+Recognition, not generation, dominates turn latency on CPU, and the practical
+lever is model size:
+
+| model | warm recognition, 4-core CPU | notes |
+| --- | --- | --- |
+| `tiny-q5_1` | ~1.6–2.1 s | good enough for short support questions |
+| `base-q5_1` | ~4.4–5.6 s | noticeably more accurate on long or accented speech |
+
+Set `WHISPER_MODEL` in a root `.env` (Compose reads that file; the app reads
+`apps/web/.env.local`). Budget roughly recognition + 1–3 s of generation +
+about half a second before the first audio, so expect ~3–5 s per turn on a
+modest CPU with `tiny-q5_1`. A CUDA build of whisper.cpp is the only change
+that moves this by an order of magnitude.
+
+Both services are optional: without `TTS_BASE_URL` the agent replies in text on
+screen, and without `WHISPER_BASE_URL` the call falls back to a typed input.
+
 ## Architecture
 
 ```text

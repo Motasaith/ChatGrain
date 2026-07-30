@@ -11,6 +11,7 @@
     "dev:web": "npm run dev:web -w @docent/web",
     "build": "npm run build -w @docent/web",
     "start": "npm run start -w @docent/web",
+    "voice": "npm run voice -w @docent/web",
     "test": "npm run test -w @docent/web",
     "lint": "npm run lint -w @docent/web",
     "typecheck": "npm run typecheck -w @docent/web",

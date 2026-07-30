@@ -12,6 +12,35 @@ type GenerateAnswerInput = {
   }>;
 };
 
+/**
+ * Written-chat rules: Markdown and bracketed citations are wanted on screen.
+ */
+const WRITTEN_ANSWER_RULES = `Use only facts stated in the supplied evidence. An article that mentions a product or service is not evidence that the business sells or offers it. Do not expose database field names, source metadata, or raw extraction labels. Answer the current question directly in two to five sentences unless the customer explicitly asks for steps or a detailed list. Use simple Markdown only when it improves readability. When the customer asks for an article, link, or related content, use the supplied evidence URLs as clickable Markdown links. Cite every factual claim with the matching evidence number such as [1]. If the evidence does not support the answer, return exactly NOT_ENOUGH_EVIDENCE. Never invent a policy, number, link, action result, contact detail, or customer detail.`;
+
+/**
+ * Spoken-call rules. Everything here exists because a speech engine reads it
+ * aloud: Markdown becomes "asterisk asterisk", `[1]` becomes "bracket one",
+ * and long paragraphs leave the caller with no chance to interrupt.
+ */
+const SPOKEN_ANSWER_RULES = `You are speaking out loud on a live phone-style call. Use only facts stated in the supplied evidence.
+
+Speak the way a helpful person speaks:
+- Reply in one to three short sentences. Never monologue.
+- Plain spoken words only. No Markdown, no asterisks, no headings, no bullet lists, no numbered lists, no emoji.
+- Never say citation markers, evidence numbers, or bracketed references out loud.
+- Never read a URL aloud. Say "I have put the link on your screen" instead.
+- Expand things people say in words: say "twenty four seven", not "24/7".
+- If you need something from the caller, ask one short question and stop.
+- Contractions are good. Sound natural, not formal.
+
+Do not expose database field names, source metadata, or raw extraction labels. If the evidence does not support the answer, return exactly NOT_ENOUGH_EVIDENCE. Never invent a policy, number, link, action result, contact detail, or customer detail.`;
+
+function answerSystemPrompt(systemPrompt: string, voice: boolean) {
+  return `${systemPrompt}
+
+${voice ? SPOKEN_ANSWER_RULES : WRITTEN_ANSWER_RULES}`;
+}
+
 type ChatCompletionResponse = {
   choices?: Array<{
     message?: {
@@ -187,9 +216,7 @@ export async function generateGroundedAnswer({
       messages: [
         {
           role: "system",
-          content: `${systemPrompt}
-
-Use only facts stated in the supplied evidence. An article that mentions a product or service is not evidence that the business sells or offers it. Do not expose database field names, source metadata, or raw extraction labels. Answer the current question directly in two to five sentences unless the customer explicitly asks for steps or a detailed list. Use simple Markdown only when it improves readability. When the customer asks for an article, link, or related content, use the supplied evidence URLs as clickable Markdown links. Cite every factual claim with the matching evidence number such as [1]. If the evidence does not support the answer, return exactly NOT_ENOUGH_EVIDENCE. Never invent a policy, number, link, action result, contact detail, or customer detail.`,
+          content: answerSystemPrompt(systemPrompt, false),
         },
         {
           role: "user",
@@ -240,4 +267,163 @@ Customer question: ${question}`,
   const answer = payload.choices?.[0]?.message?.content?.trim();
   if (!answer || answer.includes("NOT_ENOUGH_EVIDENCE")) return null;
   return answer;
+}
+
+export type GroundedAnswerChunk =
+  | { type: "delta"; text: string }
+  | { type: "done"; text: string }
+  /** Model returned NOT_ENOUGH_EVIDENCE; caller should fall back. */
+  | { type: "insufficient" };
+
+/**
+ * Number of leading characters held back before the first delta is emitted.
+ * `NOT_ENOUGH_EVIDENCE` must never be spoken aloud or shown, and it can only
+ * be recognized once enough of the first tokens have arrived.
+ */
+const SENTINEL_HOLD_CHARS = 24;
+
+/**
+ * Streaming twin of `generateGroundedAnswer`, used by the realtime voice
+ * gateway so speech synthesis can start on the first sentence instead of
+ * waiting for the whole completion.
+ */
+export async function* streamGroundedAnswer({
+  model,
+  systemPrompt,
+  context,
+  question,
+  temperature,
+  voice = false,
+  signal,
+}: Omit<GenerateAnswerInput, "images"> & {
+  voice?: boolean;
+  signal?: AbortSignal;
+}): AsyncGenerator<GroundedAnswerChunk> {
+  const baseUrl = llmBaseUrl();
+  const apiKey = llmApiKey();
+  const cloudRequest = new URL(baseUrl).hostname === "ollama.com";
+
+  if (cloudRequest && !apiKey) {
+    logger.warn(
+      "Ollama Cloud is the configured answer engine, but LLM_API_KEY is missing",
+    );
+    yield { type: "insufficient" };
+    return;
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: model?.trim() || defaultLlmModel(),
+        messages: [
+          { role: "system", content: answerSystemPrompt(systemPrompt, voice) },
+          {
+            role: "user",
+            content: `Evidence:
+${context}
+
+Customer question: ${question}`,
+          },
+        ],
+        temperature,
+        max_tokens: voice ? 200 : 320,
+        stream: true,
+      }),
+      signal,
+    });
+  } catch (error) {
+    if (!signal?.aborted) {
+      logger.warn({ error }, "Streaming generation request failed");
+    }
+    yield { type: "insufficient" };
+    return;
+  }
+
+  if (!response.ok || !response.body) {
+    logger.warn(
+      { status: response.status, model: model || defaultLlmModel() },
+      "Streaming generation request failed",
+    );
+    yield { type: "insufficient" };
+    return;
+  }
+
+  let full = "";
+  let emitted = 0;
+
+  for await (const delta of readCompletionDeltas(response.body, signal)) {
+    full += delta;
+    if (full.includes("NOT_ENOUGH_EVIDENCE")) {
+      yield { type: "insufficient" };
+      return;
+    }
+    // Hold the opening characters back until the sentinel is ruled out.
+    if (full.length < SENTINEL_HOLD_CHARS) continue;
+    const pending = full.slice(emitted);
+    if (pending) {
+      emitted = full.length;
+      yield { type: "delta", text: pending };
+    }
+  }
+
+  const answer = full.trim();
+  if (!answer) {
+    yield { type: "insufficient" };
+    return;
+  }
+  if (emitted < full.length) {
+    yield { type: "delta", text: full.slice(emitted) };
+  }
+  yield { type: "done", text: answer };
+}
+
+/** Parses an OpenAI-compatible `text/event-stream` completion body. */
+async function* readCompletionDeltas(
+  body: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let newline = buffer.indexOf("\n");
+      while (newline !== -1) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const text = parsed.choices?.[0]?.delta?.content;
+          if (text) yield text;
+        } catch {
+          // A partial JSON line means the chunk boundary split it; the next
+          // read appends the remainder, so skipping here is safe.
+        }
+      }
+    }
+  } catch (error) {
+    if (!signal?.aborted) {
+      logger.warn({ error }, "Streaming generation body failed");
+    }
+  } finally {
+    reader.cancel().catch(() => undefined);
+  }
 }

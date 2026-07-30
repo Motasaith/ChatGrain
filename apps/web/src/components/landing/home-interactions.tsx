@@ -3,6 +3,7 @@
 import { Show, UserButton } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useLinkStatus } from "next/link";
 import {
   ArrowRight,
   Check,
@@ -10,12 +11,32 @@ import {
   Code2,
   DatabaseZap,
   FileSearch,
+  LoaderCircle,
   Menu,
   Paintbrush,
   RefreshCw,
   X,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
+
+/**
+ * Navigation feedback for links into the dashboard.
+ *
+ * `/dashboard` renders dynamically behind authentication, a workspace lookup,
+ * and a database read, and its `loading.tsx` sits inside that layout - so
+ * nothing at all paints until the layout resolves. Without this the link looks
+ * broken on a slow response. Both icons occupy the same grid cell so swapping
+ * them cannot shift the layout.
+ */
+function NavLinkIcon({ size = 15 }: { size?: number }) {
+  const { pending } = useLinkStatus();
+  return (
+    <span className={`nav-link-icon${pending ? " is-pending" : ""}`} aria-hidden>
+      <ArrowRight size={size} />
+      <LoaderCircle className="spin" size={size} />
+    </span>
+  );
+}
 
 export function HomepageNav() {
   const [open, setOpen] = useState(false);
@@ -35,12 +56,12 @@ export function HomepageNav() {
           <Show when="signed-out">
             <Link href="/sign-in" className="home-nav-signin">Sign in</Link>
             <Link href="/sign-up" className="home-nav-primary">
-              Build an agent <ArrowRight size={15} />
+              Build an agent <NavLinkIcon />
             </Link>
           </Show>
           <Show when="signed-in">
             <Link href="/dashboard" className="home-nav-primary">
-              Open dashboard <ArrowRight size={15} />
+              Open dashboard <NavLinkIcon />
             </Link>
             <UserButton />
           </Show>

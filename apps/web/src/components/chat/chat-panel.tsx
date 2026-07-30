@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   MessageCircle,
   Mic,
+  Phone,
   Plus,
   ShieldCheck,
   Square,
@@ -19,6 +20,8 @@ import {
   X,
 } from "lucide-react";
 import type { ChatUiAction } from "@/lib/chat/answer";
+import { VoiceCallOverlay, type CallTurn } from "@/components/chat/voice-call";
+import type { StartCallOptions } from "@/lib/voice/client/call";
 
 type ChatMessage = {
   id: string;
@@ -69,6 +72,20 @@ function safeHttpUrl(value: string) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Collapses repeated sources. A chunk can legitimately be cited twice while an
+ * answer is assembled, and rendering both breaks React's key uniqueness as well
+ * as showing the reader the same source twice.
+ */
+function uniqueCitations<T extends { chunkId: string }>(citations: T[]) {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    if (seen.has(citation.chunkId)) return false;
+    seen.add(citation.chunkId);
+    return true;
+  });
 }
 
 function InlineMarkdown({ content }: { content: string }) {
@@ -428,6 +445,7 @@ export function ChatPanel({
   >([]);
   const [uploading, setUploading] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [callOptions, setCallOptions] = useState<StartCallOptions>();
   const [notice, setNotice] = useState("");
   const [embeddedActive, setEmbeddedActive] = useState(!embedded);
   const [busy, setBusy] = useState(false);
@@ -865,6 +883,48 @@ export function ChatPanel({
     if (file) await uploadAttachment(file, "image");
   }
 
+  async function openVoiceCall() {
+    setError("");
+    setNotice("");
+    try {
+      // Resolved before the overlay mounts so the call joins the conversation
+      // already on screen instead of starting a detached one.
+      const conversation = await ensureConversation();
+      setCallOptions({
+        agentId,
+        sessionId: conversation.sessionId,
+        conversationId: conversation.id,
+        externalUserId: visitorIdRef.current || undefined,
+        embedToken,
+        locale: navigator.language,
+        path: window.location.pathname,
+      });
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "Could not start a voice call.",
+      );
+    }
+  }
+
+  function closeVoiceCall(callTurns: CallTurn[]) {
+    setCallOptions(undefined);
+    if (!callTurns.length) return;
+    // Fold the call into the visible thread; the gateway already persisted
+    // these turns, so this only catches the UI up.
+    setMessages((current) => [
+      ...current.filter(
+        (message) => message.id !== "welcome" || current.length === 1,
+      ),
+      ...callTurns.map((turn) => ({
+        id: `voice-${turn.id}`,
+        role: turn.role,
+        content: turn.text,
+        citations: turn.citations,
+        grounded: true,
+      })),
+    ]);
+  }
+
   async function startRecording(startedAt: number) {
     if (recording) {
       mediaRecorderRef.current?.stop();
@@ -1241,26 +1301,33 @@ export function ChatPanel({
                   ) : null}
                 </div>
                 {message.role === "assistant" && message.citations?.length ? (
-                  <details className="chat-citations">
-                    <summary>
-                      <ShieldCheck size={11} />
-                      {message.citations.length} source{message.citations.length === 1 ? "" : "s"} used
-                    </summary>
-                    <div>
-                      {message.citations.map((citation) => (
-                        citation.url ? (
-                          <a href={citation.url} key={citation.chunkId} rel="noreferrer" target="_blank">
-                            <span><b>{citation.title}</b><small>{citation.excerpt}</small></span>
-                            <ExternalLink size={11} />
-                          </a>
-                        ) : (
-                          <span key={citation.chunkId}>
-                            <span><b>{citation.title}</b><small>{citation.excerpt}</small></span>
-                          </span>
-                        )
-                      ))}
-                    </div>
-                  </details>
+                  (() => {
+                    // Older stored messages can hold the same chunk twice, so
+                    // deduplicate on read as well as when the answer is built.
+                    const sources = uniqueCitations(message.citations);
+                    return (
+                      <details className="chat-citations">
+                        <summary>
+                          <ShieldCheck size={11} />
+                          {sources.length} source{sources.length === 1 ? "" : "s"} used
+                        </summary>
+                        <div>
+                          {sources.map((citation) => (
+                            citation.url ? (
+                              <a href={citation.url} key={citation.chunkId} rel="noreferrer" target="_blank">
+                                <span><b>{citation.title}</b><small>{citation.excerpt}</small></span>
+                                <ExternalLink size={11} />
+                              </a>
+                            ) : (
+                              <span key={citation.chunkId}>
+                                <span><b>{citation.title}</b><small>{citation.excerpt}</small></span>
+                              </span>
+                            )
+                          ))}
+                        </div>
+                      </details>
+                    );
+                  })()
                 ) : null}
                 {message.role === "assistant" &&
                 message.action &&
@@ -1368,6 +1435,14 @@ export function ChatPanel({
           >
             {recording ? <Square size={14} /> : <Mic size={17} />}
           </button>
+          <button
+            aria-label="Start a voice call"
+            disabled={busy || uploading || recording}
+            onClick={() => void openVoiceCall()}
+            type="button"
+          >
+            <Phone size={17} />
+          </button>
         </div>
         <textarea
           aria-label="Message"
@@ -1413,6 +1488,14 @@ export function ChatPanel({
         </button>
       </form>
       {showBranding ? <footer>Powered by <b>Docent</b></footer> : null}
+      {callOptions ? (
+        <VoiceCallOverlay
+          agentName={name}
+          onClose={() => setCallOptions(undefined)}
+          onTurns={(callTurns) => closeVoiceCall(callTurns)}
+          options={callOptions}
+        />
+      ) : null}
     </div>
   );
 }
