@@ -1,6 +1,7 @@
 import "server-only";
 
 import { logger } from "@/lib/observability/logger";
+import { cleanTranscript } from "@/lib/voice/transcript";
 
 export async function transcribeAudio(file: File) {
   const baseUrl = process.env.WHISPER_BASE_URL?.trim().replace(/\/+$/, "");
@@ -32,9 +33,9 @@ export async function transcribeAudio(file: File) {
         text?: string;
         transcription?: string;
       };
-      return (payload.text || payload.transcription || "").trim() || null;
+      return cleanTranscript(payload.text || payload.transcription) || null;
     }
-    return (await response.text()).trim() || null;
+    return cleanTranscript(await response.text()) || null;
   } catch (error) {
     logger.warn({ error }, "Whisper transcription request failed");
     return null;

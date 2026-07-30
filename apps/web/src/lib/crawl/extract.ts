@@ -1,7 +1,22 @@
 import { createHash } from "node:crypto";
 import { Readability } from "@mozilla/readability";
 import * as cheerio from "cheerio";
+import { decodeHTML } from "entities";
 import { JSDOM } from "jsdom";
+
+/**
+ * Removes entities that survive HTML parsing.
+ *
+ * Extraction already decodes once, so anything left is double-encoded in the
+ * source (`&amp;amp;`), which is common on sites that escape user content on
+ * the way in and again on the way out. Left alone it reaches the index and the
+ * model verbatim, and answers end up containing literal "&amp;".
+ */
+function decodeResidualEntities(value: string) {
+  return /&(?:[a-z][a-z0-9]{1,31}|#\d{1,7}|#x[\da-f]{1,6});/i.test(value)
+    ? decodeHTML(value)
+    : value;
+}
 
 export type ExtractedPage = {
   url: string;
@@ -227,7 +242,7 @@ export function extractPage(html: string, pageUrl: URL): ExtractedPage {
   const article = reader.parse();
   const $ = cheerio.load(html);
   const fallback = $("main").text() || $("article").text() || $("body").text();
-  const text = (article?.textContent || fallback)
+  const text = decodeResidualEntities(article?.textContent || fallback)
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n\s+/g, "\n")
@@ -248,11 +263,14 @@ export function extractPage(html: string, pageUrl: URL): ExtractedPage {
     links.add(url.href);
   });
 
-  const title =
+  // Titles are surfaced directly in citations and answers, so they need the
+  // same treatment as the body text.
+  const title = decodeResidualEntities(
     article?.title?.trim() ||
-    $("meta[property='og:title']").attr("content")?.trim() ||
-    $("title").text().trim() ||
-    pageUrl.pathname;
+      $("meta[property='og:title']").attr("content")?.trim() ||
+      $("title").text().trim() ||
+      pageUrl.pathname,
+  );
   const publishedValue =
     $("meta[property='article:published_time']").attr("content") ??
     $("meta[name='date']").attr("content") ??
@@ -268,9 +286,11 @@ export function extractPage(html: string, pageUrl: URL): ExtractedPage {
     text,
     contentHash: createHash("sha256").update(text).digest("hex"),
     links: [...links],
-    description:
+    description: decodeResidualEntities(
       article?.excerpt ??
-      $("meta[name='description']").attr("content")?.trim(),
+        $("meta[name='description']").attr("content")?.trim() ??
+        "",
+    ) || undefined,
     publishedAt:
       publishedDate && !Number.isNaN(publishedDate.getTime())
         ? publishedDate.toISOString()

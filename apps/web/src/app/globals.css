@@ -9386,6 +9386,283 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
     transform 140ms ease;
 }
 
+/* Voice notes ------------------------------------------------------------ */
+
+/* A voice note hides its transcript, so the player is the bubble's first
+   child and the usual spacing above attachments would be dead space. */
+.chat-bubble > .chat-message-attachments:first-child {
+  margin-top: 0;
+}
+
+.voice-note-player {
+  display: flex;
+  min-width: min(268px, 100%);
+  align-items: center;
+  padding: 3px 2px;
+  gap: 9px;
+}
+
+.voice-note-play {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  align-items: center;
+  justify-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--chat-accent, var(--green));
+  color: #fff;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.voice-note-play:active {
+  transform: scale(0.92);
+}
+
+/* Inside the visitor's own bubble the accent is already the background, so
+   the control inverts to stay legible. */
+.voice-note-player.is-accent .voice-note-play {
+  background: rgb(255 255 255 / 92%);
+  color: var(--chat-accent, var(--green));
+}
+
+.voice-note-body {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.voice-note-wave {
+  position: relative;
+  display: block;
+  height: 32px;
+  /* Room for the handle to sit outside the bars without clipping. */
+  padding: 1px 0;
+  touch-action: none;
+}
+
+.voice-note-wave.is-seekable {
+  cursor: pointer;
+}
+
+.voice-note-bars {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 2px;
+}
+
+.voice-note-bars > span {
+  min-height: 4px;
+  flex: 1;
+  border-radius: 999px;
+  background: currentcolor;
+  opacity: 0.42;
+  transition: opacity 90ms ease;
+}
+
+.voice-note-bars > span.is-played {
+  opacity: 1;
+}
+
+/* Sits on the progress position so the track reads as draggable. */
+.voice-note-thumb {
+  position: absolute;
+  top: 50%;
+  left: clamp(0%, calc(var(--wave-progress, 0) * 100%), 100%);
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: currentcolor;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 30%);
+  pointer-events: none;
+  translate: -50% -50%;
+}
+
+.voice-note-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  gap: 8px;
+  opacity: 0.72;
+}
+
+.voice-note-meta i {
+  font-style: normal;
+  opacity: 0.72;
+}
+
+.voice-note-meta > button {
+  padding: 1px 6px;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.68rem;
+  opacity: 0.85;
+}
+
+/* Recording bar ---------------------------------------------------------- */
+
+.chat-composer.is-recording-bar {
+  display: block;
+  padding: 8px 10px;
+}
+
+.voice-recorder {
+  display: flex;
+  align-items: center;
+  padding: 5px 6px;
+  border: 1px solid #dbe3dd;
+  border-radius: 999px;
+  background: #fff;
+  gap: 8px;
+  touch-action: pan-y;
+  translate: var(--drag-offset, 0) 0;
+  transition: translate 120ms ease, border-color 140ms ease;
+}
+
+.voice-recorder.is-cancelling {
+  border-color: #d7463a;
+}
+
+.voice-recorder-discard,
+.voice-recorder-send {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  align-items: center;
+  justify-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, transform 120ms ease;
+}
+
+.voice-recorder-discard:hover {
+  background: rgb(215 70 58 / 10%);
+  color: #d7463a;
+}
+
+.voice-recorder-send {
+  background: var(--chat-accent, var(--green));
+  color: var(--chat-accent-contrast, #fff);
+}
+
+.voice-recorder.is-cancelling .voice-recorder-send {
+  background: #d7463a;
+  color: #fff;
+}
+
+.voice-recorder-send:active {
+  transform: scale(0.92);
+}
+
+.voice-recorder-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-recorder-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: #d7463a;
+  animation: voice-rec-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes voice-rec-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.voice-recorder-main > time {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-recorder-wave {
+  display: flex;
+  height: 26px;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+}
+
+.voice-recorder-wave > span {
+  min-height: 2px;
+  flex: 1;
+  border-radius: 999px;
+  background: var(--chat-accent, var(--green));
+  opacity: 0.75;
+}
+
+.voice-recorder-hint {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.voice-recorder.is-cancelling .voice-recorder-hint {
+  color: #d7463a;
+}
+
+/* The hint competes with the waveform on narrow widgets. */
+@media (max-width: 400px) {
+  .voice-recorder-hint {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-recorder-dot {
+    animation: none;
+  }
+}
+
+/* Navigation pending feedback. Both icons share one grid cell so the swap
+   cannot shift surrounding text. */
+.nav-link-icon {
+  display: inline-grid;
+  place-items: center;
+  vertical-align: -2px;
+}
+
+.nav-link-icon > * {
+  grid-area: 1 / 1;
+  transition: opacity 120ms ease;
+}
+
+.nav-link-icon > :last-child,
+.nav-link-icon.is-pending > :first-child {
+  opacity: 0;
+}
+
+.nav-link-icon.is-pending > :last-child {
+  opacity: 1;
+}
+
 .voice-control:hover:not(:disabled) {
   background: rgb(255 255 255 / 14%);
 }

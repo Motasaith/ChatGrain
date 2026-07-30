@@ -4,6 +4,7 @@
 import { logger } from "@/lib/observability/logger";
 import { pcm16ToWav, pcmRms } from "@/lib/voice/audio";
 import { CAPTURE_SAMPLE_RATE } from "@/lib/voice/protocol";
+import { cleanTranscript } from "@/lib/voice/transcript";
 
 /** Utterances quieter than this are treated as room noise, never transcribed. */
 const SILENCE_RMS = 0.006;
@@ -11,25 +12,12 @@ const SILENCE_RMS = 0.006;
 /** Below this the buffer is too short to contain a word. */
 const MIN_UTTERANCE_MS = 220;
 
-/**
- * whisper.cpp emits bracketed markers such as `[BLANK_AUDIO]` or `(silence)`
- * when handed near-silence. Those must never become a caller turn.
- */
-const NOISE_ONLY = /^[\s]*[[(][^\])]*[\])][\s]*$/;
-
 export function whisperBaseUrl() {
   return process.env.WHISPER_BASE_URL?.trim().replace(/\/+$/, "") || "";
 }
 
 export function sttEnabled() {
   return Boolean(whisperBaseUrl());
-}
-
-function cleanTranscript(value: string) {
-  const text = value.trim();
-  if (!text || NOISE_ONLY.test(text)) return "";
-  // Strip leading markers whisper sometimes prepends to real speech.
-  return text.replace(/^(?:[[(][^\])]*[\])]\s*)+/, "").trim();
 }
 
 /**

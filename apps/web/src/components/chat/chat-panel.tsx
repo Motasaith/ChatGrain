@@ -14,7 +14,6 @@ import {
   Phone,
   Plus,
   ShieldCheck,
-  Square,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -22,6 +21,10 @@ import {
 } from "lucide-react";
 import type { ChatUiAction } from "@/lib/chat/answer";
 import { VoiceCallOverlay, type CallTurn } from "@/components/chat/voice-call";
+import {
+  VoiceNotePlayer,
+  VoiceNoteRecorder,
+} from "@/components/chat/voice-note";
 import type { StartCallOptions } from "@/lib/voice/client/call";
 
 type ChatMessage = {
@@ -73,6 +76,21 @@ function safeHttpUrl(value: string) {
   } catch {
     return null;
   }
+}
+
+/**
+ * A voice note carries its transcript as the message body so the agent can
+ * answer what was said, but the visitor should see the player alone - the
+ * transcript is machine input, not something they typed.
+ *
+ * Checked against the attachment rather than a local flag so notes reloaded
+ * from conversation history render the same way.
+ */
+function isVoiceNoteMessage(message: ChatMessage) {
+  return (
+    message.role === "user" &&
+    Boolean(message.attachments?.some((item) => item.kind === "audio"))
+  );
 }
 
 /**
@@ -364,26 +382,6 @@ function writeLocalValue(key: string, value?: string) {
   }
 }
 
-type SpeechRecognitionEventLike = {
-  resultIndex: number;
-  results: ArrayLike<{
-    isFinal: boolean;
-    0: { transcript: string };
-  }>;
-};
-
-type SpeechRecognitionLike = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
 function readableTextColor(hex: string) {
   const channels = hex
     .replace("#", "")
@@ -463,13 +461,6 @@ export function ChatPanel({
   const visitorIdRef = useRef("");
   const previousUnreadRef = useRef(-1);
   const activeRef = useRef(active ?? !embedded);
-  const mediaRecorderRef = useRef<MediaRecorder | undefined>(undefined);
-  const mediaStreamRef = useRef<MediaStream | undefined>(undefined);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const speechRecognitionRef = useRef<SpeechRecognitionLike | undefined>(
-    undefined,
-  );
-  const speechTranscriptRef = useRef("");
   const brandImage = logoUrl || iconUrl;
   const contrastColor = readableTextColor(primaryColor);
   const panelStyle = {
@@ -761,14 +752,6 @@ export function ChatPanel({
     return () => window.clearTimeout(timer);
   }, [embedded]);
 
-  useEffect(
-    () => () => {
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-      speechRecognitionRef.current?.stop();
-    },
-    [],
-  );
-
   function restoreComposerFocus() {
     const field = inputRef.current;
     if (
@@ -847,7 +830,9 @@ export function ChatPanel({
         throw new Error(payload.error?.message || "Could not upload attachment.");
       }
       setPendingAttachments((current) => [...current, payload.data!]);
-      if (payload.data.transcript && inputRef.current) {
+      // Voice notes post on their own; only an image waits in the composer for
+      // the visitor to add a question alongside it.
+      if (kind === "image" && payload.data.transcript && inputRef.current) {
         inputRef.current.value = [
           inputRef.current.value.trim(),
           payload.data.transcript,
@@ -856,15 +841,13 @@ export function ChatPanel({
           .join(" ");
         inputRef.current.style.height = "auto";
         inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 104)}px`;
-      } else if (kind === "audio") {
-        setNotice(
-          "The recording is saved. Add a short message, or configure Whisper to transcribe it automatically.",
-        );
       }
+      return payload.data;
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Could not upload attachment.",
       );
+      return null;
     } finally {
       setUploading(false);
     }
@@ -928,107 +911,25 @@ export function ChatPanel({
     ]);
   }
 
-  async function startRecording(startedAt: number) {
-    if (recording) {
-      mediaRecorderRef.current?.stop();
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      setError("Voice recording is not supported by this browser.");
-      return;
-    }
+  /**
+   * Uploads a finished voice note and posts it as its own message.
+   *
+   * The server transcript becomes the message text so the agent answers what
+   * was actually said; without a transcription service the note still reaches
+   * a human operator.
+   */
+  async function sendVoiceNote(file: File, durationMs: number) {
+    setRecording(false);
     setError("");
     setNotice("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaStreamRef.current = stream;
-      const preferredTypes = [
-        "audio/webm;codecs=opus",
-        "audio/ogg;codecs=opus",
-        "audio/mp4",
-      ];
-      const mimeType =
-        preferredTypes.find((type) => MediaRecorder.isTypeSupported(type)) ||
-        "";
-      const recorder = new MediaRecorder(
-        stream,
-        mimeType ? { mimeType } : undefined,
-      );
-      mediaRecorderRef.current = recorder;
-      audioChunksRef.current = [];
-      speechTranscriptRef.current = "";
-      recorder.ondataavailable = (event) => {
-        if (event.data.size) audioChunksRef.current.push(event.data);
-      };
-      recorder.onstop = async (event) => {
-        const durationMs = Math.max(0, Math.round(event.timeStamp - startedAt));
-        const recordingType =
-          recorder.mimeType.split(";")[0] ||
-          audioChunksRef.current[0]?.type.split(";")[0] ||
-          "audio/webm";
-        const extension =
-          recordingType === "audio/ogg"
-            ? "ogg"
-            : recordingType === "audio/mp4"
-              ? "m4a"
-              : "webm";
-        const blob = new Blob(audioChunksRef.current, { type: recordingType });
-        const file = new File([blob], `voice-${Date.now()}.${extension}`, {
-          type: recordingType,
-        });
-        stream.getTracks().forEach((track) => track.stop());
-        mediaStreamRef.current = undefined;
-        speechRecognitionRef.current?.stop();
-        speechRecognitionRef.current = undefined;
-        setRecording(false);
-        await uploadAttachment(
-          file,
-          "audio",
-          speechTranscriptRef.current,
-          durationMs,
-        );
-      };
-      const speechWindow = window as typeof window & {
-        SpeechRecognition?: SpeechRecognitionConstructor;
-        webkitSpeechRecognition?: SpeechRecognitionConstructor;
-      };
-      const SpeechRecognitionClass =
-        speechWindow.SpeechRecognition ||
-        speechWindow.webkitSpeechRecognition;
-      if (SpeechRecognitionClass) {
-        const recognition = new SpeechRecognitionClass();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang =
-          window.navigator.language || document.documentElement.lang || "en";
-        recognition.onresult = (event) => {
-          let transcript = speechTranscriptRef.current;
-          for (
-            let index = event.resultIndex;
-            index < event.results.length;
-            index += 1
-          ) {
-            if (event.results[index].isFinal) {
-              transcript += ` ${event.results[index][0].transcript}`;
-            }
-          }
-          speechTranscriptRef.current = transcript.trim();
-        };
-        recognition.onerror = () => undefined;
-        speechRecognitionRef.current = recognition;
-        try {
-          recognition.start();
-        } catch {
-          speechRecognitionRef.current = undefined;
-        }
-      }
-      recorder.start(250);
-      setRecording(true);
-    } catch {
-      setError("Microphone access was denied or is unavailable.");
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = undefined;
-    }
+    const attachment = await uploadAttachment(file, "audio", "", durationMs);
+    if (!attachment) return;
+    setPendingAttachments([]);
+    await deliver(
+      attachment.transcript?.trim() ||
+        "I want the support team to review my attached voice message.",
+      [attachment],
+    );
   }
 
   async function send(event: React.FormEvent) {
@@ -1042,12 +943,26 @@ export function ChatPanel({
           ? "I want the support team to review my attached voice message."
           : "");
     if (!content || busy || uploading) return;
+    if (inputRef.current) {
+      inputRef.current.value = "";
+      inputRef.current.style.height = "";
+    }
+    await deliver(content, pendingAttachments);
+  }
+
+  /**
+   * Sends one visitor turn and appends the answer.
+   *
+   * Shared by the composer and by voice notes, which post immediately on
+   * release instead of being staged as a pending attachment.
+   */
+  async function deliver(content: string, attachments: ChatAttachment[]) {
     setBusy(true);
     setError("");
     setNotice("");
     try {
       const conversation = await ensureConversation();
-      const localAttachments = pendingAttachments;
+      const localAttachments = attachments;
       const localId = crypto.randomUUID();
       setMessages((current) => [
         ...current.filter((message) => message.id !== "welcome" || current.length === 1),
@@ -1059,10 +974,6 @@ export function ChatPanel({
         },
       ]);
       setPendingAttachments([]);
-      if (inputRef.current) {
-        inputRef.current.value = "";
-        inputRef.current.style.height = "";
-      }
       const response = await fetch(`/api/chat/${agentId}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1148,7 +1059,7 @@ export function ChatPanel({
   async function deleteConversation(conversation: ConversationSummary) {
     if (
       !window.confirm(
-        `Delete ?${conversation.title}?? This permanently removes its messages and attachments.`,
+        `Delete “${conversation.title}”? This permanently removes its messages and attachments.`,
       )
     ) {
       return;
@@ -1347,7 +1258,7 @@ export function ChatPanel({
                 <div className="chat-bubble">
                   {fromTeam ? (
                     <MarkdownMessage content={message.content} />
-                  ) : (
+                  ) : isVoiceNoteMessage(message) ? null : (
                     message.content
                   )}
                   {message.attachments?.length ? (
@@ -1362,10 +1273,10 @@ export function ChatPanel({
                             src={attachmentUrl(attachment.id)}
                           />
                         ) : attachment.kind === "audio" ? (
-                          <audio
-                            controls
+                          <VoiceNotePlayer
+                            accent={message.role === "user"}
+                            durationMs={attachment.durationMs}
                             key={attachment.id}
-                            preload="metadata"
                             src={attachmentUrl(attachment.id)}
                           />
                         ) : null,
@@ -1481,6 +1392,15 @@ export function ChatPanel({
           ))}
         </div>
       ) : null}
+      {recording ? (
+        <div className="chat-composer is-recording-bar">
+          <VoiceNoteRecorder
+            onCancel={() => setRecording(false)}
+            onError={(message) => setError(message)}
+            onSend={(file, durationMs) => void sendVoiceNote(file, durationMs)}
+          />
+        </div>
+      ) : (
       <form className="chat-composer" onSubmit={send}>
         <div className="chat-composer-tools">
           <input
@@ -1500,13 +1420,16 @@ export function ChatPanel({
             <ImagePlus size={17} />
           </button>
           <button
-            aria-label={recording ? "Stop recording" : "Record a voice message"}
-            className={recording ? "is-recording" : ""}
-            disabled={busy || uploading || pendingAttachments.length >= 3}
-            onClick={(event) => void startRecording(event.timeStamp)}
+            aria-label="Record a voice message"
+            disabled={busy || uploading}
+            onClick={() => {
+              setError("");
+              setNotice("");
+              setRecording(true);
+            }}
             type="button"
           >
-            {recording ? <Square size={14} /> : <Mic size={17} />}
+            <Mic size={17} />
           </button>
           <button
             aria-label="Start a voice call"
@@ -1539,11 +1462,7 @@ export function ChatPanel({
           }}
           onPointerDown={guardComposerFocus}
           placeholder={
-            recording
-              ? "Recording… tap stop when finished"
-              : uploading
-                ? "Uploading attachment…"
-                : "Ask a question..."
+            uploading ? "Uploading attachment…" : "Ask a question..."
           }
           ref={inputRef}
           rows={1}
@@ -1551,7 +1470,7 @@ export function ChatPanel({
         <button
           aria-label="Send"
           className="chat-send-button"
-          disabled={busy || uploading || recording}
+          disabled={busy || uploading}
         >
           {busy || uploading ? (
             <LoaderCircle className="spin" size={15} />
@@ -1560,6 +1479,7 @@ export function ChatPanel({
           )}
         </button>
       </form>
+      )}
       {showBranding ? <footer>Powered by <b>Docent</b></footer> : null}
       {callOptions ? (
         <VoiceCallOverlay

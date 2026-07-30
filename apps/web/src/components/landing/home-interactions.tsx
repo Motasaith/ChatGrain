@@ -90,7 +90,7 @@ export function HomepageNav() {
             </a>
           ))}
           <Link href="/dashboard" onClick={() => setOpen(false)}>
-            Open dashboard <ArrowRight size={14} />
+            Open dashboard <NavLinkIcon size={14} />
           </Link>
         </nav>
       ) : null}

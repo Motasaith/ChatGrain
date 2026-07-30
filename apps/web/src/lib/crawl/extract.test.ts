@@ -82,3 +82,28 @@ describe("content extraction", () => {
     expect(isSoftNotFound(html)).toBe(false);
   });
 });
+
+describe("HTML entity decoding", () => {
+  it("removes entities that survive parsing", () => {
+    // Double-encoded source: the parser decodes `&amp;amp;` to `&amp;`, which
+    // then reaches the index and the model as literal text.
+    const page = extractPage(
+      `<html><head><title>Cambridge News &amp;amp; Updates</title></head>
+       <body><main><p>${"Bell Lab opens in Cambridge News &amp;amp; Updates today. ".repeat(6)}</p></main></body></html>`,
+      new URL("https://example.test/news"),
+    );
+    expect(page.title).toBe("Cambridge News & Updates");
+    expect(page.text).toContain("News & Updates");
+    expect(page.text).not.toContain("&amp;");
+  });
+
+  it("leaves an ordinary ampersand alone", () => {
+    const page = extractPage(
+      `<html><head><title>Tom & Jerry</title></head>
+       <body><main><p>${"Support for Tom & Jerry is available every weekday. ".repeat(6)}</p></main></body></html>`,
+      new URL("https://example.test/plain"),
+    );
+    expect(page.title).toBe("Tom & Jerry");
+    expect(page.text).toContain("Tom & Jerry");
+  });
+});
