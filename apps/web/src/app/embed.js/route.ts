@@ -1,12 +1,52 @@
 export const dynamic = "force-dynamic";
 
+function validOrigin(value?: string | null) {
+  if (!value) return null;
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function firstForwardedValue(value?: string | null) {
+  return value?.split(",")[0]?.trim() || "";
+}
+
+export function resolveEmbedOrigin(request: Request) {
+  const configured =
+    validOrigin(process.env.DOCENT_PUBLIC_URL) ||
+    validOrigin(process.env.APP_URL) ||
+    validOrigin(process.env.NEXT_PUBLIC_APP_URL);
+  if (configured) return configured;
+
+  const forwardedHost = firstForwardedValue(
+    request.headers.get("x-forwarded-host"),
+  );
+  if (forwardedHost) {
+    const requestProtocol = new URL(request.url).protocol.replace(":", "");
+    const forwardedProtocol =
+      firstForwardedValue(request.headers.get("x-forwarded-proto")) ||
+      requestProtocol;
+    const forwarded = validOrigin(`${forwardedProtocol}://${forwardedHost}`);
+    if (forwarded) return forwarded;
+  }
+
+  return new URL(request.url).origin;
+}
+
 export function GET(request: Request) {
-  const origin = new URL(request.url).origin;
+  const fallbackOrigin = resolveEmbedOrigin(request);
   const source = `(() => {
   const current = document.currentScript;
   const agentId = current && current.dataset.agentId;
   if (!agentId || document.querySelector('[data-docent-root="' + agentId + '"]')) return;
-  const origin = ${JSON.stringify(origin)};
+  const fallbackOrigin = ${JSON.stringify(fallbackOrigin)};
+  let origin = fallbackOrigin;
+  try {
+    origin = new URL(current.src, document.baseURI).origin;
+  } catch {}
   const root = document.createElement('div');
   root.dataset.docentRoot = agentId;
   const shadow = root.attachShadow({ mode: 'open' });

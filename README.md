@@ -356,7 +356,7 @@ pm2 save
 
 Configure Caddy or Nginx to terminate HTTPS and proxy the public domain to
 `127.0.0.1:3000`. Configure that same HTTPS domain in Clerk, set
-`NEXT_PUBLIC_APP_URL`, and ensure the reverse proxy forwards
+`NEXT_PUBLIC_APP_URL` and `DOCENT_PUBLIC_URL`, and ensure the reverse proxy forwards
 `X-Forwarded-Host` and `X-Forwarded-Proto`. Keep PostgreSQL port `5434` blocked
 from the public internet; only the application on the VPS needs it.
 
