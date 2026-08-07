@@ -40,7 +40,13 @@ export async function publicAgentData(request: Request, agentId: string) {
   }
   const requestingUrl =
     request.headers.get("origin") || request.headers.get("referer") || "";
-  const requestingHost = requestingUrl ? normalizeHost(requestingUrl) : "";
+  // Browsers omit `Origin` on same-origin GETs, and strict tracking protection
+  // or a referrer policy can strip `Referer` too. Falling back to the host the
+  // browser actually asked for keeps first-party requests working: a genuine
+  // cross-origin embed still carries `Origin`, so the allowlist is unaffected.
+  const servingHost =
+    request.headers.get("x-forwarded-host") || request.headers.get("host") || "";
+  const requestingHost = normalizeHost(requestingUrl || servingHost);
   if (
     agent.allowedDomains?.length &&
     (!requestingHost ||

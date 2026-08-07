@@ -59,7 +59,16 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
           cache: "no-store",
           signal: controller.signal,
         });
-        if (!response.ok) throw new Error("Site agent is not ready.");
+        if (!response.ok) {
+          // A 4xx is a decision, not a hiccup: the agent is missing, paused, or
+          // not permitted on this domain. Retrying every 15 seconds forever
+          // just fills the console and the access log with the same rejection.
+          if (response.status >= 400 && response.status < 500) {
+            setAgent(null);
+            return;
+          }
+          throw new Error("Site agent is not ready.");
+        }
         const payload = await response.json();
         setAgent(payload.data as PublicAgent);
       } catch {
