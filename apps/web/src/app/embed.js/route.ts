@@ -63,7 +63,7 @@ export function GET(request: Request) {
     .docent-teasers p:first-child{margin-right:8px}
     :host([data-teasers]) .docent-teasers{opacity:1;transform:none}
     .docent-attention{position:fixed;z-index:2147483001;right:86px;bottom:28px;display:flex;align-items:center;gap:7px;border:1px solid rgba(25,45,36,.12);border-radius:999px;padding:8px 12px;color:#17271f;background:#fff;box-shadow:0 10px 28px rgba(16,35,28,.16);opacity:0;pointer-events:none;transform:translateX(7px);transition:opacity .2s ease,transform .2s ease;font:700 13px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    .docent-attention span{font-size:16px}
+    .docent-attention i{width:7px;height:7px;flex:none;border-radius:50%;background:#2fb37a;box-shadow:0 0 0 3px rgba(47,179,122,.18)}
     :host([data-attention]) .docent-attention{opacity:1;transform:none}
     :host([data-open]) iframe{opacity:1;pointer-events:auto;transform:none}
     :host([data-open]) .docent-teasers,:host([data-open]) .docent-attention{opacity:0;pointer-events:none}
@@ -98,7 +98,10 @@ export function GET(request: Request) {
   teasers.setAttribute('aria-label', 'Chat suggestions');
   const attention = document.createElement('div');
   attention.className = 'docent-attention';
-  attention.innerHTML = '<span aria-hidden="true">👋</span><b></b>';
+  // No emoji here on purpose: a hardcoded wave reads as a toy on a business
+  // site and cannot be turned off by the operator. A small live dot signals
+  // presence in a way that suits any brand.
+  attention.innerHTML = '<i aria-hidden="true"></i><b></b>';
   const chatIcon = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>';
   let agent;
   let engaged = false;

@@ -20,6 +20,9 @@ const updateAgentSchema = z
     widgetPosition: z.enum(["left", "right"]),
     teaserMessages: z.array(z.string().trim().min(1).max(160)).max(3),
     attentionMessage: z.string().trim().max(80),
+    suggestedQuestions: z
+      .array(z.string().trim().min(1).max(120))
+      .max(4),
     helpCenterEnabled: z.boolean(),
     helpCenterGreeting: z.string().trim().min(1).max(160),
     showBranding: z.boolean(),

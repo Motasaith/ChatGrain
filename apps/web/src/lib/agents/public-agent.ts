@@ -24,6 +24,7 @@ export async function publicAgentData(request: Request, agentId: string) {
       widgetPosition: agents.widgetPosition,
       teaserMessages: agents.teaserMessages,
       attentionMessage: agents.attentionMessage,
+      suggestedQuestions: agents.suggestedQuestions,
       helpCenterEnabled: agents.helpCenterEnabled,
       helpCenterGreeting: agents.helpCenterGreeting,
       collectFeedback: agents.collectFeedback,

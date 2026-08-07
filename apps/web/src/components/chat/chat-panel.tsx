@@ -71,6 +71,12 @@ type ConversationSummary = {
   } | null;
 };
 
+/**
+ * How close to the bottom the transcript must be for new messages to scroll it.
+ * Generous enough to absorb a partially visible last line.
+ */
+const AUTO_SCROLL_THRESHOLD_PX = 120;
+
 function safeHttpUrl(value: string) {
   try {
     const url = new URL(value);
@@ -404,6 +410,7 @@ function readableTextColor(hex: string) {
 export function ChatPanel({
   agentId,
   welcomeMessage,
+  suggestedQuestions = [],
   name,
   primaryColor,
   logoUrl,
@@ -429,6 +436,7 @@ export function ChatPanel({
   showBranding?: boolean;
   embedToken?: string;
   active?: boolean;
+  suggestedQuestions?: string[];
 }) {
   const welcome = {
     id: "welcome",
@@ -786,7 +794,15 @@ export function ChatPanel({
       return;
     }
     const element = messagesRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (!element) return;
+    // Only follow new content when the visitor is already at the bottom.
+    // Background polling used to re-run this on every refresh and yank the
+    // transcript down while they were reading earlier messages.
+    const distanceFromBottom =
+      element.scrollHeight - element.scrollTop - element.clientHeight;
+    if (distanceFromBottom <= AUTO_SCROLL_THRESHOLD_PX) {
+      element.scrollTop = element.scrollHeight;
+    }
   }, [messages, busy, pendingAttachments]);
 
   useEffect(() => {
@@ -937,6 +953,12 @@ export function ChatPanel({
         "I want the support team to review my attached voice message.",
       [attachment],
     );
+  }
+
+  /** Sends a starter chip as if the visitor had typed it. */
+  async function askSuggested(question: string) {
+    if (busy || uploading) return;
+    await deliver(question, []);
   }
 
   async function send(event: React.FormEvent) {
@@ -1482,6 +1504,23 @@ export function ChatPanel({
         {notice ? <div className="chat-notice">{notice}</div> : null}
         {error ? <div className="chat-error">{error}</div> : null}
       </div>
+      {/* Starter chips only while the thread is untouched: once the visitor has
+          asked something they know what to do, and stale prompts get in the
+          way of the conversation. */}
+      {suggestedQuestions.length && messages.length <= 1 && !busy ? (
+        <div className="chat-suggestions">
+          {suggestedQuestions.slice(0, 4).map((question) => (
+            <button
+              disabled={busy || uploading}
+              key={question}
+              onClick={() => void askSuggested(question)}
+              type="button"
+            >
+              {question}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {pendingAttachments.length ? (
         <div className="chat-pending-attachments">
           {pendingAttachments.map((attachment) => (

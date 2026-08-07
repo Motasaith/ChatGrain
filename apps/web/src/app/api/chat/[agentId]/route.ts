@@ -294,6 +294,10 @@ export async function POST(request: Request, context: RouteContext) {
         role: "assistant",
         content: result.answer,
         citations: result.citations,
+        // Persisted so the lead form survives a history reload. It used to
+        // exist only on this response, so reopening the chat dropped the form
+        // out from under whoever was filling it in.
+        action: "action" in result ? (result.action ?? null) : null,
         grounded: result.grounded,
         latencyMs,
       })

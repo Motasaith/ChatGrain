@@ -170,7 +170,11 @@ export const agents = pgTable(
       ])
       .notNull(),
     attentionMessage: text("attention_message")
-      .default("We're here!")
+      .default("Ask us anything")
+      .notNull(),
+    suggestedQuestions: text("suggested_questions")
+      .array()
+      .default([])
       .notNull(),
     helpCenterEnabled: boolean("help_center_enabled").default(true).notNull(),
     helpCenterGreeting: text("help_center_greeting")
@@ -363,6 +367,15 @@ export const messages = pgTable(
         Array<{ chunkId: string; title: string; url?: string; excerpt: string }>
       >()
       .default([]),
+    // Interactive follow-up attached to an answer, such as the lead form. It
+    // must be stored: it was previously only present on the live response, so
+    // any history reload silently dropped the form the visitor was filling in.
+    action: jsonb("action").$type<{
+      type: string;
+      title: string;
+      description: string;
+      submitLabel: string;
+    } | null>(),
     grounded: boolean("grounded"),
     latencyMs: integer("latency_ms"),
     inputTokens: integer("input_tokens"),

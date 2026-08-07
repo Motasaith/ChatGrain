@@ -9630,6 +9630,70 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
     transform 140ms ease;
 }
 
+/* Starter question chips ------------------------------------------------- */
+
+.chat-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 0 14px 8px;
+  gap: 6px;
+}
+
+.chat-suggestions > button {
+  max-width: 100%;
+  padding: 7px 12px;
+  overflow: hidden;
+  border: 1px solid
+    color-mix(in srgb, var(--chat-accent, var(--green)) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(
+    in srgb,
+    var(--chat-accent, var(--green)) 8%,
+    transparent
+  );
+  color: var(--chat-accent, var(--green));
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 140ms ease, transform 120ms ease;
+}
+
+.chat-suggestions > button:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--chat-accent, var(--green)) 16%,
+    transparent
+  );
+}
+
+.chat-suggestions > button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.chat-suggestions > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Source row actions ------------------------------------------------------ */
+
+.source-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.source-actions > button.source-remove:hover:not(:disabled) {
+  color: #d7463a;
+}
+
+.source-actions > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 /* Voice notes ------------------------------------------------------------ */
 
 /* A voice note hides its transcript, so the player is the bubble's first

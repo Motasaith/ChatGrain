@@ -41,6 +41,7 @@ type Agent = {
   widgetPosition: string;
   teaserMessages: string[];
   attentionMessage: string;
+  suggestedQuestions: string[];
   helpCenterEnabled: boolean;
   helpCenterGreeting: string;
   showBranding: boolean;
@@ -122,6 +123,7 @@ export function AgentStudio({
     isAdmin ? crawlLimit : Math.min(100, crawlLimit),
   );
   const [saving, setSaving] = useState(false);
+  const [removingSourceId, setRemovingSourceId] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [workerHealthy, setWorkerHealthy] = useState<boolean | null>(null);
@@ -179,6 +181,7 @@ export function AgentStudio({
         widgetPosition: agent.widgetPosition,
         teaserMessages: agent.teaserMessages,
         attentionMessage: agent.attentionMessage,
+        suggestedQuestions: agent.suggestedQuestions,
         helpCenterEnabled: agent.helpCenterEnabled,
         helpCenterGreeting: agent.helpCenterGreeting,
         ...(isAdmin ? { showBranding: agent.showBranding } : {}),
@@ -228,6 +231,34 @@ export function AgentStudio({
       setError(payload.error?.message || "Could not add the source.");
     }
     setSaving(false);
+  }
+
+  async function removeSource(sourceId: string, name: string) {
+    // Deleting a source cascades to its documents and chunks, so the agent
+    // stops answering from it immediately. There is no undo.
+    if (
+      !window.confirm(
+        `Remove "${name}" and everything indexed from it? This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setRemovingSourceId(sourceId);
+    try {
+      const response = await fetch(
+        `/api/agents/${agent.id}/sources/${sourceId}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok && response.status !== 204) {
+        const payload = await response.json().catch(() => null);
+        setError(payload?.error?.message || "Could not remove the source.");
+        return;
+      }
+      setSources((current) => current.filter((item) => item.id !== sourceId));
+    } finally {
+      setRemovingSourceId("");
+    }
   }
 
   async function syncSource(sourceId: string) {
@@ -535,7 +566,20 @@ export function AgentStudio({
                   <i className={`status-pill status-${source.status}`}>
                     {source.status}
                   </i>
-                  {source.rootUrl ? <button aria-label="Sync source" onClick={() => syncSource(source.id)} type="button"><RefreshCw size={14} /></button> : <span />}
+                  <span className="source-actions">
+                    {source.rootUrl ? (
+                      <button aria-label={`Sync ${source.name}`} onClick={() => syncSource(source.id)} type="button"><RefreshCw size={14} /></button>
+                    ) : null}
+                    <button
+                      aria-label={`Remove ${source.name}`}
+                      className="source-remove"
+                      disabled={removingSourceId === source.id}
+                      onClick={() => void removeSource(source.id, source.name)}
+                      type="button"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
                 </article>
               )) : (
                 <div className="table-empty"><FileText size={23} /><b>No sources connected</b><span>Add a website above to start training.</span></div>
@@ -598,6 +642,7 @@ export function AgentStudio({
             name={agent.name}
             primaryColor={agent.primaryColor}
             showBranding={agent.showBranding}
+            suggestedQuestions={agent.suggestedQuestions}
             welcomeMessage={agent.welcomeMessage}
           />
         </div>
@@ -670,6 +715,29 @@ export function AgentStudio({
             </div>
             <label className="field"><span>Widget position</span><select value={agent.widgetPosition} onChange={(event) => patch("widgetPosition", event.target.value)}><option value="right">Bottom right</option><option value="left">Bottom left</option></select></label>
             <label className="field">
+              <span>Suggested questions</span>
+              <textarea
+                maxLength={480}
+                onChange={(event) =>
+                  patch(
+                    "suggestedQuestions",
+                    event.target.value
+                      .split(/\n/)
+                      .map((item) => item.trim())
+                      .filter(Boolean)
+                      .slice(0, 4),
+                  )
+                }
+                placeholder={"How do refunds work?\nDo you ship internationally?\nHow do I reset my password?"}
+                rows={4}
+                value={agent.suggestedQuestions.join("\n")}
+              />
+              <small>
+                One per line, up to four. Shown as tappable chips when a visitor
+                opens a new chat.
+              </small>
+            </label>
+            <label className="field">
               <span>Closed-widget messages</span>
               <textarea
                 maxLength={480}
@@ -727,7 +795,7 @@ export function AgentStudio({
           </section>
           <div className="appearance-preview">
             <span>Preview</span>
-            <ChatPanel agentId={agent.id} collectFeedback={agent.collectFeedback} embedToken={previewToken} helpCenterEnabled={agent.helpCenterEnabled} helpCenterGreeting={agent.helpCenterGreeting} iconUrl={agent.iconUrl} logoUrl={agent.logoUrl} name={agent.name} primaryColor={agent.primaryColor} showBranding={agent.showBranding} welcomeMessage={agent.welcomeMessage} />
+            <ChatPanel agentId={agent.id} collectFeedback={agent.collectFeedback} embedToken={previewToken} helpCenterEnabled={agent.helpCenterEnabled} helpCenterGreeting={agent.helpCenterGreeting} iconUrl={agent.iconUrl} logoUrl={agent.logoUrl} name={agent.name} primaryColor={agent.primaryColor} showBranding={agent.showBranding} suggestedQuestions={agent.suggestedQuestions} welcomeMessage={agent.welcomeMessage} />
           </div>
         </div>
       )}

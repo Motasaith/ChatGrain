@@ -57,6 +57,13 @@
       "when": 1785413535465,
       "tag": "0007_many_smiling_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786095779598,
+      "tag": "0008_wild_robbie_robertson",
+      "breakpoints": true
     }
   ]
 }

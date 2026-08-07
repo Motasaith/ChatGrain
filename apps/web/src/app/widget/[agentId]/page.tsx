@@ -29,6 +29,7 @@ export default async function WidgetPage({
       iconUrl: agents.iconUrl,
       helpCenterEnabled: agents.helpCenterEnabled,
       helpCenterGreeting: agents.helpCenterGreeting,
+      suggestedQuestions: agents.suggestedQuestions,
       collectFeedback: agents.collectFeedback,
       showBranding: agents.showBranding,
     })
@@ -50,6 +51,7 @@ export default async function WidgetPage({
         name={agent.name}
         primaryColor={agent.primaryColor}
         showBranding={agent.showBranding}
+        suggestedQuestions={agent.suggestedQuestions}
         welcomeMessage={agent.welcomeMessage}
       />
     </main>
