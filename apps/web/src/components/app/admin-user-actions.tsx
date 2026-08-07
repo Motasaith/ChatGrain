@@ -94,6 +94,7 @@ export function AdminUserActions({
       </button>
       <button
         aria-label={`Delete ${email}`}
+        title={`Permanently delete ${email} and any workspace they are the last member of`}
         className="is-danger"
         disabled={Boolean(busy)}
         onClick={() => void remove()}

@@ -71,6 +71,7 @@ export function AdminControls() {
         <button
           className="admin-icon-button"
           onClick={() => router.refresh()}
+          title="Reload the latest system figures"
           type="button"
           aria-label="Refresh administration data"
         >

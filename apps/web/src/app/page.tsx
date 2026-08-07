@@ -9,22 +9,19 @@ import {
   Check,
   Code2,
   Database,
-  GitFork,
   Globe2,
   Inbox,
-  LockKeyhole,
   MessageSquareText,
   MousePointerClick,
   RefreshCw,
+  Server,
   ShieldCheck,
   Users,
 } from "lucide-react";
-import { AgentDemo } from "@/components/landing/agent-demo";
 import {
   BrandPlayground,
   FaqList,
   HomepageNav,
-  IndexingPreview,
   WorkflowExplorer,
 } from "@/components/landing/home-interactions";
 import { Logo } from "@/components/logo";
@@ -104,75 +101,34 @@ export default function Home() {
       <HomepageNav />
 
       <section className="home-hero" id="top">
-        <div className="home-shell home-hero-grid">
-          <div className="home-hero-copy">
-            <h1>
-              Build a support agent from the knowledge you already own.
-            </h1>
-            <p>
-              Point Docent at your website. It reads the useful pages,
-              remembers where every fact came from, and gives your customers
-              a fast answer or an honest “I don&apos;t know.”
-            </p>
-            <form
-              className="home-url-form"
-              action="/dashboard/agents/new"
-            >
-              <Globe2 size={19} aria-hidden="true" />
-              <input
-                name="url"
-                type="url"
-                aria-label="Website URL"
-                placeholder="https://yourwebsite.com"
-              />
-              <button type="submit">
-                Train my site <ArrowRight size={16} />
-              </button>
-            </form>
-            <div className="home-hero-actions">
-              <Link href="/dashboard" className="home-primary-link">
-                Open the dashboard <ArrowRight size={16} />
-              </Link>
-              <a
-                href="https://github.com/Motasaith/docent"
-                className="home-text-link"
-              >
-                <GitFork size={16} /> View source
-              </a>
-            </div>
-            <ul className="home-hero-facts" aria-label="Product facts">
-              <li><Check size={14} /> No paid AI API required</li>
-              <li><Check size={14} /> Your database, your data</li>
-              <li><Check size={14} /> Working widget included</li>
-            </ul>
-          </div>
-
-          <div className="home-product-scene">
-            <div className="home-browser">
-              <div className="home-browser-bar">
-                <span className="home-browser-dots" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <span className="home-browser-url">
-                  <LockKeyhole size={11} /> acme.help
-                </span>
-                <span className="home-browser-state">Preview</span>
-              </div>
-              <div className="home-browser-body">
-                <div className="home-mock-site" aria-hidden="true">
-                  <span className="home-mock-brand" />
-                  <span className="home-mock-nav" />
-                  <strong>Answers without the ticket queue.</strong>
-                  <span className="home-mock-copy" />
-                  <span className="home-mock-copy short" />
-                  <span className="home-mock-button" />
-                </div>
-                <AgentDemo />
-              </div>
-            </div>
-            <IndexingPreview />
+        <div className="home-shell home-hero-copy">
+          <h1>
+            Build a support agent from the knowledge you already own.
+          </h1>
+          <p>
+            Point Docent at your website. It reads the useful pages,
+            remembers where every fact came from, and gives your customers
+            a fast answer or an honest &ldquo;I don&apos;t know.&rdquo;
+          </p>
+          <form
+            className="home-url-form"
+            action="/dashboard/agents/new"
+          >
+            <Globe2 size={19} aria-hidden="true" />
+            <input
+              name="url"
+              type="url"
+              aria-label="Website URL"
+              placeholder="https://yourwebsite.com"
+            />
+            <button type="submit">
+              Train my site <ArrowRight size={16} />
+            </button>
+          </form>
+          <div className="home-hero-actions">
+            <Link href="/dashboard" className="home-primary-link">
+              Open the dashboard <ArrowRight size={16} />
+            </Link>
           </div>
         </div>
       </section>
@@ -386,14 +342,11 @@ export default function Home() {
               <span><Database size={16} /> PostgreSQL + pgvector</span>
               <span><ShieldCheck size={16} /> Signed public widget access</span>
               <span><Code2 size={16} /> Provider adapters</span>
-              <span><GitFork size={16} /> Source available on GitHub</span>
+              <span><Server size={16} /> Runs on your own server</span>
             </div>
-            <a
-              className="home-light-button"
-              href="https://github.com/Motasaith/docent"
-            >
-              Explore the repository <ArrowRight size={16} />
-            </a>
+            <Link className="home-light-button" href="/dashboard">
+              Open the dashboard <ArrowRight size={16} />
+            </Link>
           </div>
           <div className="home-terminal" aria-label="Local setup commands">
             <div className="home-terminal-bar">
@@ -401,7 +354,6 @@ export default function Home() {
               <b>powershell</b>
             </div>
             <pre><code>
-              <span>PS</span> git clone Motasaith/docent.git{"\n"}
               <span>PS</span> npm install{"\n"}
               <span>PS</span> npm run services:up{"\n"}
               <span>PS</span> npm run db:migrate{"\n"}

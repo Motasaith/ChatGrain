@@ -134,6 +134,7 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
         }
         className={`home-support-launcher ${unreadCount ? "has-unread" : ""}`}
         onClick={() => setOpen((value) => !value)}
+        title={open ? "Close Docent support" : "Ask Docent support"}
         type="button"
       >
         {open ? <X size={23} /> : <MessageCircle size={23} />}

@@ -265,6 +265,7 @@ export function VoiceCallOverlay({
           aria-label={muted ? "Unmute microphone" : "Mute microphone"}
           aria-pressed={muted}
           className={`voice-control${muted ? " is-active" : ""}`}
+          title={muted ? "Unmute microphone" : "Mute microphone"}
           disabled={textFallback}
           onClick={toggleMute}
           type="button"
@@ -273,6 +274,7 @@ export function VoiceCallOverlay({
         </button>
         <button
           aria-label="End call"
+          title="End call"
           className="voice-control is-end"
           onClick={finish}
           type="button"

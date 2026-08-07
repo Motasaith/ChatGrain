@@ -231,6 +231,7 @@ export function VoiceNotePlayer({
         aria-label={playing ? "Pause voice message" : "Play voice message"}
         className="voice-note-play"
         onClick={toggle}
+        title={playing ? "Pause voice message" : "Play voice message"}
         type="button"
       >
         {playing ? <Pause size={15} /> : <Play size={15} />}
@@ -253,7 +254,12 @@ export function VoiceNotePlayer({
             {formatDuration(elapsed)}
             <i> / {formatDuration(duration)}</i>
           </span>
-          <button onClick={cycleSpeed} type="button" aria-label="Playback speed">
+          <button
+            aria-label="Playback speed"
+            onClick={cycleSpeed}
+            title="Change playback speed"
+            type="button"
+          >
             {speed}×
           </button>
         </div>
@@ -479,6 +485,7 @@ export function VoiceNoteRecorder({
     >
       <button
         aria-label="Discard recording"
+        title="Discard this recording"
         className="voice-recorder-discard"
         onClick={() => stop(true)}
         type="button"
@@ -504,6 +511,7 @@ export function VoiceNoteRecorder({
 
       <button
         aria-label="Send voice message"
+        title="Send voice message"
         className="voice-recorder-send"
         onClick={() => stop(false)}
         type="button"

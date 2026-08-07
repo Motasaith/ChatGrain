@@ -663,7 +663,7 @@ export function AgentStudio({
               <button disabled={saving}><Plus size={14} /> Add website</button>
             </form>
             <div className="knowledge-tools">
-              <label>
+              <label title="Upload a PDF, Excel, CSV, TXT, Markdown, JSON, or HTML file">
                 <FileText size={13} /> Upload file
                 <input
                   accept=".pdf,.xlsx,.xlsm,.xls,.txt,.md,.markdown,.csv,.json,.html,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/plain,text/markdown,text/csv,application/json,text/html"
@@ -684,10 +684,12 @@ export function AgentStudio({
               </button>
             </div>
             <small className="knowledge-limit-note">
-              File uploads: {fileLimitLabel}.
-              {isAdmin
-                ? ` Full-site crawling is available up to ${crawlLimit.toLocaleString()} pages.`
-                : ""}
+              {/* The accepted formats were only ever declared in the file
+                  picker's `accept` filter, so anyone who did not open the
+                  dialog had no way to know what could be uploaded. */}
+              Accepts PDF, Excel, CSV, TXT, Markdown, JSON, and HTML — up to{" "}
+              {fileLimitLabel}. Crawling covers up to{" "}
+              {crawlLimit.toLocaleString()} pages per website.
             </small>
             {textOpen && (
               <form className="knowledge-inline-editor" onSubmit={addText}>
@@ -736,11 +738,19 @@ export function AgentStudio({
                   </i>
                   <span className="source-actions">
                     {source.rootUrl ? (
-                      <button aria-label={`Sync ${source.name}`} onClick={() => syncSource(source.id)} type="button"><RefreshCw size={14} /></button>
+                      <button
+                        aria-label={`Recrawl ${source.name} and retrain`}
+                        onClick={() => syncSource(source.id)}
+                        title="Recrawl this website and retrain the agent on anything that changed"
+                        type="button"
+                      >
+                        <RefreshCw size={14} />
+                      </button>
                     ) : null}
                     <button
                       aria-label={`Remove ${source.name}`}
                       className="source-remove"
+                      title="Delete this source and everything indexed from it"
                       disabled={removingSourceId === source.id}
                       onClick={() => void removeSource(source.id, source.name)}
                       type="button"
@@ -761,7 +771,7 @@ export function AgentStudio({
                     <Pin size={14} />
                     <div><b>{item.title}</b><small>{item.answer}</small></div>
                     <em>{item.useCount} uses</em>
-                    <button aria-label="Delete pinned answer" onClick={() => removePinned(item.id)} type="button"><Trash2 size={13} /></button>
+                    <button aria-label="Delete pinned answer" onClick={() => removePinned(item.id)} title="Delete this pinned answer" type="button"><Trash2 size={13} /></button>
                   </article>
                 ))}
               </div>

@@ -1170,6 +1170,7 @@ export function ChatPanel({
             <button
               aria-label="Help center"
               className={helpCenterOpen ? "active" : ""}
+              title="Help center"
               onClick={() => {
                 setHistoryOpen(false);
                 setHelpCenterOpen((current) => !current);
@@ -1182,6 +1183,7 @@ export function ChatPanel({
           <button
             aria-label="Conversation history"
             className={unreadCount ? "has-unread" : ""}
+            title="Your past conversations"
             onClick={() => {
               setHelpCenterOpen(false);
               setHistoryOpen((current) => !current);
@@ -1194,6 +1196,7 @@ export function ChatPanel({
           <button
             aria-label="Start a new conversation"
             onClick={startNewConversation}
+            title="Start a new conversation"
             type="button"
           >
             <Plus size={17} />
@@ -1209,6 +1212,7 @@ export function ChatPanel({
             </span>
             <button
               aria-label="Close help center"
+              title="Close help center"
               onClick={() => setHelpCenterOpen(false)}
               type="button"
             >
@@ -1286,6 +1290,7 @@ export function ChatPanel({
             </span>
             <button
               aria-label="Close conversation history"
+              title="Close conversation history"
               onClick={() => setHistoryOpen(false)}
               type="button"
             >
@@ -1478,8 +1483,8 @@ export function ChatPanel({
                 {collectFeedback && message.role === "assistant" && message.id !== "welcome" ? (
                   <div className="chat-rating">
                     <span>Helpful?</span>
-                    <button aria-label="Helpful" onClick={() => rate(message.id, 1)} type="button"><ThumbsUp size={11} /></button>
-                    <button aria-label="Not helpful" onClick={() => rate(message.id, -1)} type="button"><ThumbsDown size={11} /></button>
+                    <button aria-label="Helpful" onClick={() => rate(message.id, 1)} title="This answer helped" type="button"><ThumbsUp size={11} /></button>
+                    <button aria-label="Not helpful" onClick={() => rate(message.id, -1)} title="This answer did not help" type="button"><ThumbsDown size={11} /></button>
                   </div>
                 ) : null}
               </div>
@@ -1538,6 +1543,7 @@ export function ChatPanel({
               </small>
               <button
                 aria-label={`Remove ${attachment.fileName}`}
+                title="Remove this attachment"
                 onClick={() => void removePendingAttachment(attachment)}
                 type="button"
               >
@@ -1568,6 +1574,7 @@ export function ChatPanel({
           />
           <button
             aria-label="Attach an image"
+            title="Attach an image"
             disabled={busy || uploading || pendingAttachments.length >= 3}
             onClick={() => imageInputRef.current?.click()}
             type="button"
@@ -1576,6 +1583,7 @@ export function ChatPanel({
           </button>
           <button
             aria-label="Record a voice message"
+            title="Record a voice message"
             disabled={busy || uploading}
             onClick={() => {
               setError("");
@@ -1588,6 +1596,7 @@ export function ChatPanel({
           </button>
           <button
             aria-label="Start a voice call"
+            title="Talk to the assistant out loud"
             disabled={busy || uploading || recording}
             onClick={() => void openVoiceCall()}
             type="button"
@@ -1625,6 +1634,7 @@ export function ChatPanel({
         <button
           aria-label="Send"
           className="chat-send-button"
+          title="Send message"
           disabled={busy || uploading}
         >
           {busy || uploading ? (

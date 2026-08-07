@@ -1,7 +1,7 @@
 "use client";
 
 import { Show, UserButton } from "@clerk/nextjs";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useLinkStatus } from "next/link";
 import {
@@ -14,7 +14,6 @@ import {
   LoaderCircle,
   Menu,
   Paintbrush,
-  RefreshCw,
   X,
 } from "lucide-react";
 import { Logo } from "@/components/logo";
@@ -69,6 +68,7 @@ export function HomepageNav() {
             type="button"
             className="home-menu-button"
             aria-label={open ? "Close navigation" : "Open navigation"}
+            title={open ? "Close navigation" : "Open navigation"}
             aria-expanded={open}
             onClick={() => setOpen((value) => !value)}
           >
@@ -95,57 +95,6 @@ export function HomepageNav() {
         </nav>
       ) : null}
     </header>
-  );
-}
-
-const indexedRows = [
-  ["Sitemap", "92 URLs discovered"],
-  ["Rendering", "88 useful pages"],
-  ["Knowledge", "412 passages ready"],
-];
-
-export function IndexingPreview() {
-  const [run, setRun] = useState(0);
-  const [ready, setReady] = useState(0);
-
-  useEffect(() => {
-    const timers = indexedRows.map((_, index) =>
-      window.setTimeout(() => setReady(index + 1), 550 + index * 620),
-    );
-    return () => timers.forEach(window.clearTimeout);
-  }, [run]);
-
-  return (
-    <div className="home-index-card">
-      <div className="home-index-head">
-        <span>
-          <RefreshCw size={14} />
-          Training run
-        </span>
-        <button
-          type="button"
-          onClick={() => {
-            setReady(0);
-            setRun((value) => value + 1);
-          }}
-        >
-          Replay
-        </button>
-      </div>
-      <div className="home-index-rows">
-        {indexedRows.map(([label, detail], index) => (
-          <div className={index < ready ? "ready" : ""} key={label}>
-            <span className="home-index-state">
-              {index < ready ? <Check size={12} /> : <i />}
-            </span>
-            <span><b>{label}</b><small>{index < ready ? detail : "Working..."}</small></span>
-          </div>
-        ))}
-      </div>
-      <div className="home-index-progress">
-        <i style={{ width: `${(ready / indexedRows.length) * 100}%` }} />
-      </div>
-    </div>
   );
 }
 
@@ -251,6 +200,7 @@ export function BrandPlayground() {
             key={item}
             aria-label={`Use ${item}`}
             aria-pressed={color === item}
+            title={`Preview the widget in ${item}`}
             style={{ background: item }}
             onClick={() => setColor(item)}
           />

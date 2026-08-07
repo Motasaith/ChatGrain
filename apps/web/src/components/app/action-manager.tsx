@@ -59,8 +59,8 @@ export function ActionManager({ initialActions, agents }: { initialActions: Acti
           <article key={action.id}>
             <span><Braces size={17} /></span>
             <div><b>{action.name}</b><small>{action.type.replaceAll("_", " ")} · {action.agentName}</small></div>
-            <button aria-label={action.enabled ? "Disable" : "Enable"} onClick={() => change(action, { enabled: !action.enabled })}>{action.enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
-            <button aria-label="Delete" onClick={() => remove(action)}><Trash2 size={14} /></button>
+            <button aria-label={action.enabled ? "Disable" : "Enable"} onClick={() => change(action, { enabled: !action.enabled })} title={action.enabled ? "Disable this action" : "Enable this action"} type="button">{action.enabled ? <ToggleRight size={24} /> : <ToggleLeft size={24} />}</button>
+            <button aria-label="Delete" onClick={() => remove(action)} title="Delete this action" type="button"><Trash2 size={14} /></button>
           </article>
         ))}</div> : <div className="data-empty"><Braces size={25} /><b>No actions yet</b><span>Create an agent first, then add a lead form or handoff.</span></div>}
       </section>
