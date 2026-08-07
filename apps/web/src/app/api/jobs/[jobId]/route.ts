@@ -1,8 +1,14 @@
-import { eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
-import { agents, crawlJobs, sources, systemState } from "@/lib/db/schema";
+import {
+  agents,
+  crawlJobs,
+  crawlPages,
+  sources,
+  systemState,
+} from "@/lib/db/schema";
 import { AppError, errorResponse } from "@/lib/http/errors";
 
 type RouteContext = { params: Promise<{ jobId: string }> };
@@ -43,8 +49,55 @@ export async function GET(_: Request, context: RouteContext) {
       workerUpdatedAt &&
         Date.now() - workerUpdatedAt.getTime() < 15_000,
     );
+
+    // Counts are aggregated in the database and only a small sample of rows is
+    // returned: a large site produces thousands of page records and the client
+    // only needs totals plus whatever went wrong.
+    const [outcomeRows, failures, recent] = await Promise.all([
+      db
+        .select({
+          outcome: crawlPages.outcome,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(crawlPages)
+        .where(eq(crawlPages.jobId, jobId))
+        .groupBy(crawlPages.outcome),
+      db
+        .select({
+          url: crawlPages.url,
+          title: crawlPages.title,
+          reason: crawlPages.reason,
+          outcome: crawlPages.outcome,
+        })
+        .from(crawlPages)
+        .where(
+          sql`${crawlPages.jobId} = ${jobId} and ${crawlPages.outcome} in ('failed', 'thin')`,
+        )
+        .orderBy(desc(crawlPages.createdAt))
+        .limit(50),
+      db
+        .select({
+          url: crawlPages.url,
+          title: crawlPages.title,
+          outcome: crawlPages.outcome,
+          createdAt: crawlPages.createdAt,
+        })
+        .from(crawlPages)
+        .where(eq(crawlPages.jobId, jobId))
+        .orderBy(desc(crawlPages.createdAt))
+        .limit(12),
+    ]);
+
     return NextResponse.json({
-      data: { ...result, workerHealthy },
+      data: {
+        ...result,
+        workerHealthy,
+        outcomes: Object.fromEntries(
+          outcomeRows.map((row) => [row.outcome, row.count]),
+        ),
+        problemPages: failures,
+        recentPages: recent,
+      },
       requestId,
     });
   } catch (error) {

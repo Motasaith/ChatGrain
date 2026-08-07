@@ -9630,6 +9630,156 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
     transform 140ms ease;
 }
 
+/* Crawl progress detail --------------------------------------------------- */
+
+.crawl-detail {
+  display: grid;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #dfe6e1;
+  border-radius: 12px;
+  background: #fbfdfc;
+  gap: 11px;
+}
+
+.crawl-phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.crawl-phase {
+  padding: 4px 10px;
+  border: 1px solid #dfe6e1;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.crawl-phase.is-active {
+  border-color: transparent;
+  background: var(--green);
+  color: #fff;
+}
+
+.crawl-phase.is-done {
+  border-color: transparent;
+  background: var(--green-pale);
+  color: var(--green-dark);
+}
+
+.crawl-phase.is-failed {
+  border-color: transparent;
+  background: #fdecea;
+  color: #a3271c;
+}
+
+.crawl-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.crawl-counts > span {
+  display: grid;
+  gap: 1px;
+}
+
+.crawl-counts b {
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.crawl-counts small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.crawl-problems > summary {
+  cursor: pointer;
+  font-size: 0.79rem;
+}
+
+.crawl-problems > div {
+  display: grid;
+  max-height: 230px;
+  margin-top: 8px;
+  gap: 7px;
+  overflow-y: auto;
+}
+
+.crawl-problems article {
+  display: grid;
+  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.crawl-problems article > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.crawl-problems a {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crawl-problems small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.crawl-outcome {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eef2ef;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.crawl-outcome.is-failed {
+  background: #fdecea;
+  color: #a3271c;
+}
+
+.crawl-outcome.is-thin {
+  background: #fff4e2;
+  color: #8a5a10;
+}
+
+.crawl-recent {
+  display: grid;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.crawl-recent > span {
+  display: flex;
+  overflow: hidden;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.73rem;
+  gap: 6px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The dot form of an outcome badge, used in the live ticker. */
+.crawl-recent .crawl-outcome {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--green);
+}
+
 /* Starter question chips ------------------------------------------------- */
 
 .chat-suggestions {

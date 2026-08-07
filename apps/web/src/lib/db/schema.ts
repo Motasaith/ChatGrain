@@ -38,6 +38,19 @@ export const sourceStatus = pgEnum("source_status", [
   "ready",
   "error",
 ]);
+/**
+ * Where a crawl job currently is. `progress` alone cannot explain a stall -
+ * "68%" could mean fetching, embedding, or writing - so the phase is stored
+ * separately and shown to the operator.
+ */
+export const jobPhase = pgEnum("job_phase", [
+  "queued",
+  "crawling",
+  "embedding",
+  "indexing",
+  "done",
+]);
+
 export const jobStatus = pgEnum("job_status", [
   "queued",
   "running",
@@ -549,8 +562,14 @@ export const crawlJobs = pgTable(
     maxAttempts: integer("max_attempts").default(3).notNull(),
     priority: integer("priority").default(0).notNull(),
     progress: integer("progress").default(0).notNull(),
+    phase: jobPhase("phase").default("queued").notNull(),
     pagesDiscovered: integer("pages_discovered").default(0).notNull(),
     pagesProcessed: integer("pages_processed").default(0).notNull(),
+    /** Pages whose content hash was unchanged, so embedding was skipped. */
+    pagesSkipped: integer("pages_skipped").default(0).notNull(),
+    pagesFailed: integer("pages_failed").default(0).notNull(),
+    pagesEmbedded: integer("pages_embedded").default(0).notNull(),
+    chunksIndexed: integer("chunks_indexed").default(0).notNull(),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
     lockedBy: text("locked_by"),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -573,6 +592,41 @@ export const crawlJobs = pgTable(
       table.nextAttemptAt,
       table.priority,
     ),
+  ],
+);
+
+/**
+ * One row per URL touched by a crawl, so an operator can see exactly which
+ * pages were indexed, reused, or failed, and why.
+ *
+ * Rows are replaced on each run of a source rather than accumulated: keeping
+ * the history for a 7,000-page site would grow without bound while only the
+ * latest run is ever useful.
+ */
+export const crawlPages = pgTable(
+  "crawl_pages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    jobId: uuid("job_id")
+      .notNull()
+      .references(() => crawlJobs.id, { onDelete: "cascade" }),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => sources.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    /** indexed | unchanged | duplicate | thin | failed */
+    outcome: text("outcome").notNull(),
+    title: text("title"),
+    reason: text("reason"),
+    chunkCount: integer("chunk_count").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("crawl_pages_job_idx").on(table.jobId),
+    index("crawl_pages_job_outcome_idx").on(table.jobId, table.outcome),
+    index("crawl_pages_source_idx").on(table.sourceId),
   ],
 );
 

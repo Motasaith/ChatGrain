@@ -64,6 +64,13 @@
       "when": 1786095779598,
       "tag": "0008_wild_robbie_robertson",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786096720793,
+      "tag": "0009_mute_hobgoblin",
+      "breakpoints": true
     }
   ]
 }

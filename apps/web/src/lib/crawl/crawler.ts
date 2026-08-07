@@ -27,6 +27,29 @@ export type CrawlOptions = {
     discovered: number;
     processed: number;
   }) => Promise<void> | void;
+  /**
+   * Reports the outcome of every URL the crawler touches. Pages that are
+   * dropped for being thin or duplicate used to disappear silently, which made
+   * "it found fewer pages than my site has" impossible to explain.
+   */
+  onPage?: (event: CrawlPageEvent) => void;
+};
+
+export type CrawlPageOutcome =
+  /** Extracted and queued for indexing. */
+  | "indexed"
+  /** Identical content already seen at another URL this run. */
+  | "duplicate"
+  /** Too little text to be worth indexing. */
+  | "thin"
+  /** Fetch, render, or extraction failed. */
+  | "failed";
+
+export type CrawlPageEvent = {
+  url: string;
+  outcome: CrawlPageOutcome;
+  title?: string;
+  reason?: string;
 };
 
 export type CrawlResult = {
@@ -201,6 +224,7 @@ export async function crawlWebsite({
   excludePaths = [],
   trustedInternal = false,
   onProgress,
+  onPage,
 }: CrawlOptions): Promise<CrawlResult> {
   const root = await validatePublicUrl(input, {
     allowPrivate: trustedInternal,
@@ -278,24 +302,42 @@ export async function crawlWebsite({
         processed += 1;
         const result = results[index];
         if (result.status === "rejected") {
-          failures.push({
+          const reason =
+            result.reason instanceof Error
+              ? result.reason.message
+              : "Unknown crawl error";
+          failures.push({ url: batch[index], reason });
+          onPage?.({ url: batch[index], outcome: "failed", reason });
+          continue;
+        }
+        if (!result.value) {
+          onPage?.({
             url: batch[index],
-            reason:
-              result.reason instanceof Error
-                ? result.reason.message
-                : "Unknown crawl error",
+            outcome: "failed",
+            reason: "The page returned no usable response.",
           });
           continue;
         }
-        if (!result.value) continue;
         const { page, brand: pageBrand } = result.value;
         brand ??= pageBrand;
-        if (
-          page.text.length >= 120 &&
-          !contentHashes.has(page.contentHash)
-        ) {
+        if (page.text.length < 120) {
+          onPage?.({
+            url: page.url,
+            outcome: "thin",
+            title: page.title,
+            reason: `Only ${page.text.length} characters of text were extracted.`,
+          });
+        } else if (contentHashes.has(page.contentHash)) {
+          onPage?.({
+            url: page.url,
+            outcome: "duplicate",
+            title: page.title,
+            reason: "Identical content was already indexed from another URL.",
+          });
+        } else {
           contentHashes.add(page.contentHash);
           pages.push(page);
+          onPage?.({ url: page.url, outcome: "indexed", title: page.title });
         }
         for (const link of page.links) {
           if (queued.size >= limit * 8) break;

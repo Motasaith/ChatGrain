@@ -70,10 +70,37 @@ type Job = {
   id: string;
   sourceId: string;
   status: string;
+  phase: "queued" | "crawling" | "embedding" | "indexing" | "done";
   progress: number;
   pagesDiscovered: number;
   pagesProcessed: number;
+  pagesSkipped: number;
+  pagesFailed: number;
+  pagesEmbedded: number;
+  chunksIndexed: number;
   errorMessage: string | null;
+};
+
+type CrawlPageRow = {
+  url: string;
+  title: string | null;
+  reason?: string | null;
+  outcome: string;
+};
+
+type JobDetail = {
+  outcomes: Partial<Record<string, number>>;
+  problemPages: CrawlPageRow[];
+  recentPages: CrawlPageRow[];
+};
+
+/** What each phase is actually doing, so a stall points somewhere specific. */
+const PHASE_LABEL: Record<Job["phase"], string> = {
+  queued: "Waiting for the worker",
+  crawling: "Fetching pages",
+  embedding: "Generating embeddings",
+  indexing: "Writing the search index",
+  done: "Finished",
 };
 
 type PinnedAnswer = {
@@ -114,6 +141,7 @@ export function AgentStudio({
   const [agent, setAgent] = useState(initialAgent);
   const [sources, setSources] = useState(initialSources);
   const [job, setJob] = useState(initialJob);
+  const [jobDetail, setJobDetail] = useState<JobDetail>();
   const [pinned, setPinned] = useState(initialPinned);
   const [tab, setTab] = useState<(typeof tabs)[number][0]>(
     initialAgent.status === "ready" ? "playground" : "knowledge",
@@ -142,9 +170,18 @@ export function AgentStudio({
       const response = await fetch(`/api/jobs/${jobId}`);
       if (!response.ok) return;
       const payload = await response.json() as {
-        data: { job: Job; source: Source; workerHealthy: boolean };
+        data: {
+          job: Job;
+          source: Source;
+          workerHealthy: boolean;
+        } & JobDetail;
       };
       setJob(payload.data.job);
+      setJobDetail({
+        outcomes: payload.data.outcomes ?? {},
+        problemPages: payload.data.problemPages ?? [],
+        recentPages: payload.data.recentPages ?? [],
+      });
       setWorkerHealthy(payload.data.workerHealthy);
       setSources((current) => current.map((source) =>
         source.id === payload.data.source.id
@@ -449,28 +486,100 @@ export function AgentStudio({
           <span><LoaderCircle className="spin" size={17} /></span>
           <div>
             <b>
-              {job.status === "queued"
-                ? workerHealthy === false
-                  ? "Worker is offline"
-                  : "Waiting for the worker"
-                : "Training your agent"}
+              {job.status === "queued" && workerHealthy === false
+                ? "Worker is offline"
+                : PHASE_LABEL[job.phase] ?? "Training your agent"}
             </b>
             <small>
               {job.status === "queued" && workerHealthy === false
                 ? "Start the worker to begin discovering pages."
-                : job.pagesDiscovered
-                  ? `${processedTowardTarget} of ${crawlTarget} selected pages processed · ${job.pagesDiscovered.toLocaleString()} URLs discovered`
-                  : "Preparing page discovery"}
+                : job.phase === "embedding"
+                  ? `${job.pagesEmbedded.toLocaleString()} embedded · ${job.pagesSkipped.toLocaleString()} unchanged and reused of ${job.pagesProcessed.toLocaleString()} pages`
+                  : job.phase === "indexing"
+                    ? "Replacing the search index"
+                    : job.pagesDiscovered
+                      ? `${processedTowardTarget} of ${crawlTarget} selected pages processed · ${job.pagesDiscovered.toLocaleString()} URLs discovered`
+                      : "Preparing page discovery"}
             </small>
           </div>
           <div className="training-progress"><i style={{ width: `${Math.max(4, visibleProgress)}%` }} /></div>
           <strong>{visibleProgress}%</strong>
         </div>
       )}
+      {job && ["queued", "running", "failed"].includes(job.status) && jobDetail ? (
+        <div className="crawl-detail">
+          <div className="crawl-phases">
+            {(["crawling", "embedding", "indexing"] as const).map((phase) => {
+              const order = ["queued", "crawling", "embedding", "indexing", "done"];
+              const current = order.indexOf(job.phase);
+              const mine = order.indexOf(phase);
+              const state =
+                job.status === "failed" && current === mine
+                  ? "failed"
+                  : current > mine
+                    ? "done"
+                    : current === mine
+                      ? "active"
+                      : "waiting";
+              return (
+                <span className={`crawl-phase is-${state}`} key={phase}>
+                  {PHASE_LABEL[phase]}
+                </span>
+              );
+            })}
+          </div>
+          <div className="crawl-counts">
+            {[
+              ["Indexed", jobDetail.outcomes.indexed ?? 0],
+              ["Unchanged", jobDetail.outcomes.unchanged ?? 0],
+              ["Duplicate", jobDetail.outcomes.duplicate ?? 0],
+              ["Too thin", jobDetail.outcomes.thin ?? 0],
+              ["Failed", jobDetail.outcomes.failed ?? 0],
+            ].map(([label, value]) => (
+              <span key={String(label)}>
+                <b>{Number(value).toLocaleString()}</b>
+                <small>{label}</small>
+              </span>
+            ))}
+          </div>
+          {jobDetail.problemPages.length ? (
+            <details className="crawl-problems">
+              <summary>
+                {jobDetail.problemPages.length} page
+                {jobDetail.problemPages.length === 1 ? "" : "s"} need attention
+              </summary>
+              <div>
+                {jobDetail.problemPages.map((page) => (
+                  <article key={page.url}>
+                    <i className={`crawl-outcome is-${page.outcome}`}>{page.outcome}</i>
+                    <span>
+                      <a href={page.url} rel="noreferrer" target="_blank">{page.url}</a>
+                      <small>{page.reason}</small>
+                    </span>
+                  </article>
+                ))}
+              </div>
+            </details>
+          ) : null}
+          {job.status === "running" && jobDetail.recentPages.length ? (
+            <div className="crawl-recent">
+              {jobDetail.recentPages.slice(0, 5).map((page) => (
+                <span key={page.url} title={page.url}>
+                  <i className={`crawl-outcome is-${page.outcome}`} />
+                  {page.title || page.url}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {job?.status === "failed" && (
         <div className="training-banner training-error">
           <AlertTriangle size={18} />
-          <div><b>Training failed</b><small>{job.errorMessage || "Review the URL and worker logs, then retry."}</small></div>
+          <div>
+            <b>Training failed while {(PHASE_LABEL[job.phase] ?? "running").toLowerCase()}</b>
+            <small>{job.errorMessage || "Review the URL and worker logs, then retry."}</small>
+          </div>
         </div>
       )}
 
