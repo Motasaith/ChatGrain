@@ -448,13 +448,20 @@ export function AgentStudio({
     job && crawlTarget
       ? Math.min(job.pagesProcessed, crawlTarget)
       : (job?.pagesProcessed ?? 0);
+  // Must match CRAWL_PROGRESS_CEILING in process-job.ts. The crawl owns the
+  // first stretch of the bar and embedding owns the rest, so a client estimate
+  // that runs past this would jump backwards when the server reports the real
+  // value for the next phase.
+  const crawlProgressCeiling = 60;
   const visibleProgress =
-    job?.status === "running" && crawlTarget
+    job?.status === "running" && crawlTarget && job.phase === "crawling"
       ? Math.max(
           job.progress,
           Math.min(
-            68,
-            Math.round((processedTowardTarget / crawlTarget) * 68),
+            crawlProgressCeiling,
+            Math.round(
+              (processedTowardTarget / crawlTarget) * crawlProgressCeiling,
+            ),
           ),
         )
       : (job?.progress ?? 0);

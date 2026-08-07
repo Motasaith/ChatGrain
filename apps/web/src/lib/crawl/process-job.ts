@@ -69,9 +69,13 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
 
   // Only the current run is useful, and retaining every run of a large site
   // would grow without bound.
-  await db
-    .delete(crawlPages)
-    .where(and(eq(crawlPages.sourceId, sourceId), ne(crawlPages.jobId, jobId)));
+  try {
+    await db
+      .delete(crawlPages)
+      .where(and(eq(crawlPages.sourceId, sourceId), ne(crawlPages.jobId, jobId)));
+  } catch (error) {
+    logger.warn({ error, sourceId }, "Previous crawl page events not cleared");
+  }
   await db
     .update(crawlJobs)
     .set({ phase: "crawling", updatedAt: new Date() })
@@ -86,7 +90,17 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     if (!force && pageEventBuffer.length < PAGE_EVENT_FLUSH_SIZE) return;
     const batch = pageEventBuffer;
     pageEventBuffer = [];
-    await db.insert(crawlPages).values(batch);
+    try {
+      await db.insert(crawlPages).values(batch);
+    } catch (error) {
+      // Per-page reporting is diagnostics. If the table is missing because a
+      // migration has not been applied, the crawl should still index the site
+      // and lose only its progress detail.
+      logger.warn(
+        { error, jobId, pages: batch.length },
+        "Crawl page events could not be stored",
+      );
+    }
   };
   const recordPage = (event: IndexPageEvent) => {
     if (event.outcome === "failed") failedPages += 1;

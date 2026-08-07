@@ -15,7 +15,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push --force",
-    "test": "vitest run"
+    "test": "vitest run",
+    "diagnose:crawl": "tsx --tsconfig tsconfig.voice.json scripts/diagnose-crawl.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^7.6.2",
