@@ -6551,6 +6551,15 @@ button {
   z-index: 1000;
   right: 22px;
   bottom: 20px;
+  /* The closed panel still occupies its full size, so this fixed wrapper is a
+     ~390x630 box in the corner. A transparent box still receives clicks, and on
+     a short viewport it reaches the header and swallows the nav buttons. Only
+     the parts that are actually visible may capture pointer events. */
+  pointer-events: none;
+}
+
+.home-support-widget > * {
+  pointer-events: auto;
 }
 
 .home-support-launcher {
@@ -6601,15 +6610,23 @@ button {
   margin-bottom: 12px;
   opacity: 0;
   pointer-events: none;
+  /* `opacity: 0` alone leaves the panel hit-testable and keyboard focusable;
+     hiding it keeps the closed chat out of both the click path and tab order. */
+  visibility: hidden;
   transform: translateY(12px) scale(.98);
   transform-origin: bottom right;
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    visibility 0s linear 180ms;
 }
 
 .home-support-widget.is-open .home-support-panel {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
   transform: none;
+  transition-delay: 0s;
 }
 
 .home-support-panel .chat-panel {
