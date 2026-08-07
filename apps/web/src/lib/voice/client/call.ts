@@ -44,12 +44,26 @@ export type StartCallOptions = {
   path?: string;
 };
 
+/**
+ * Where the browser should open the voice socket.
+ *
+ * An explicit `NEXT_PUBLIC_VOICE_WS_URL` always wins. Otherwise the scheme
+ * decides the shape:
+ *
+ * - Plain HTTP is local development, where the gateway is reached directly on
+ *   its own port.
+ * - HTTPS means a proxy is terminating TLS, so the socket must share the page's
+ *   origin. Appending a port there cannot work - a non-standard TLS port would
+ *   need its own certificate - so the path is proxied to the gateway instead.
+ */
 export function voiceSocketUrl() {
   const configured = process.env.NEXT_PUBLIC_VOICE_WS_URL?.trim();
   if (configured) return configured;
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  if (window.location.protocol === "https:") {
+    return `wss://${window.location.host}/voice`;
+  }
   const port = process.env.NEXT_PUBLIC_VOICE_WS_PORT?.trim() || "3002";
-  return `${protocol}//${window.location.hostname}:${port}/voice`;
+  return `ws://${window.location.hostname}:${port}/voice`;
 }
 
 export class VoiceCall {
