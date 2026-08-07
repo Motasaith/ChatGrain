@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
   Activity,
+  AlertTriangle,
   Bot,
   CircleAlert,
   Clock3,
@@ -13,16 +14,21 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
-import { desc, inArray, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { AdminControls } from "@/components/app/admin-controls";
+import { AdminUserActions } from "@/components/app/admin-user-actions";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import {
+  agents,
   auditLogs,
+  conversations,
   crawlJobs,
+  sources,
   systemLogs,
   systemState,
   users,
+  workspaces,
 } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -158,7 +164,16 @@ async function loadAdminData() {
     limit 12
   `);
 
-  const [recentUsers, recentJobs, recentAudit, recentSystemLogs, states, sentry] =
+  const [
+    recentUsers,
+    recentJobs,
+    failedJobs,
+    allAgents,
+    recentAudit,
+    recentSystemLogs,
+    states,
+    sentry,
+  ] =
     await Promise.all([
       db
         .select({
@@ -177,6 +192,50 @@ async function loadAdminData() {
         .from(crawlJobs)
         .orderBy(desc(crawlJobs.updatedAt))
         .limit(10),
+      // Failed jobs carry the message that explains the failure; the summary
+      // count alone gave an administrator nothing to act on.
+      db
+        .select({
+          id: crawlJobs.id,
+          sourceId: crawlJobs.sourceId,
+          phase: crawlJobs.phase,
+          attempt: crawlJobs.attempt,
+          maxAttempts: crawlJobs.maxAttempts,
+          errorCode: crawlJobs.errorCode,
+          errorMessage: crawlJobs.errorMessage,
+          updatedAt: crawlJobs.updatedAt,
+          sourceName: sources.name,
+          rootUrl: sources.rootUrl,
+          agentName: agents.name,
+          workspaceName: workspaces.name,
+        })
+        .from(crawlJobs)
+        .innerJoin(sources, eq(sources.id, crawlJobs.sourceId))
+        .innerJoin(agents, eq(agents.id, sources.agentId))
+        .innerJoin(workspaces, eq(workspaces.id, agents.workspaceId))
+        .where(eq(crawlJobs.status, "failed"))
+        .orderBy(desc(crawlJobs.updatedAt))
+        .limit(15),
+      // Every agent on the installation, which had no view at all before.
+      db
+        .select({
+          id: agents.id,
+          name: agents.name,
+          status: agents.status,
+          createdAt: agents.createdAt,
+          workspaceName: workspaces.name,
+          sourceCount: sql<number>`(
+            select count(*)::int from ${sources} where ${sources.agentId} = ${agents.id}
+          )`,
+          conversationCount: sql<number>`(
+            select count(*)::int from ${conversations}
+            where ${conversations.agentId} = ${agents.id}
+          )`,
+        })
+        .from(agents)
+        .innerJoin(workspaces, eq(workspaces.id, agents.workspaceId))
+        .orderBy(desc(agents.createdAt))
+        .limit(40),
       db
         .select()
         .from(auditLogs)
@@ -197,6 +256,8 @@ async function loadAdminData() {
   return {
     overview,
     tableSizes,
+    failedJobs,
+    allAgents,
     recentUsers,
     recentJobs,
     recentAudit,
@@ -296,6 +357,76 @@ export default async function AdminPage() {
         </p>
       </section>
 
+      {data.failedJobs.length ? (
+        <section className="app-card admin-list-card">
+          <div className="app-card-head">
+            <div>
+              <h2>Failed jobs</h2>
+              <p>What broke, where it broke, and on which site.</p>
+            </div>
+            <AlertTriangle size={18} />
+          </div>
+          <div className="admin-failures">
+            {data.failedJobs.map((job) => (
+              <article key={job.id}>
+                <div>
+                  <b>{job.agentName} · {job.sourceName}</b>
+                  <small>{job.workspaceName}{job.rootUrl ? ` · ${job.rootUrl}` : ""}</small>
+                </div>
+                <p>
+                  <i>{job.errorCode ?? "ERROR"}</i>
+                  {job.errorMessage || "No error message was recorded."}
+                </p>
+                <small>
+                  Failed while {job.phase} · attempt {job.attempt} of {job.maxAttempts} · {formatDate(job.updatedAt)}
+                </small>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="app-card admin-list-card">
+        <div className="app-card-head">
+          <div>
+            <h2>All agents</h2>
+            <p>Every agent on this installation, newest first.</p>
+          </div>
+          <Bot size={18} />
+        </div>
+        <div className="admin-table-scroll">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Agent</th>
+                <th>Workspace</th>
+                <th>Status</th>
+                <th>Sources</th>
+                <th>Chats</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.allAgents.map((agent) => (
+                <tr key={agent.id}>
+                  <td>
+                    <Link href={`/dashboard/agents/${agent.id}`}>{agent.name}</Link>
+                  </td>
+                  <td>{agent.workspaceName}</td>
+                  <td><i className={`status-pill status-${agent.status}`}>{agent.status}</i></td>
+                  <td>{agent.sourceCount}</td>
+                  <td>{agent.conversationCount}</td>
+                  <td>{formatDate(agent.createdAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {data.allAgents.length ? null : (
+          <p className="admin-empty">No agents have been created yet.</p>
+        )}
+      </section>
+
       <div className="admin-two-column">
         <section className="app-card admin-list-card">
           <div className="app-card-head"><div><h2>Recent users</h2><p>Activity used by the retention policy.</p></div><Users size={18} /></div>
@@ -305,6 +436,11 @@ export default async function AdminPage() {
                 <span className="admin-list-icon">{user.name.slice(0, 1).toUpperCase()}</span>
                 <span><b>{user.name}</b><small>{user.email}</small></span>
                 <span className="admin-list-meta">{user.retentionExempt ? "Exempt" : formatDate(user.lastSeenAt)}</span>
+                <AdminUserActions
+                  email={user.email}
+                  retentionExempt={user.retentionExempt}
+                  userId={user.id}
+                />
               </div>
             ))}
           </div>

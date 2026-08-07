@@ -9630,6 +9630,98 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
     transform 140ms ease;
 }
 
+/* Admin: failures and per-user actions ------------------------------------ */
+
+.admin-failures {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-failures article {
+  display: grid;
+  padding: 10px 12px;
+  border: 1px solid #f0d9d5;
+  border-radius: 10px;
+  background: #fffaf9;
+  gap: 4px;
+}
+
+.admin-failures b {
+  font-size: 0.86rem;
+}
+
+.admin-failures small {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.admin-failures p {
+  display: flex;
+  align-items: baseline;
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  gap: 7px;
+  line-height: 1.5;
+}
+
+.admin-failures i {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fdecea;
+  color: #a3271c;
+  font-size: 0.68rem;
+  font-style: normal;
+  letter-spacing: 0.02em;
+}
+
+.admin-user-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.admin-user-actions > button {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  align-items: center;
+  justify-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 130ms ease, color 130ms ease;
+}
+
+.admin-user-actions > button:hover:not(:disabled) {
+  background: #eef2ef;
+  color: var(--green-dark);
+}
+
+.admin-user-actions > button.is-danger:hover:not(:disabled) {
+  background: #fdecea;
+  color: #a3271c;
+}
+
+.admin-user-actions > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.admin-user-actions > em {
+  color: #a3271c;
+  cursor: help;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.admin-table-scroll {
+  overflow-x: auto;
+}
+
 /* Crawl progress detail --------------------------------------------------- */
 
 .crawl-detail {

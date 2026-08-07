@@ -352,6 +352,10 @@ export async function crawlWebsite({
             queue.push(next.href);
           }
         }
+        // Links have served their purpose once the queue is extended, and
+        // indexing never reads them. Holding tens of thousands of URL strings
+        // for the whole run is pure overhead on a large site.
+        page.links = [];
       }
       await onProgress?.({
         discovered: queued.size,
