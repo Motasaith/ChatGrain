@@ -59,6 +59,17 @@ export type CrawlResult = {
   failures: Array<{ url: string; reason: string }>;
 };
 
+/**
+ * Parallel fetches per batch. Documented in `.env.example` but previously
+ * hardcoded, so tuning it had no effect. Capped to keep a crawl from
+ * overwhelming a small VPS or the site being indexed.
+ */
+function crawlConcurrency() {
+  const configured = Number(process.env.CRAWL_CONCURRENCY?.trim());
+  if (!Number.isFinite(configured) || configured < 1) return 6;
+  return Math.min(24, Math.floor(configured));
+}
+
 const ignoredExtension =
   /\.(?:jpe?g|png|gif|webp|avif|svg|ico|pdf|zip|gz|rar|mp4|mp3|mov|avi|webm|woff2?|ttf|eot|css|js|xml)$/i;
 const ignoredRoute =
@@ -263,7 +274,10 @@ export async function crawlWebsite({
 
   try {
     while (queue.length && pages.length < limit) {
-      const batch = queue.splice(0, Math.min(6, limit - pages.length));
+      const batch = queue.splice(
+        0,
+        Math.min(crawlConcurrency(), limit - pages.length),
+      );
       const results = await Promise.allSettled(
         batch.map(async (value) => {
           const requestedUrl = new URL(value);

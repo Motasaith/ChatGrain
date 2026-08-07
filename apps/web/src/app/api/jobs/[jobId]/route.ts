@@ -73,7 +73,7 @@ export async function GET(_: Request, context: RouteContext) {
         .where(
           sql`${crawlPages.jobId} = ${jobId} and ${crawlPages.outcome} in ('failed', 'thin')`,
         )
-        .orderBy(desc(crawlPages.createdAt))
+        .orderBy(desc(crawlPages.sequence))
         .limit(50),
       db
         .select({
@@ -84,7 +84,9 @@ export async function GET(_: Request, context: RouteContext) {
         })
         .from(crawlPages)
         .where(eq(crawlPages.jobId, jobId))
-        .orderBy(desc(crawlPages.createdAt))
+        // Ordered by crawl sequence, not timestamp: batched inserts share a
+        // clock reading and would otherwise come back in arbitrary order.
+        .orderBy(desc(crawlPages.sequence))
         .limit(12),
     ]);
 

@@ -1,7 +1,7 @@
 import { AppError } from "@/lib/http/errors";
 
 const DEFAULT_USER_FILE_BYTES = 5 * 1024 * 1024;
-const DEFAULT_USER_CRAWL_PAGES = 500;
+const DEFAULT_USER_CRAWL_PAGES = 10_000;
 const DEFAULT_ADMIN_CRAWL_PAGES = 10_000;
 
 function nonNegativeInteger(value: string | undefined, fallback: number) {

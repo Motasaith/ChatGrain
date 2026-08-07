@@ -222,7 +222,7 @@ export const sources = pgTable(
     rootUrl: text("root_url"),
     includePaths: text("include_paths").array().default([]).notNull(),
     excludePaths: text("exclude_paths").array().default([]).notNull(),
-    pageLimit: integer("page_limit").default(100).notNull(),
+    pageLimit: integer("page_limit").default(10_000).notNull(),
     refreshIntervalHours: integer("refresh_interval_hours"),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     nextSyncAt: timestamp("next_sync_at", { withTimezone: true }),
@@ -614,6 +614,12 @@ export const crawlPages = pgTable(
       .notNull()
       .references(() => sources.id, { onDelete: "cascade" }),
     url: text("url").notNull(),
+    /**
+     * Order the page was handled in. Rows are written in batches whose
+     * timestamps are nearly identical, so `createdAt` cannot order them and a
+     * "most recent pages" view would be arbitrary without this.
+     */
+    sequence: integer("sequence").default(0).notNull(),
     /** indexed | unchanged | duplicate | thin | failed */
     outcome: text("outcome").notNull(),
     title: text("title"),
@@ -624,7 +630,7 @@ export const crawlPages = pgTable(
       .notNull(),
   },
   (table) => [
-    index("crawl_pages_job_idx").on(table.jobId),
+    index("crawl_pages_job_sequence_idx").on(table.jobId, table.sequence),
     index("crawl_pages_job_outcome_idx").on(table.jobId, table.outcome),
     index("crawl_pages_source_idx").on(table.sourceId),
   ],

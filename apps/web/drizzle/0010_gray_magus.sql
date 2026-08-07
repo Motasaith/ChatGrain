@@ -1,0 +1,1 @@
+ALTER TABLE "sources" ALTER COLUMN "page_limit" SET DEFAULT 10000;

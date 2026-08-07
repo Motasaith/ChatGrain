@@ -1,17 +1,7 @@
-import { createHash } from "node:crypto";
 import * as cheerio from "cheerio";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db/client";
-import { agents, chunks, documents, sources } from "@/lib/db/schema";
-import { chunkText } from "@/lib/rag/chunk";
-import { embedTexts } from "@/lib/rag/embeddings";
+import { ingestSourceRecords } from "./ingest-records";
 
-type CsvRecord = {
-  title: string;
-  content: string;
-  canonicalUrl?: string;
-  metadata: Record<string, unknown>;
-};
+import type { SourceRecord as CsvRecord } from "./ingest-records";
 
 function parseCsv(value: string) {
   const rows: string[][] = [];
@@ -150,101 +140,12 @@ export async function ingestCsvSource({
   content: string;
 }) {
   const records = parseCsvRecords(content, name);
-  if (!records.length) return null;
-
-  const preparedDocuments = records.flatMap((record) => {
-    const textChunks = chunkText(record.content);
-    if (!textChunks.length) return [];
-    return [{
-      id: crypto.randomUUID(),
-      ...record,
-      chunks: textChunks,
-    }];
-  });
-  const pendingChunks = preparedDocuments.flatMap((document) =>
-    document.chunks.map((chunk) => ({ document, chunk })),
-  );
-  const embeddedChunks: Array<{
-    documentId: string;
-    position: number;
-    content: string;
-    tokenCount: number;
-    embedding: number[];
-    metadata: Record<string, unknown>;
-  }> = [];
-  for (let offset = 0; offset < pendingChunks.length; offset += 16) {
-    const batch = pendingChunks.slice(offset, offset + 16);
-    const embeddings = await embedTexts(
-      batch.map((item) => item.chunk.content),
-    );
-    embeddedChunks.push(
-      ...batch.map((item, index) => ({
-        documentId: item.document.id,
-        position: item.chunk.position,
-        content: item.chunk.content,
-        tokenCount: item.chunk.tokenCount,
-        embedding: embeddings[index],
-        metadata: {
-          title: item.document.title,
-          url: item.document.canonicalUrl,
-          ...item.document.metadata,
-        },
-      })),
-    );
-  }
-
-  return db.transaction(async (tx) => {
-    const [source] = await tx
-      .insert(sources)
-      .values({
-        agentId,
-        type: "file",
-        status: "ready",
-        name,
-        pageLimit: preparedDocuments.length,
-        lastSyncedAt: new Date(),
-        metadata: {
-          rows: records.length,
-          documents: preparedDocuments.length,
-          chunks: embeddedChunks.length,
-          format: "csv",
-        },
-      })
-      .returning();
-
-    for (let offset = 0; offset < preparedDocuments.length; offset += 250) {
-      await tx.insert(documents).values(
-        preparedDocuments.slice(offset, offset + 250).map((document) => ({
-          id: document.id,
-          sourceId: source.id,
-          canonicalUrl: document.canonicalUrl,
-          title: document.title,
-          contentHash: createHash("sha256")
-            .update(document.content)
-            .digest("hex"),
-          mimeType: "text/csv",
-          characterCount: document.content.length,
-          metadata: document.metadata,
-        })),
-      );
-    }
-    for (let offset = 0; offset < embeddedChunks.length; offset += 250) {
-      await tx.insert(chunks).values(
-        embeddedChunks.slice(offset, offset + 250).map((chunk) => ({
-          ...chunk,
-          sourceId: source.id,
-          agentId,
-        })),
-      );
-    }
-    await tx
-      .update(agents)
-      .set({ status: "ready", updatedAt: new Date() })
-      .where(eq(agents.id, agentId));
-    return {
-      source,
-      documentCount: preparedDocuments.length,
-      chunkCount: embeddedChunks.length,
-    };
+  return ingestSourceRecords({
+    agentId,
+    name,
+    records,
+    format: "csv",
+    mimeType: "text/csv",
+    metadata: { rows: records.length },
   });
 }

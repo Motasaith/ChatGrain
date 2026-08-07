@@ -164,6 +164,26 @@ export function AgentStudio({
 
   const jobId = job?.id;
   const jobStatus = job?.status;
+  // A finished job still has results worth reading, but polling has stopped by
+  // then - so fetch the summary once when the page loads with no detail yet.
+  useEffect(() => {
+    if (!jobId || jobDetail) return;
+    let cancelled = false;
+    void (async () => {
+      const response = await fetch(`/api/jobs/${jobId}`);
+      if (!response.ok || cancelled) return;
+      const payload = await response.json() as { data: JobDetail };
+      setJobDetail({
+        outcomes: payload.data.outcomes ?? {},
+        problemPages: payload.data.problemPages ?? [],
+        recentPages: payload.data.recentPages ?? [],
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId, jobDetail]);
+
   useEffect(() => {
     if (!jobId || !jobStatus || !["queued", "running"].includes(jobStatus)) return;
     const timer = window.setInterval(async () => {
@@ -506,7 +526,7 @@ export function AgentStudio({
           <strong>{visibleProgress}%</strong>
         </div>
       )}
-      {job && ["queued", "running", "failed"].includes(job.status) && jobDetail ? (
+      {job && jobDetail ? (
         <div className="crawl-detail">
           <div className="crawl-phases">
             {(["crawling", "embedding", "indexing"] as const).map((phase) => {
@@ -563,13 +583,30 @@ export function AgentStudio({
           ) : null}
           {job.status === "running" && jobDetail.recentPages.length ? (
             <div className="crawl-recent">
-              {jobDetail.recentPages.slice(0, 5).map((page) => (
-                <span key={page.url} title={page.url}>
+              <b>
+                {job.phase === "crawling" ? "Now fetching" : "Last handled"}
+              </b>
+              {jobDetail.recentPages.slice(0, 6).map((page) => (
+                <span key={page.url} title={`${page.outcome} · ${page.url}`}>
                   <i className={`crawl-outcome is-${page.outcome}`} />
-                  {page.title || page.url}
+                  <em>{page.title || page.url}</em>
+                  <small>{page.url}</small>
                 </span>
               ))}
             </div>
+          ) : null}
+          {job.status === "succeeded" ? (
+            <p className="crawl-summary">
+              Sync complete ·{" "}
+              {(jobDetail.outcomes.indexed ?? 0).toLocaleString()} pages indexed
+              {jobDetail.outcomes.unchanged
+                ? `, ${jobDetail.outcomes.unchanged.toLocaleString()} unchanged and reused`
+                : ""}
+              {job.chunksIndexed
+                ? ` · ${job.chunksIndexed.toLocaleString()} searchable passages`
+                : ""}
+              .
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -622,7 +659,7 @@ export function AgentStudio({
               <label>
                 <FileText size={13} /> Upload file
                 <input
-                  accept=".txt,.md,.markdown,.csv,.json,.html,text/plain,text/markdown,text/csv,application/json,text/html"
+                  accept=".pdf,.xlsx,.xlsm,.xls,.txt,.md,.markdown,.csv,.json,.html,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/plain,text/markdown,text/csv,application/json,text/html"
                   disabled={saving}
                   onChange={(event) => {
                     const file = event.target.files?.[0];
@@ -671,7 +708,22 @@ export function AgentStudio({
                       </a>
                     ) : <small>Pasted text</small>}
                   </div>
-                  <span><b>{source.documentCount}</b><small>pages</small></span>
+                  <span>
+                    <b>{source.documentCount}</b>
+                    {/* A crawl stops the moment it reaches its ceiling, so a
+                        source sitting exactly on the limit has almost certainly
+                        been truncated and the rest of the site is missing. */}
+                    {source.rootUrl && source.documentCount >= source.pageLimit ? (
+                      <small
+                        className="source-truncated"
+                        title={`This crawl stopped at its ${source.pageLimit.toLocaleString()}-page limit. Raise the limit and sync again to index the rest of the site.`}
+                      >
+                        pages · limit reached
+                      </small>
+                    ) : (
+                      <small>pages</small>
+                    )}
+                  </span>
                   <i className={`status-pill status-${source.status}`}>
                     {source.status}
                   </i>

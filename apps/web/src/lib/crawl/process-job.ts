@@ -17,10 +17,11 @@ import { embedTexts } from "@/lib/rag/embeddings";
 const EMBEDDING_BATCH_SIZE = 16;
 
 /**
- * Page events are written in batches. One insert per URL would add thousands of
- * round trips to a large crawl purely for reporting.
+ * Page events are written in batches: one insert per URL would add thousands of
+ * round trips to a large crawl purely for reporting. Kept small so the live
+ * view in the dashboard stays close to what the crawler is actually doing.
  */
-const PAGE_EVENT_FLUSH_SIZE = 50;
+const PAGE_EVENT_FLUSH_SIZE = 10;
 
 /** Progress is split by phase so a stall can be attributed to a stage. */
 const CRAWL_PROGRESS_CEILING = 60;
@@ -79,6 +80,7 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
   // Buffered so a 7,000-page crawl does not pay a round trip per URL.
   let pageEventBuffer: Array<typeof crawlPages.$inferInsert> = [];
   let failedPages = 0;
+  let pageSequence = 0;
   const flushPageEvents = async (force = false) => {
     if (!pageEventBuffer.length) return;
     if (!force && pageEventBuffer.length < PAGE_EVENT_FLUSH_SIZE) return;
@@ -88,9 +90,11 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
   };
   const recordPage = (event: IndexPageEvent) => {
     if (event.outcome === "failed") failedPages += 1;
+    pageSequence += 1;
     pageEventBuffer.push({
       jobId,
       sourceId,
+      sequence: pageSequence,
       url: event.url.slice(0, 2_000),
       outcome: event.outcome,
       title: event.title?.slice(0, 300) ?? null,

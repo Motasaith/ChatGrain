@@ -9630,6 +9630,12 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
     transform 140ms ease;
 }
 
+.source-truncated {
+  color: #8a5a10 !important;
+  cursor: help;
+  font-weight: 600;
+}
+
 /* Admin: failures and per-user actions ------------------------------------ */
 
 .admin-failures {
@@ -9851,25 +9857,72 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   overflow: hidden;
 }
 
-.crawl-recent > span {
-  display: flex;
-  overflow: hidden;
-  align-items: center;
+.crawl-recent > b {
   color: var(--muted);
-  font-size: 0.73rem;
-  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.crawl-recent > span {
+  display: grid;
+  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 7px;
+  overflow: hidden;
+}
+
+.crawl-recent em {
+  overflow: hidden;
+  font-size: 0.76rem;
+  font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The dot form of an outcome badge, used in the live ticker. */
+/* The URL sits under the title so a long path cannot push the row wider. */
+.crawl-recent small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  grid-column: 2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crawl-summary {
+  margin: 0;
+  color: var(--green-dark);
+  font-size: 0.79rem;
+}
+
+/* The dot form of an outcome badge, used in the live ticker. Colour-coded so a
+   failure is visible at a glance without reading the list. */
 .crawl-recent .crawl-outcome {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   flex: none;
   padding: 0;
   border-radius: 50%;
   background: var(--green);
+  grid-row: 1 / span 2;
+}
+
+.crawl-recent .crawl-outcome.is-unchanged {
+  background: #9bb0a4;
+}
+
+.crawl-recent .crawl-outcome.is-duplicate {
+  background: #7f9bc4;
+}
+
+.crawl-recent .crawl-outcome.is-thin {
+  background: #d99a2b;
+}
+
+.crawl-recent .crawl-outcome.is-failed {
+  background: #d7463a;
 }
 
 /* Starter question chips ------------------------------------------------- */

@@ -71,6 +71,20 @@
       "when": 1786096720793,
       "tag": "0009_mute_hobgoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786101734308,
+      "tag": "0010_gray_magus",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786102939022,
+      "tag": "0011_aberrant_ben_grimm",
+      "breakpoints": true
     }
   ]
 }

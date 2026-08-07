@@ -12,7 +12,7 @@ import { enforceCrawlPageLimit } from "@/lib/usage/limits";
 const websiteSourceSchema = z.object({
   type: z.literal("website"),
   url: z.string().min(1),
-  pageLimit: z.number().int().min(1).max(2_147_483_647).default(100),
+  pageLimit: z.number().int().min(1).max(2_147_483_647).default(10_000),
   includePaths: z.array(z.string().startsWith("/")).max(50).default([]),
   excludePaths: z.array(z.string().startsWith("/")).max(50).default([]),
   refreshIntervalHours: z.number().int().min(1).max(8_760).nullable().default(168),

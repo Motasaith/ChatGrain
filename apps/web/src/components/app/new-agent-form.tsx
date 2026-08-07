@@ -31,7 +31,7 @@ export function NewAgentForm({
   const router = useRouter();
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
-  const [pageLimit, setPageLimit] = useState(100);
+  const [pageLimit, setPageLimit] = useState(10_000);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -109,23 +109,28 @@ export function NewAgentForm({
               onChange={(event) => setPageLimit(Number(event.target.value))}
               value={pageLimit}
             >
-              <option value={25}>25 pages</option>
-              <option value={50}>50 pages</option>
-              <option value={100}>100 pages</option>
-              <option value={250}>250 pages</option>
-              <option value={500}>500 pages</option>
-              {isAdmin && crawlLimit > 500 ? (
-                <option value={crawlLimit}>
-                  Entire site (up to {crawlLimit.toLocaleString()} pages)
-                </option>
-              ) : null}
+              {[100, 500, 1_000, 2_500, 5_000]
+                .filter((value) => value < crawlLimit)
+                .map((value) => (
+                  <option key={value} value={value}>
+                    {value.toLocaleString()} pages
+                  </option>
+                ))}
+              <option value={crawlLimit}>
+                Entire site (up to {crawlLimit.toLocaleString()} pages)
+              </option>
             </select>
-            {isAdmin ? (
-              <small>
-                Administrator crawl allowance. Raise
-                {" "}ADMIN_CRAWL_MAX_PAGES on larger deployments.
-              </small>
-            ) : null}
+            <small>
+              {/* The cap is deployment configuration, and a crawl that stops
+                  early is indistinguishable from a small site unless the
+                  ceiling is stated up front. */}
+              This deployment allows up to {crawlLimit.toLocaleString()} pages
+              per source. A crawl stops as soon as it reaches the limit, so set
+              it above your real page count.
+              {isAdmin
+                ? " Raise ADMIN_CRAWL_MAX_PAGES to go higher."
+                : ""}
+            </small>
           </label>
           {error && <div className="form-error">{error}</div>}
           <button className="app-primary-button create-submit" disabled={busy}>
