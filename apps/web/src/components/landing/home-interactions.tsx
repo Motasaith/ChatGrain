@@ -103,7 +103,7 @@ const workflowSteps = [
     title: "Discover",
     summary: "Read the site map and follow useful same-domain links.",
     detail:
-      "Docent respects robots.txt, rejects private-network URLs, detects redirect loops and soft 404s, and keeps the queue within your page limit.",
+      "ChatGrain respects robots.txt, rejects private-network URLs, detects redirect loops and soft 404s, and keeps the queue within your page limit.",
     icon: FileSearch,
     visual: ["sitemap.xml", "docs/getting-started", "help/refunds"],
   },

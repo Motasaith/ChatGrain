@@ -230,7 +230,7 @@ export function CustomSignUp() {
             ) : (
               <Check size={17} />
             )}
-            Verify and open Docent
+            Verify and open ChatGrain
           </button>
         </form>
         <button
@@ -251,7 +251,7 @@ export function CustomSignUp() {
         <div className="docent-auth-title">
           <span>One last step</span>
           <h1>Complete your account.</h1>
-          <p>Add the details required for your Docent workspace.</p>
+          <p>Add the details required for your ChatGrain workspace.</p>
         </div>
         {(localError || fieldError) && (
           <div className="docent-auth-error" role="alert">
@@ -391,7 +391,7 @@ export function CustomSignUp() {
       </p>
       <p className="docent-auth-legal">
         By continuing, you agree to the terms and privacy policy for this
-        Docent installation.
+        ChatGrain installation.
       </p>
     </div>
   );

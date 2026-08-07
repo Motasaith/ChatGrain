@@ -488,7 +488,7 @@ export function CustomSignIn() {
     <div className="docent-auth-card">
       <div className="docent-auth-title">
         <span>Welcome back</span>
-        <h1>Sign in to Docent.</h1>
+        <h1>Sign in to ChatGrain.</h1>
         <p>Manage your agents, sources, conversations, and deployments.</p>
       </div>
 
@@ -565,7 +565,7 @@ export function CustomSignIn() {
       </button>
 
       <p className="docent-auth-switch">
-        New to Docent?{" "}
+        New to ChatGrain?{" "}
         <Link href={`/sign-up?redirect_url=${encodeURIComponent(destination)}`}>
           Create an account
         </Link>

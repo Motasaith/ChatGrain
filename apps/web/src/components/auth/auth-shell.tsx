@@ -50,7 +50,7 @@ export function AuthShell({
         <div className="docent-auth-visual-top">
           <span>
             <MessageSquareText size={15} />
-            Docent workspace
+            ChatGrain workspace
           </span>
           <em>Grounded support</em>
         </div>

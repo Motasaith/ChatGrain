@@ -9,7 +9,7 @@ import("./lib/observability/worker-sentry")
       "./lib/voice/gateway"
     );
     if (!voiceEnabled()) {
-      console.log("Docent voice gateway is disabled (VOICE_ENABLED=false)");
+      console.log("ChatGrain voice gateway is disabled (VOICE_ENABLED=false)");
       return;
     }
     const stop = startVoiceGateway();
@@ -20,6 +20,6 @@ import("./lib/observability/worker-sentry")
     process.on("SIGTERM", shutdown);
   })
   .catch((error) => {
-    console.error("Failed to start the Docent voice gateway", error);
+    console.error("Failed to start the ChatGrain voice gateway", error);
     process.exitCode = 1;
   });

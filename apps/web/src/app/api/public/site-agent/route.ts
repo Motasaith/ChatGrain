@@ -10,7 +10,7 @@ export async function GET(request: Request) {
     if (!agentId) {
       throw new AppError(
         "SITE_AGENT_PREPARING",
-        "Docent support is preparing its website knowledge.",
+        "ChatGrain support is preparing its website knowledge.",
         503,
       );
     }

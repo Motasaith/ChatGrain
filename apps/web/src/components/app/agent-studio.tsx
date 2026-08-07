@@ -964,8 +964,8 @@ export function AgentStudio({
             />
             {isAdmin ? (
               <Toggle
-                detail="Hide or show the Docent attribution below the composer."
-                label='Show "Powered by Docent"'
+                detail="Hide or show the ChatGrain attribution below the composer."
+                label='Show "Powered by ChatGrain"'
                 onChange={(value) => patch("showBranding", value)}
                 value={agent.showBranding}
               />

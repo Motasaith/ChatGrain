@@ -65,7 +65,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (input.showBranding !== undefined && !workspace.isAdmin) {
       throw new AppError(
         "ADMIN_REQUIRED",
-        "Only a Docent administrator can change widget branding.",
+        "Only a ChatGrain administrator can change widget branding.",
         403,
       );
     }

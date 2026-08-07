@@ -50,7 +50,7 @@ export async function POST(request: Request) {
 
     if (input.action === "sentry-test") {
       Sentry.captureException(
-        new Error("Docent administrator-triggered Sentry verification"),
+        new Error("ChatGrain administrator-triggered Sentry verification"),
         {
           tags: { verification: "admin-dashboard" },
           user: { id: context.userId, email: context.email },

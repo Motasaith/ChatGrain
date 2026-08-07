@@ -18,7 +18,7 @@ export default function GlobalError({
     <html lang="en">
       <body>
         <main className="global-error">
-          <h1>Docent needs a restart.</h1>
+          <h1>ChatGrain needs a restart.</h1>
           <p>{error.message || "The application encountered an unexpected error."}</p>
           <button onClick={() => unstable_retry()}>Try again</button>
         </main>

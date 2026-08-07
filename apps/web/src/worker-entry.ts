@@ -8,6 +8,6 @@ import("./lib/observability/worker-sentry")
     return import("./worker");
   })
   .catch((error) => {
-    console.error("Failed to start the Docent worker", error);
+    console.error("Failed to start the ChatGrain worker", error);
     process.exitCode = 1;
   });

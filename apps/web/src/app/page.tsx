@@ -69,7 +69,7 @@ const selfHostedFeatures = [
 
 const faqs = [
   {
-    question: "Does Docent really crawl JavaScript websites?",
+    question: "Does ChatGrain really crawl JavaScript websites?",
     answer:
       "Yes. It uses a fast HTTP path first, then opens a controlled browser only when a page returns an empty JavaScript shell. That keeps ordinary sites fast without losing content from modern React and Next.js websites.",
   },
@@ -79,9 +79,9 @@ const faqs = [
       "Every response begins with retrieved passages from your sources. Weak evidence produces a refusal instead of a confident guess, citations show the supporting page, and pinned answers can override retrieval for critical questions.",
   },
   {
-    question: "What does free and open source mean here?",
+    question: "What does self-hosted mean here?",
     answer:
-      "The application code, crawler, worker, retrieval pipeline, dashboard, and widget run on infrastructure you control. You still pay for your own hosting or model hardware, but Docent does not require a paid AI API.",
+      "The crawler, worker, retrieval pipeline, dashboard, and widget all run on infrastructure you control, and your content never leaves it. You pay for your own hosting or model hardware, and ChatGrain does not require a paid AI API.",
   },
   {
     question: "Can the widget match my website?",
@@ -106,7 +106,7 @@ export default function Home() {
             Build a support agent from the knowledge you already own.
           </h1>
           <p>
-            Point Docent at your website. It reads the useful pages,
+            Point ChatGrain at your website. It reads the useful pages,
             remembers where every fact came from, and gives your customers
             a fast answer or an honest &ldquo;I don&apos;t know.&rdquo;
           </p>
@@ -281,7 +281,7 @@ export default function Home() {
           <div className="home-human-copy">
             <h2>Automation should make support more human, not less.</h2>
             <p>
-              Docent handles the repeated questions and preserves the context
+              ChatGrain handles the repeated questions and preserves the context
               for the ones that need judgment. Your team sees the source,
               conversation, feedback, and visitor details in one place.
             </p>
@@ -329,10 +329,10 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="home-section home-open" id="open-source">
+      <section className="home-section home-open" id="self-hosted">
         <div className="home-shell home-open-grid">
           <div className="home-open-copy">
-            <h2>Keep the support brain where you can inspect it.</h2>
+            <h2>Keep the support brain on your own infrastructure.</h2>
             <p>
               Run the crawler, worker, retrieval, dashboard, and widget on
               infrastructure you control. Choose local models now and add
@@ -369,19 +369,19 @@ export default function Home() {
       <section className="home-section home-deploy" id="deploy">
         <div className="home-shell">
           <div className="home-section-heading home-heading-split">
-            <h2>Free software. Honest infrastructure costs.</h2>
+            <h2>One licence. Honest infrastructure costs.</h2>
             <p>
               There is no pretend pricing for a billing system that does not
-              exist yet. Self-host the complete current product now; a managed
-              service can come later.
+              exist yet. Run the complete current product on your own
+              infrastructure now; a managed service can come later.
             </p>
           </div>
           <div className="home-deploy-grid">
             <article className="home-deploy-card available">
               <span className="home-deploy-status">Available now</span>
               <h3>Self-hosted</h3>
-              <div className="home-price">$0 <small>software license</small></div>
-              <p>You pay only for the infrastructure and models you choose.</p>
+              <div className="home-price">Your servers <small>your data</small></div>
+              <p>You pay only for the infrastructure and models you choose. Nothing leaves your deployment.</p>
               <ul>
                 {selfHostedFeatures.map((feature) => (
                   <li key={feature}><Check size={14} /> {feature}</li>
@@ -393,7 +393,7 @@ export default function Home() {
             </article>
             <article className="home-deploy-card planned">
               <span className="home-deploy-status">Planned, not sold</span>
-              <h3>Managed Docent</h3>
+              <h3>Managed ChatGrain</h3>
               <div className="home-price">Later</div>
               <p>
                 Hosted workers, managed upgrades, backups, team billing, and
@@ -445,7 +445,7 @@ export default function Home() {
         <div className="home-shell home-footer-grid">
           <div>
             <Logo inverse />
-            <p>Open-source support agents trained on your knowledge.</p>
+            <p>Grounded support agents trained on your knowledge.</p>
           </div>
           <div>
             <b>Product</b>
@@ -454,14 +454,26 @@ export default function Home() {
             <Link href="/dashboard">Dashboard</Link>
           </div>
           <div>
-            <b>Project</b>
-            <a href="#open-source">Open source</a>
+            <b>Platform</b>
+            <a href="#self-hosted">Self-hosted</a>
             <a href="#deploy">Deployment</a>
             <a href="#roadmap">Roadmap</a>
           </div>
-          <div className="home-footer-status">
-            <i /> Local-first and operational
-          </div>
+        </div>
+        <div className="home-shell home-footer-base">
+          <small>
+            &copy; {new Date().getFullYear()} ChatGrain. All rights reserved.
+          </small>
+          <small>
+            Built by{" "}
+            <a
+              href="https://github.com/Motasaith"
+              rel="noreferrer noopener"
+              target="_blank"
+            >
+              Abdul Rauf Azhar
+            </a>
+          </small>
         </div>
       </footer>
       <HomepageSupport agentId={process.env.DOCENT_SITE_AGENT_ID} />

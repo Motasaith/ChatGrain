@@ -214,8 +214,8 @@ async function run() {
     });
   }
   await recoverStaleJobs();
-  logger.info({ workerId, pollInterval }, "Docent worker started");
-  await recordSystemLog("info", "Docent worker started", {
+  logger.info({ workerId, pollInterval }, "ChatGrain worker started");
+  await recordSystemLog("info", "ChatGrain worker started", {
     workerId,
     pollInterval,
   });
@@ -254,8 +254,8 @@ async function run() {
   } finally {
     clearInterval(heartbeatTimer);
   }
-  logger.info({ workerId }, "Docent worker stopped");
-  await recordSystemLog("info", "Docent worker stopped", { workerId });
+  logger.info({ workerId }, "ChatGrain worker stopped");
+  await recordSystemLog("info", "ChatGrain worker stopped", { workerId });
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {

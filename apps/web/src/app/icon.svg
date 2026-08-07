@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ChatGrain">
+  <rect width="64" height="64" rx="15" fill="#177e51"/>
+  <!-- Speech bubble: the "chat" half of the name. -->
+  <path fill="#fff" d="M17 15h30a7 7 0 0 1 7 7v18a7 7 0 0 1-7 7H31.6l-9.1 6.9A1.6 1.6 0 0 1 20 52.6V47h-3a7 7 0 0 1-7-7V22a7 7 0 0 1 7-7Z"/>
+  <!-- Three grains, angled like seeds and rising left to right: they read as
+       typing dots at a glance and as grain up close. -->
+  <g fill="#177e51">
+    <ellipse cx="22.5" cy="34.5" rx="3.1" ry="5.2" transform="rotate(-22 22.5 34.5)"/>
+    <ellipse cx="32" cy="31" rx="3.1" ry="5.2" transform="rotate(-22 32 31)"/>
+    <ellipse cx="41.5" cy="27.5" rx="3.1" ry="5.2" transform="rotate(-22 41.5 27.5)"/>
+  </g>
+</svg>

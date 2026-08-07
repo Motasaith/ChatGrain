@@ -1645,7 +1645,7 @@ export function ChatPanel({
         </button>
       </form>
       )}
-      {showBranding ? <footer>Powered by <b>Docent</b></footer> : null}
+      {showBranding ? <footer>Powered by <b>ChatGrain</b></footer> : null}
       {callOptions ? (
         <VoiceCallOverlay
           agentName={name}

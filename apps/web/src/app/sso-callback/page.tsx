@@ -8,7 +8,7 @@ export default function SsoCallbackPage() {
     <main className="docent-auth-callback">
       <LoaderCircle className="spin" size={24} />
       <h1>Finishing your secure sign in...</h1>
-      <p>You will return to Docent automatically.</p>
+      <p>You will return to ChatGrain automatically.</p>
       <AuthenticateWithRedirectCallback
         signInUrl="/sign-in"
         signUpUrl="/sign-up"

@@ -5,7 +5,7 @@ import { CustomSignIn } from "@/components/auth/custom-sign-in";
 
 export const metadata: Metadata = {
   title: "Sign in",
-  description: "Sign in to your Docent workspace.",
+  description: "Sign in to your ChatGrain workspace.",
 };
 
 export default function SignInPage() {

@@ -18,7 +18,7 @@ export function userFileUploadLimit() {
 }
 
 /**
- * A null limit means Docent does not impose an application-level cap.
+ * A null limit means ChatGrain does not impose an application-level cap.
  * The reverse proxy, available memory, and request runtime can still limit
  * uploads, so production operators can set ADMIN_FILE_MAX_BYTES explicitly.
  */

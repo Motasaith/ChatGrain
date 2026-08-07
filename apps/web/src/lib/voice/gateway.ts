@@ -98,7 +98,7 @@ export function startVoiceGateway() {
   httpServer.listen(port, () => {
     logger.info(
       { port, stt: sttEnabled(), tts: ttsEnabled() },
-      "Docent voice gateway listening",
+      "ChatGrain voice gateway listening",
     );
   });
 

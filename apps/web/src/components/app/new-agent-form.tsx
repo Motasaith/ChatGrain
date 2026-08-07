@@ -73,7 +73,7 @@ export function NewAgentForm({
         <span className="page-eyebrow">New agent</span>
         <h1>Turn your website into a reliable support agent.</h1>
         <p className="create-lead">
-          Add one URL. Docent discovers useful pages, removes navigation noise,
+          Add one URL. ChatGrain discovers useful pages, removes navigation noise,
           detects your brand, and builds a cited knowledge index.
         </p>
 

@@ -38,7 +38,7 @@ export async function getCurrentIdentity(): Promise<AuthIdentity> {
     if (!email) {
       throw new AppError(
         "EMAIL_REQUIRED",
-        "A verified email address is required to use Docent.",
+        "A verified email address is required to use ChatGrain.",
         403,
       );
     }
@@ -67,7 +67,7 @@ export async function requireAdminIdentity() {
   if (!isAdminEmail(identity.email)) {
     throw new AppError(
       "ADMIN_REQUIRED",
-      "This operation is restricted to Docent administrators.",
+      "This operation is restricted to ChatGrain administrators.",
       403,
     );
   }

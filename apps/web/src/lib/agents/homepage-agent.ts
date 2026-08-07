@@ -12,7 +12,7 @@ import { defaultLlmModel } from "@/lib/llm/client";
 
 const homepageAgentStateKey = "homepage_agent";
 const homepageWorkspaceSlug = "docent-system";
-const managedSourceName = "Docent website";
+const managedSourceName = "ChatGrain website";
 
 type HomepageAgentState = {
   agentId?: string;
@@ -60,14 +60,14 @@ function trustedDevelopmentUrl(url: URL) {
 
 function homepagePrompt(siteUrl: string) {
   return `${defaultAgentSystemPrompt({
-    agentName: "Docent Support",
+    agentName: "ChatGrain Support",
     websiteUrl: siteUrl,
   })}
 
-### Docent support
-- Explain Docent's documented capabilities, setup, deployment, security, and limitations accurately.
+### ChatGrain support
+- Explain ChatGrain's documented capabilities, setup, deployment, security, and limitations accurately.
 - Never claim a planned feature is already available.
-- Prefer links to the relevant Docent page or section when the source provides one.`;
+- Prefer links to the relevant ChatGrain page or section when the source provides one.`;
 }
 
 function stateValue(value: Record<string, unknown> | null) {
@@ -141,7 +141,7 @@ export async function ensureHomepageAgent() {
   await db
     .insert(workspaces)
     .values({
-      name: "Docent System",
+      name: "ChatGrain System",
       slug: homepageWorkspaceSlug,
       plan: "system",
       settings: { internal: true },
@@ -152,7 +152,7 @@ export async function ensureHomepageAgent() {
     .from(workspaces)
     .where(eq(workspaces.slug, homepageWorkspaceSlug))
     .limit(1);
-  if (!workspace) throw new Error("Could not create the Docent system workspace.");
+  if (!workspace) throw new Error("Could not create the ChatGrain system workspace.");
 
   const previousState = await storedState();
   let [agent] = previousState.agentId
@@ -167,15 +167,15 @@ export async function ensureHomepageAgent() {
       .insert(agents)
       .values({
         workspaceId: workspace.id,
-        name: "Docent Support",
+        name: "ChatGrain Support",
         description:
-          "First-party support agent trained on the public Docent website.",
+          "First-party support agent trained on the public ChatGrain website.",
         status: "training",
         systemPrompt: homepagePrompt(siteUrl.origin),
         welcomeMessage:
-          "Hi! Ask me about Docent features, setup, deployment, or how grounded agents work.",
+          "Hi! Ask me about ChatGrain features, setup, deployment, or how grounded agents work.",
         fallbackMessage:
-          "I couldn’t find that in the current Docent website content.",
+          "I couldn’t find that in the current ChatGrain website content.",
         primaryColor: "#177e51",
         collectFeedback: true,
         showCitations: true,
@@ -190,14 +190,14 @@ export async function ensureHomepageAgent() {
     [agent] = await db
       .update(agents)
       .set({
-        name: "Docent Support",
+        name: "ChatGrain Support",
         description:
-          "First-party support agent trained on the public Docent website.",
+          "First-party support agent trained on the public ChatGrain website.",
         systemPrompt: homepagePrompt(siteUrl.origin),
         welcomeMessage:
-          "Hi! Ask me about Docent features, setup, deployment, or how grounded agents work.",
+          "Hi! Ask me about ChatGrain features, setup, deployment, or how grounded agents work.",
         fallbackMessage:
-          "I couldn’t find that in the current Docent website content.",
+          "I couldn’t find that in the current ChatGrain website content.",
         primaryColor: "#177e51",
         allowedDomains: domainAllowlist,
         collectFeedback: true,

@@ -17,12 +17,12 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Docent — Support answers from your knowledge",
-    template: "%s · Docent",
+    default: "ChatGrain: Support answers from your knowledge",
+    template: "%s · ChatGrain",
   },
   description:
-    "Build fast, grounded AI support agents from your website and documents. Self-hosted, open source, and yours.",
-  applicationName: "Docent",
+    "Build fast, grounded AI support agents from your website and documents. Self-hosted, private, and yours.",
+  applicationName: "ChatGrain",
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
   ),

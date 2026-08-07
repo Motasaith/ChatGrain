@@ -175,7 +175,7 @@ export default async function DashboardPage() {
             </span>
             <h2>Build your first support agent</h2>
             <p>
-              Start with your website. Docent will discover pages, extract the
+              Start with your website. ChatGrain will discover pages, extract the
               useful content, detect your brand, and prepare a widget.
             </p>
             <Link href="/dashboard/agents/new" className="app-primary-button">

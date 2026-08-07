@@ -10,13 +10,13 @@ const requiredProps = {
 };
 
 describe("widget branding", () => {
-  it("shows Docent attribution by default", () => {
+  it("shows ChatGrain attribution by default", () => {
     expect(
       renderToStaticMarkup(<ChatPanel {...requiredProps} />),
     ).toContain("Powered by");
   });
 
-  it("removes Docent attribution when an administrator disables it", () => {
+  it("removes ChatGrain attribution when an administrator disables it", () => {
     expect(
       renderToStaticMarkup(
         <ChatPanel {...requiredProps} showBranding={false} />,

@@ -25,7 +25,7 @@ export function AdminControls() {
     if (
       action === "cleanup-run" &&
       !window.confirm(
-        "Delete Docent data for non-admin accounts inactive beyond the retention period? This cannot be undone.",
+        "Delete ChatGrain data for non-admin accounts inactive beyond the retention period? This cannot be undone.",
       )
     ) {
       return;

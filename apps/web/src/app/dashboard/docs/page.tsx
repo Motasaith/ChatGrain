@@ -4,7 +4,7 @@ import { BookOpen, CheckCircle2, Code2, Database, ExternalLink, ShieldCheck } fr
 export default function DocsPage() {
   return (
     <>
-      <div className="page-heading"><div><span className="page-eyebrow">Documentation</span><h1>Run Docent locally</h1><p>A compact guide to development, training, deployment, and reliability.</p></div></div>
+      <div className="page-heading"><div><span className="page-eyebrow">Documentation</span><h1>Run ChatGrain locally</h1><p>A compact guide to development, training, deployment, and reliability.</p></div></div>
       <div className="docs-layout">
         <aside className="docs-toc">
           <b>On this page</b>

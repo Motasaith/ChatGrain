@@ -10,7 +10,7 @@ export function DatabaseSetup({ detail }: { detail?: string }) {
         <h2>Connect the local database</h2>
         <p>
           The interface is ready, but PostgreSQL has not been initialized yet.
-          Start the open-source services and push the schema.
+          Start the local services and push the schema.
         </p>
         <pre>
           <TerminalSquare size={14} />

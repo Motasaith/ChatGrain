@@ -462,7 +462,7 @@ export default async function AdminPage() {
 
       <div className="admin-two-column">
         <section className="app-card admin-list-card">
-          <div className="app-card-head"><div><h2>Audit trail</h2><p>Who changed what in Docent.</p></div><ShieldCheck size={18} /></div>
+          <div className="app-card-head"><div><h2>Audit trail</h2><p>Who changed what in ChatGrain.</p></div><ShieldCheck size={18} /></div>
           <div className="admin-log-list">
             {data.recentAudit.length ? data.recentAudit.map((entry) => (
               <div key={entry.id}>

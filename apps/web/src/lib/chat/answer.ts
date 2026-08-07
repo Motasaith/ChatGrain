@@ -71,7 +71,7 @@ const handoffAction: ChatUiAction = {
   type: "lead_form",
   title: "Ask the team to contact you",
   description:
-    "Share an email address or phone number and your message will appear in the website team's Docent inbox.",
+    "Share an email address or phone number and your message will appear in the website team's ChatGrain inbox.",
   submitLabel: "Request a reply",
 };
 

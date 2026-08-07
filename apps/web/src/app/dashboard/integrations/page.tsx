@@ -5,7 +5,7 @@ const integrations = [
   { name: "Transformers.js", detail: "Local multilingual-ready embedding runtime with a deterministic fallback.", status: "connected", icon: HardDrive },
   { name: "Ollama Cloud", detail: "Default grounded answer engine through Ollama's OpenAI-compatible cloud endpoint.", status: process.env.LLM_API_KEY ? "configured" : "needs key", icon: Braces },
   { name: "Sentry", detail: "Browser, server, route, and worker error reporting with an administrator issue feed.", status: process.env.SENTRY_DSN ? "configured" : "needs DSN", icon: TriangleAlert },
-  { name: "Clerk", detail: "Hosted authentication with per-user Docent workspaces and protected administration.", status: process.env.AUTH_PROVIDER === "clerk" ? "configured" : "development", icon: Radio },
+  { name: "Clerk", detail: "Hosted authentication with per-user ChatGrain workspaces and protected administration.", status: process.env.AUTH_PROVIDER === "clerk" ? "configured" : "development", icon: Radio },
 ] as const;
 
 export default function IntegrationsPage() {
