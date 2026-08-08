@@ -177,6 +177,10 @@ export async function ensureHomepageAgent() {
         fallbackMessage:
           "I couldn’t find that in the current ChatGrain website content.",
         primaryColor: "#177e51",
+        // Without this the shared chat panel falls back to a generic bubble,
+        // so ChatGrain's own widget shipped unbranded. Customer agents keep
+        // whatever the crawler detects for their site.
+        iconUrl: `${siteUrl.origin}/icon.svg`,
         collectFeedback: true,
         showCitations: true,
         strictMode: true,
@@ -199,6 +203,9 @@ export async function ensureHomepageAgent() {
         fallbackMessage:
           "I couldn’t find that in the current ChatGrain website content.",
         primaryColor: "#177e51",
+        // Applied on refresh too, so an agent created before the mark existed
+        // picks it up without anyone editing the database.
+        iconUrl: `${siteUrl.origin}/icon.svg`,
         allowedDomains: domainAllowlist,
         collectFeedback: true,
         showCitations: true,

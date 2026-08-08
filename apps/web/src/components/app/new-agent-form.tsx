@@ -24,13 +24,16 @@ type CreateResponse = {
 export function NewAgentForm({
   crawlLimit,
   isAdmin,
+  initialUrl = "",
 }: {
   crawlLimit: number;
   isAdmin: boolean;
+  /** Prefilled from the homepage hero, which submits the address here. */
+  initialUrl?: string;
 }) {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(initialUrl);
   const [pageLimit, setPageLimit] = useState(10_000);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

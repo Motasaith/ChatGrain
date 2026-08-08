@@ -3114,7 +3114,7 @@ button {
 }
 
 .chat-panel > footer {
-  padding: 0 0 7px;
+  padding: 0 0 6px;
   color: #a2aea7;
   background: #fff;
   font-size: 11px;
@@ -6100,7 +6100,28 @@ button {
   gap: 8px;
 }
 
-.home-support-teasers > button {
+.home-support-dismiss {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  justify-self: end;
+  padding: 0;
+  border: 1px solid #dbe3dd;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 6px 18px -10px rgb(16 35 28 / 45%);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.home-support-dismiss:hover {
+  background: #f2f5f2;
+  color: var(--ink);
+}
+
+.home-support-teasers > button:not(.home-support-dismiss) {
   padding: 11px 13px;
   border: 1px solid #dbe3dd;
   border-radius: 13px 13px 4px 13px;
@@ -8031,7 +8052,10 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 .chat-panel.chat-panel > footer {
-  font-size: 13px;
+  /* A footnote, not content: kept legible but out of the way. */
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  opacity: 0.85;
 }
 
 .chat-panel.chat-panel {
@@ -8051,6 +8075,35 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   width: 34px;
   height: 34px;
   margin: 0;
+}
+
+/* Labels are hidden by default: three of them plus the agent name do not fit
+   the 390px the widget usually gets. The container query below reveals them
+   whenever the panel is actually wide enough, so the wider dashboard preview
+   and desktop widget pages get words instead of guesswork. */
+.chat-header-actions em {
+  display: none;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.chat-panel {
+  container-type: inline-size;
+}
+
+@container (min-width: 430px) {
+  .chat-panel.chat-panel > header .chat-header-actions button {
+    width: auto;
+    height: 34px;
+    padding: 0 11px;
+    gap: 6px;
+  }
+
+  .chat-header-actions em {
+    display: inline;
+  }
 }
 
 .chat-panel.chat-panel > header .chat-header-actions button.active {
@@ -8073,7 +8126,9 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   content: "";
 }
 
-.chat-header-actions button em {
+/* The unread count badge. It moved from <em> to <i> when the buttons gained
+   text labels, which now own the <em>. */
+.chat-header-actions button i {
   position: absolute;
   top: -4px;
   right: -4px;

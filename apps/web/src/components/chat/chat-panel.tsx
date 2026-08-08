@@ -1178,6 +1178,7 @@ export function ChatPanel({
               type="button"
             >
               <LifeBuoy size={16} />
+              <em>Help</em>
             </button>
           ) : null}
           <button
@@ -1191,7 +1192,8 @@ export function ChatPanel({
             type="button"
           >
             <History size={16} />
-            {unreadCount ? <em>{Math.min(unreadCount, 99)}</em> : null}
+            <em>History</em>
+            {unreadCount ? <i>{Math.min(unreadCount, 99)}</i> : null}
           </button>
           <button
             aria-label="Start a new conversation"
@@ -1200,6 +1202,7 @@ export function ChatPanel({
             type="button"
           >
             <Plus size={17} />
+            <em>New</em>
           </button>
         </span>
       </header>

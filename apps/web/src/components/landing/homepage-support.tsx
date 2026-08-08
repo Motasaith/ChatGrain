@@ -83,6 +83,17 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
   const [open, setOpen] = useState(false);
   const [agent, setAgent] = useState<PublicAgent | null>(null);
   const [supportState, setSupportState] = useState<SupportState>("loading");
+  // Read lazily rather than in an effect. The prompts cannot render until the
+  // agent loads (itself an effect), so the server and the first client render
+  // both show nothing regardless of this value - no flash, no mismatch.
+  const [promptsDismissed, setPromptsDismissed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("chatgrain:prompts-dismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
@@ -130,6 +141,15 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
     };
   }, [agentId]);
 
+  function dismissPrompts() {
+    setPromptsDismissed(true);
+    try {
+      window.localStorage.setItem("chatgrain:prompts-dismissed", "1");
+    } catch {
+      // A blocked store only costs the preference, not the dismissal.
+    }
+  }
+
   useEffect(() => {
     function receiveUnread(event: MessageEvent) {
       if (
@@ -173,8 +193,17 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
       {/* The embedded widget has shown teasers and an attention pill since it
           shipped; the homepage ran a different shell without them, so ChatGrain
           was demonstrating a lesser widget than the one it hands out. */}
-      {!open && agent?.teaserMessages?.length ? (
+      {!open && !promptsDismissed && agent?.teaserMessages?.length ? (
         <div className="home-support-teasers">
+          <button
+            aria-label="Dismiss chat suggestions"
+            className="home-support-dismiss"
+            onClick={dismissPrompts}
+            title="Dismiss these messages"
+            type="button"
+          >
+            <X size={14} />
+          </button>
           {agent.teaserMessages.slice(0, 3).map((message) => (
             <button key={message} onClick={() => setOpen(true)} type="button">
               {message}
@@ -182,7 +211,7 @@ export function HomepageSupport({ agentId }: { agentId?: string }) {
           ))}
         </div>
       ) : null}
-      {!open && agent?.attentionMessage ? (
+      {!open && !promptsDismissed && agent?.attentionMessage ? (
         <span className="home-support-attention" aria-hidden>
           <i />
           {agent.attentionMessage}

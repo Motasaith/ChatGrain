@@ -57,17 +57,19 @@ export function GET(request: Request) {
     button img{width:34px;height:34px;object-fit:contain;border-radius:10px}button svg{width:25px;height:25px}
     button[data-unread]::after{position:absolute;top:-4px;right:-4px;display:grid;min-width:22px;height:22px;place-items:center;border:2px solid #fff;border-radius:999px;padding:0 5px;color:#fff;background:#d53f3f;content:attr(data-unread);font:700 11px system-ui}
     button:hover{transform:translateY(-2px)}button:focus-visible{outline:3px solid #91e0b5;outline-offset:3px}
-    iframe{position:fixed;z-index:2147483000;right:20px;bottom:90px;width:min(390px,calc(100vw - 28px));height:min(650px,calc(100vh - 118px));border:0;border-radius:20px;background:#fff;box-shadow:0 24px 80px rgba(16,35,28,.3);opacity:0;pointer-events:none;transform:translateY(12px) scale(.98);transform-origin:bottom right;transition:.2s ease}
+    iframe{position:fixed;z-index:2147483000;right:20px;bottom:90px;width:min(390px,calc(100vw - 28px));height:min(650px,calc(100dvh - 190px));border:0;border-radius:20px;background:#fff;box-shadow:0 24px 80px rgba(16,35,28,.3);opacity:0;pointer-events:none;transform:translateY(12px) scale(.98);transform-origin:bottom right;transition:.2s ease}
     .docent-teasers{position:fixed;z-index:2147483001;right:20px;bottom:94px;display:grid;width:min(360px,calc(100vw - 32px));gap:10px;opacity:0;pointer-events:none;transform:translateY(8px);transition:opacity .2s ease,transform .2s ease;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
     .docent-teasers p{margin:0 0 0 auto;border:1px solid rgba(25,45,36,.13);border-radius:14px;padding:14px 17px;color:#15251e;background:#fff;box-shadow:0 12px 35px rgba(16,35,28,.16);cursor:pointer;font-size:15px;line-height:1.4;pointer-events:auto}
     .docent-teasers p:first-child{margin-right:8px}
+    .docent-teasers-dismiss{justify-self:end;margin-right:8px;display:grid;place-items:center;width:26px;height:26px;border:1px solid rgba(25,45,36,.13);border-radius:50%;background:#fff;color:#5b6b62;box-shadow:0 6px 18px rgba(16,35,28,.14);cursor:pointer;font:400 17px/1 system-ui,-apple-system,sans-serif;padding:0;pointer-events:auto;transition:color .15s ease,background .15s ease}
+    .docent-teasers-dismiss:hover{background:#f2f5f2;color:#15251e}
     :host([data-teasers]) .docent-teasers{opacity:1;transform:none}
     .docent-attention{position:fixed;z-index:2147483001;right:86px;bottom:28px;display:flex;align-items:center;gap:7px;border:1px solid rgba(25,45,36,.12);border-radius:999px;padding:8px 12px;color:#17271f;background:#fff;box-shadow:0 10px 28px rgba(16,35,28,.16);opacity:0;pointer-events:none;transform:translateX(7px);transition:opacity .2s ease,transform .2s ease;font:700 13px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
     .docent-attention i{width:7px;height:7px;flex:none;border-radius:50%;background:#2fb37a;box-shadow:0 0 0 3px rgba(47,179,122,.18)}
     :host([data-attention]) .docent-attention{opacity:1;transform:none}
     :host([data-open]) iframe{opacity:1;pointer-events:auto;transform:none}
     :host([data-open]) .docent-teasers,:host([data-open]) .docent-attention{opacity:0;pointer-events:none}
-    @media(max-width:520px){iframe{inset:12px;width:calc(100vw - 24px);height:calc(100vh - 92px);border-radius:16px}button{right:16px;bottom:14px}.docent-teasers{right:16px;bottom:86px;width:calc(100vw - 32px)}.docent-attention{right:80px;bottom:22px}}
+    @media(max-width:520px){iframe{inset:12px;width:calc(100vw - 24px);height:calc(100dvh - 92px);border-radius:16px}button{right:16px;bottom:14px}.docent-teasers{right:16px;bottom:86px;width:calc(100vw - 32px)}.docent-attention{right:80px;bottom:22px}}
   \`;
   const frame = document.createElement('iframe');
   frame.title = 'Chat support';
@@ -96,26 +98,49 @@ export function GET(request: Request) {
   const teasers = document.createElement('aside');
   teasers.className = 'docent-teasers';
   teasers.setAttribute('aria-label', 'Chat suggestions');
+  const dismissButton = document.createElement('button');
+  dismissButton.type = 'button';
+  dismissButton.className = 'docent-teasers-dismiss';
+  dismissButton.setAttribute('aria-label', 'Dismiss chat suggestions');
+  dismissButton.title = 'Dismiss these messages';
+  dismissButton.textContent = '×';
   const attention = document.createElement('div');
   attention.className = 'docent-attention';
   // No emoji here on purpose: a hardcoded wave reads as a toy on a business
   // site and cannot be turned off by the operator. A small live dot signals
   // presence in a way that suits any brand.
   attention.innerHTML = '<i aria-hidden="true"></i><b></b>';
+  dismissButton.addEventListener('click', event => {
+    // Must not bubble into the teaser row, which opens the chat.
+    event.stopPropagation();
+    dismissMessages();
+  });
   const chatIcon = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>';
   let agent;
   let engaged = false;
+  let dismissed = false;
   try {
     engaged = localStorage.getItem('docent:engaged:' + agentId) === '1';
+    dismissed = localStorage.getItem('docent:dismissed:' + agentId) === '1';
   } catch {}
   const rememberEngagement = () => {
     engaged = true;
     try { localStorage.setItem('docent:engaged:' + agentId, '1'); } catch {}
   };
+  // Dismissal has to outlive the page, or the prompts reappear on every
+  // navigation and the close button reads as broken.
+  const dismissMessages = () => {
+    dismissed = true;
+    try { localStorage.setItem('docent:dismissed:' + agentId, '1'); } catch {}
+    root.removeAttribute('data-teasers');
+    root.removeAttribute('data-attention');
+  };
   const renderClosedMessage = () => {
     root.removeAttribute('data-teasers');
     root.removeAttribute('data-attention');
     if (!agent || root.hasAttribute('data-open')) return;
+    // Someone who closed the prompts wants the launcher and nothing else.
+    if (dismissed) return;
     if (engaged) {
       if (agent.attentionMessage) root.setAttribute('data-attention', '');
       return;
@@ -192,6 +217,8 @@ export function GET(request: Request) {
       frame.src = origin + '/widget/' + encodeURIComponent(agentId) + '?token=' + encodeURIComponent(data.embedToken);
       button.style.background = data.primaryColor || '#187c52';
       teasers.replaceChildren();
+      // Re-appended after every rebuild: replaceChildren() clears it too.
+      teasers.append(dismissButton);
       (Array.isArray(data.teaserMessages) ? data.teaserMessages : [])
         .slice(0, 3)
         .forEach(message => {
