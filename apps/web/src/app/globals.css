@@ -4807,6 +4807,85 @@ button {
   background: var(--green-dark);
 }
 
+/* Browser-style tab strip beneath the header. Scrolls rather than wraps, so
+   the content below never shifts down as tabs are opened. */
+.dashboard-tabs {
+  display: flex;
+  width: min(1380px, 100%);
+  margin-inline: auto;
+  padding: 0 30px;
+  overflow-x: auto;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+
+.dashboard-tab {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  max-width: 210px;
+  padding: 9px 10px 9px 13px;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 130ms ease, color 130ms ease;
+}
+
+.dashboard-tab > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dashboard-tab:hover {
+  background: color-mix(in srgb, var(--green) 7%, transparent);
+  color: var(--green-dark);
+}
+
+.dashboard-tab.active {
+  border-color: var(--line);
+  background: var(--paper);
+  color: var(--green-dark);
+  font-weight: 600;
+  /* Covers the strip's own border so the tab joins the page below it. */
+  box-shadow: 0 1px 0 0 var(--paper);
+}
+
+.dashboard-tab > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: background 120ms ease, opacity 120ms ease;
+}
+
+.dashboard-tab > button:hover {
+  background: color-mix(in srgb, #a3271c 12%, transparent);
+  color: #a3271c;
+  opacity: 1;
+}
+
+@media (max-width: 720px) {
+  .dashboard-tabs {
+    padding: 0 16px;
+  }
+}
+
 .app-page {
   width: min(1380px, 100%);
   margin-inline: auto;

@@ -2,6 +2,7 @@
 
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
+import { DashboardTabs } from "@/components/app/dashboard-tabs";
 import { usePathname } from "next/navigation";
 import {
   Activity,
@@ -197,6 +198,7 @@ export function AppShell({
             </Link>
           </div>
         </header>
+        <DashboardTabs />
         <div className="app-page">{children}</div>
       </div>
 
