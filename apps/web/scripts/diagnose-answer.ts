@@ -19,11 +19,17 @@ function heading(text: string) {
 }
 
 async function main() {
-  const question = process.argv[2];
-  const urlNeedle = process.argv[3];
+  const args = process.argv.slice(2);
+  const agentNeedle = args
+    .find((value) => value.startsWith("--agent="))
+    ?.slice("--agent=".length)
+    .toLowerCase();
+  const positional = args.filter((value) => !value.startsWith("--"));
+  const question = positional[0];
+  const urlNeedle = positional[1];
   if (!question) {
     console.error(
-      'Usage: npx tsx --tsconfig tsconfig.voice.json scripts/diagnose-answer.ts "<question>" [url-substring]',
+      'Usage: npx tsx --tsconfig tsconfig.voice.json scripts/diagnose-answer.ts "<question>" [url-substring] [--agent=<name or id>]',
     );
     process.exitCode = 1;
     return;
@@ -60,10 +66,29 @@ async function main() {
   }
   if (!agentRows.length) return;
 
-  // Largest corpus is almost always the one being asked about.
-  const agent = [...agentRows].sort(
-    (a, b) => Number(b.chunks) - Number(a.chunks),
-  )[0];
+  // Picking the largest corpus guesses wrong the moment an account has more
+  // than one big agent, so an explicit --agent always wins.
+  const matched = agentNeedle
+    ? agentRows.filter(
+        (row) =>
+          row.id.toLowerCase() === agentNeedle ||
+          row.name.toLowerCase().includes(agentNeedle),
+      )
+    : [];
+  if (agentNeedle && !matched.length) {
+    console.error(`No agent matches "${agentNeedle}".`);
+    process.exitCode = 1;
+    return;
+  }
+  const agent = matched.length
+    ? matched.sort((a, b) => Number(b.chunks) - Number(a.chunks))[0]
+    : [...agentRows].sort((a, b) => Number(b.chunks) - Number(a.chunks))[0];
+  if (!agentNeedle) {
+    console.log(
+      "",
+      "(No --agent given: defaulting to the largest corpus. Pass --agent=<name> to pick.)",
+    );
+  }
   heading(`Diagnosing: ${agent.name}`);
   console.log(`question: ${question}`);
   // Term selection decides more than half the confidence score, so show what
@@ -128,6 +153,13 @@ async function main() {
     console.log(`   ${hit.title}`);
     console.log(`   ${hit.url ?? "(no url)"}`);
   });
+  const distinctDocuments = new Set(hits.map((hit) => hit.documentId)).size;
+  console.log(
+    `${distinctDocuments} distinct page(s) across ${hits.length} hits.` +
+      (distinctDocuments < 2 && hits.length > 2
+        ? " Evidence is concentrated on one page."
+        : ""),
+  );
 
   // Stage 3: the grounding gate, using the same formula as the answer path.
   const best = hits[0];

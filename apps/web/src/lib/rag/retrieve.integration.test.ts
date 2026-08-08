@@ -154,6 +154,48 @@ describe("migrations", () => {
   });
 });
 
+describe("duplicate chunks", () => {
+  it("does not spend several evidence slots on identical text", async () => {
+    // Observed in production: seven of the top ten hits were one page, two of
+    // them with byte-identical scores. Every duplicate displaces a different
+    // page from the evidence the model gets to read.
+    const documentId = "55555555-5555-5555-5555-555555555555";
+    const repeated =
+      "Raspberry Pi Network Time Server. Sync clocks over NTP from a GPS module.";
+    await client.query(
+      `insert into documents (id, source_id, canonical_url, title, content_hash)
+       values ($1, $2, $3, $4, $5)`,
+      [
+        documentId,
+        SOURCE,
+        "https://projects-raspberry.com/ntp-server/",
+        "Raspberry Pi Network Time Server",
+        "hash-ntp",
+      ],
+    );
+    for (const position of [0, 1, 2]) {
+      await client.query(
+        `insert into chunks (document_id, source_id, agent_id, position, content, token_count, embedding)
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          documentId,
+          SOURCE,
+          AGENT,
+          position,
+          repeated,
+          20,
+          JSON.stringify(fakeEmbedding(repeated)),
+        ],
+      );
+    }
+
+    const { hybridRetrieve } = await import("./retrieve");
+    const hits = await hybridRetrieve(AGENT, "network time server ntp", 6);
+    const identical = hits.filter((hit) => hit.content === repeated);
+    expect(identical).toHaveLength(1);
+  });
+});
+
 describe("hybridRetrieve against a real corpus", () => {
   it("finds the right page when the query is all site words plus one topic", async () => {
     const { hybridRetrieve } = await import("./retrieve");

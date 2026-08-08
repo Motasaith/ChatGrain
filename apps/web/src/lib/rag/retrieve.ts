@@ -301,7 +301,17 @@ export async function hybridRetrieve(
     }
   });
 
-  return [...combined.values()]
+  // Identical text wins identical scores, so duplicates arrive adjacent and
+  // each one displaces a different page from the evidence the model reads.
+  // Deduplicate on content rather than chunk id: the copies are separate rows.
+  const byContent = new Map<string, RetrievalHit>();
+  for (const hit of combined.values()) {
+    const key = `${hit.documentId}:${hit.content.replace(/\s+/g, " ").trim()}`;
+    const existing = byContent.get(key);
+    if (!existing || hit.score > existing.score) byContent.set(key, hit);
+  }
+
+  return [...byContent.values()]
     .map((hit) => {
       hit.rankScore =
         hit.vectorScore * 0.45 +
