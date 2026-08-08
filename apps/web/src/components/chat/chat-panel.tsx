@@ -28,6 +28,7 @@ import {
   VoiceNotePlayer,
   VoiceNoteRecorder,
 } from "@/components/chat/voice-note";
+import { messageTimeLabel } from "@/lib/chat/message-time";
 import type { StartCallOptions } from "@/lib/voice/client/call";
 
 type ChatMessage = {
@@ -1003,6 +1004,7 @@ export function ChatPanel({
           role: "user",
           content,
           attachments: localAttachments,
+          createdAt: new Date().toISOString(),
         },
       ]);
       setPendingAttachments([]);
@@ -1051,6 +1053,7 @@ export function ChatPanel({
             citations: payload.data!.citations,
             action: payload.data!.action,
             followUps: payload.data!.followUps,
+            createdAt: new Date().toISOString(),
           },
         ]);
       }
@@ -1435,6 +1438,14 @@ export function ChatPanel({
                     </div>
                   ) : null}
                 </div>
+                {message.createdAt ? (
+                  <time
+                    className="chat-message-time"
+                    dateTime={message.createdAt}
+                  >
+                    {messageTimeLabel(message.createdAt)}
+                  </time>
+                ) : null}
                 {message.role === "assistant" && message.citations?.length ? (
                   (() => {
                     // Older stored messages can hold the same chunk twice, so

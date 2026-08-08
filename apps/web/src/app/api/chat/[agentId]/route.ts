@@ -298,6 +298,7 @@ export async function POST(request: Request, context: RouteContext) {
         // exist only on this response, so reopening the chat dropped the form
         // out from under whoever was filling it in.
         action: "action" in result ? (result.action ?? null) : null,
+        followUps: "followUps" in result ? (result.followUps ?? []) : [],
         grounded: result.grounded,
         latencyMs,
       })

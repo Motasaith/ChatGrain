@@ -1,0 +1,1 @@
+ALTER TABLE "messages" ADD COLUMN "follow_ups" jsonb DEFAULT '[]'::jsonb;

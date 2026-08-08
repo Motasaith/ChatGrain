@@ -10,6 +10,7 @@ import { count, desc, eq, inArray } from "drizzle-orm";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, conversations, sources } from "@/lib/db/schema";
+import { AgentDeleteButton } from "@/components/app/agent-delete-button";
 
 export default async function AgentsPage() {
   const workspace = await getWorkspaceContext();
@@ -59,7 +60,10 @@ export default async function AgentsPage() {
       ) : (
         <div className="agent-cards">
           {list.map((agent) => (
-            <Link href={`/dashboard/agents/${agent.id}`} key={agent.id}>
+            // The delete control is a sibling of the link, never nested inside
+            // it, so clicking either one cannot depend on hit testing.
+            <div className="agent-card-wrap" key={agent.id}>
+            <Link href={`/dashboard/agents/${agent.id}`}>
               <div className="agent-card-top">
                 <span style={{ background: agent.primaryColor }}>
                   {agent.logoUrl || agent.iconUrl ? (
@@ -83,6 +87,18 @@ export default async function AgentsPage() {
                 } chats</span>
               </div>
             </Link>
+            <AgentDeleteButton
+              agentId={agent.id}
+              agentName={agent.name}
+              conversationCount={
+                conversationCounts.find((row) => row.agentId === agent.id)
+                  ?.value ?? 0
+              }
+              sourceCount={
+                sourceCounts.find((row) => row.agentId === agent.id)?.value ?? 0
+              }
+            />
+            </div>
           ))}
         </div>
       )}

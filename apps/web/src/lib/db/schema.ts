@@ -392,6 +392,10 @@ export const messages = pgTable(
       description: string;
       submitLabel: string;
     } | null>(),
+    // Stored for the same reason as `action` above: they were only ever on the
+    // live response, so the first history reload made the chips vanish a
+    // second after the answer arrived.
+    followUps: jsonb("follow_ups").$type<string[]>().default([]),
     grounded: boolean("grounded"),
     latencyMs: integer("latency_ms"),
     inputTokens: integer("input_tokens"),

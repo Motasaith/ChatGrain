@@ -1845,7 +1845,115 @@ button {
   gap: 15px;
 }
 
-.agent-cards > a {
+/* The card is a link with the delete control beside it, so the wrapper is the
+   grid item and the link fills it. */
+.agent-card-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.agent-card-wrap > a {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-card-delete {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: 140ms ease;
+}
+
+/* Revealed on hover so it does not compete with the card, but always present
+   for keyboard and touch users. */
+.agent-card-wrap:hover .agent-card-delete,
+.agent-card-delete:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .agent-card-delete {
+    opacity: 1;
+  }
+}
+
+.agent-card-delete:hover {
+  border-color: #e4b4ac;
+  background: #fdecea;
+  color: #a3271c;
+}
+
+.agent-delete-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgb(12 26 18 / 45%);
+}
+
+.agent-delete-dialog {
+  width: min(430px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 22px;
+  background: #fff;
+  box-shadow: 0 18px 45px rgb(12 26 18 / 22%);
+}
+
+.agent-delete-dialog h2 {
+  margin: 0 0 8px;
+  font-size: 1.0625rem;
+}
+
+.agent-delete-dialog > p {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.agent-delete-error {
+  margin: 10px 0 0;
+  color: #a3271c;
+  font-size: 0.8125rem;
+}
+
+.agent-delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+  gap: 8px;
+}
+
+.agent-delete-actions > button:first-child {
+  padding: 9px 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.agent-cards > a,
+.agent-card-wrap > a {
   min-width: 0;
   border: 1px solid var(--line);
   border-radius: 15px;
@@ -1855,7 +1963,8 @@ button {
   transition: 160ms ease;
 }
 
-.agent-cards > a:hover {
+.agent-cards > a:hover,
+.agent-card-wrap > a:hover {
   border-color: var(--line-strong);
   box-shadow: var(--shadow-md);
   transform: translateY(-2px);
@@ -9656,6 +9765,20 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 /* Starter question chips ------------------------------------------------- */
+
+.chat-message-time {
+  display: block;
+  margin-top: 3px;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  opacity: 0.75;
+}
+
+/* Visitor messages sit on the right, so their time follows them. */
+.chat-line-user .chat-message-time {
+  text-align: right;
+}
 
 .chat-followups {
   display: flex;
