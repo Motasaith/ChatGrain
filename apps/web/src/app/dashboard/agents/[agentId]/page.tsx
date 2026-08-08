@@ -1,4 +1,4 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AgentStudio } from "@/components/app/agent-studio";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
@@ -51,13 +51,24 @@ export default async function AgentPage({
     .leftJoin(documents, eq(documents.sourceId, sources.id))
     .where(eq(sources.agentId, agentId))
     .groupBy(sources.id);
+  // Falling back to the newest job matters: ?job= is only present right after
+  // a crawl is started, so switching tabs or reopening the agent used to wipe
+  // the sync results off the page even though they were still in the database.
+  const sourceIds = sourceList.map((row) => row.id);
   const [job] = query.job
     ? await db
         .select()
         .from(crawlJobs)
         .where(eq(crawlJobs.id, query.job))
         .limit(1)
-    : [undefined];
+    : sourceIds.length
+      ? await db
+          .select()
+          .from(crawlJobs)
+          .where(inArray(crawlJobs.sourceId, sourceIds))
+          .orderBy(desc(crawlJobs.createdAt))
+          .limit(1)
+      : [undefined];
   const pinned = await db
     .select()
     .from(pinnedAnswers)

@@ -2924,7 +2924,7 @@ button {
   place-items: center;
   border: 1px solid #dce7df;
   border-radius: 8px;
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
   background: #fff;
 }
 
@@ -2950,7 +2950,7 @@ button {
   display: inline-flex;
   align-items: baseline;
   gap: 3px;
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
   font-weight: 700;
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -3241,11 +3241,19 @@ button {
   resize: none;
   color: #172b23;
   background: #fff;
-  caret-color: var(--chat-accent, var(--green));
+  caret-color: var(--chat-accent-ink, var(--green));
   font-family: inherit;
   font-size: 12.5px;
   line-height: 1.55;
 }
+
+/* Clearing the placeholder on focus is a second signal the field is live,
+   alongside the caret. Some visitors never see a caret at all - a stylus or
+   an on-screen keyboard may not paint one. */
+.chat-composer textarea:focus::placeholder {
+  color: transparent;
+}
+
 
 .chat-composer textarea:focus {
   border-color: var(--chat-accent, var(--green));
@@ -8523,7 +8531,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 .chat-history-list i {
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
   font-size: 13px;
   font-style: normal;
   font-weight: 750;
@@ -8668,7 +8676,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 .chat-help-actions > button > svg {
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
 }
 
 .chat-help-actions span,
@@ -8712,7 +8720,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   height: 22px;
   place-items: center;
   border-radius: 999px;
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
   background: color-mix(
     in srgb,
     var(--chat-accent, var(--green)) 11%,
@@ -8737,7 +8745,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 .chat-help-tickets > button > svg {
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
 }
 
 .chat-help-tickets > button > span {
@@ -8828,7 +8836,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 .chat-operator-label {
   display: inline-block;
   margin: 0 0 4px 2px;
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
   font-size: 13px;
   font-weight: 750;
 }
@@ -8948,7 +8956,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 .chat-panel.chat-panel .chat-composer-tools button:hover {
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
   background: color-mix(
     in srgb,
     var(--chat-accent, var(--green)) 8%,
@@ -10006,7 +10014,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
     var(--chat-accent, var(--green)) 8%,
     transparent
   );
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
   cursor: pointer;
   font: inherit;
   font-size: 0.8rem;
@@ -10156,7 +10164,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
    the control inverts to stay legible. */
 .voice-note-player.is-accent .voice-note-play {
   background: rgb(255 255 255 / 92%);
-  color: var(--chat-accent, var(--green));
+  color: var(--chat-accent-ink, var(--green));
 }
 
 .voice-note-body {

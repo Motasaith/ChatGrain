@@ -29,6 +29,7 @@ import {
   VoiceNotePlayer,
   VoiceNoteRecorder,
 } from "@/components/chat/voice-note";
+import { readableAccent, readableTextColor } from "@/lib/chat/accent";
 import { messageTimeLabel } from "@/lib/chat/message-time";
 import { SupportForm, type SupportFormKind } from "@/components/chat/support-form";
 import type { StartCallOptions } from "@/lib/voice/client/call";
@@ -423,22 +424,6 @@ function availabilityNote(availability?: {
   return "Leave a message and we will reply.";
 }
 
-function readableTextColor(hex: string) {
-  const channels = hex
-    .replace("#", "")
-    .match(/.{2}/g)
-    ?.map((value) => Number.parseInt(value, 16));
-  if (!channels || channels.length !== 3) return "#ffffff";
-  const [red, green, blue] = channels.map((channel) => {
-    const value = channel / 255;
-    return value <= 0.03928
-      ? value / 12.92
-      : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * red + 0.7152 * green + 0.0722 * blue > 0.48
-    ? "#15251d"
-    : "#ffffff";
-}
 
 export function ChatPanel({
   agentId,
@@ -522,6 +507,10 @@ export function ChatPanel({
   const panelStyle = {
     "--chat-accent": primaryColor,
     "--chat-accent-contrast": contrastColor,
+    // Separate token for anywhere the accent is drawn ON the light panel -
+    // chip text, the caret, links. The raw accent is chosen to sit behind
+    // white header text, so it can be near-white and vanish here.
+    "--chat-accent-ink": readableAccent(primaryColor),
   } as CSSProperties;
   const isActive = active ?? embeddedActive;
 

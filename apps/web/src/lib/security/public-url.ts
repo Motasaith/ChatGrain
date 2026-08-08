@@ -1,4 +1,5 @@
 import { lookup } from "node:dns/promises";
+import { normalizeUrlInput } from "./normalize-url";
 import { isIP } from "node:net";
 import { CookieJar } from "tough-cookie";
 import { AppError } from "@/lib/http/errors";
@@ -33,7 +34,9 @@ export async function validatePublicUrl(
 ) {
   let url: URL;
   try {
-    url = new URL(value);
+    // Normalised here rather than in each form, so every entry point - the
+    // studio, the hero field, the API - accepts a bare domain identically.
+    url = new URL(normalizeUrlInput(value));
   } catch {
     throw new AppError("INVALID_URL", "Enter a valid URL.", 422);
   }
