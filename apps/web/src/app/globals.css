@@ -9766,6 +9766,83 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 
 /* Starter question chips ------------------------------------------------- */
 
+.business-hours {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+  padding-top: 12px;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.business-hours .toggle-row {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.business-hours .toggle-row b {
+  display: block;
+  font-size: 0.8125rem;
+}
+
+.business-hours .toggle-row small,
+.business-hours .field small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.business-hours-days {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.business-hours-day {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8125rem;
+}
+
+.business-hours-day > label {
+  display: inline-flex;
+  align-items: center;
+  width: 62px;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.business-hours-day input[type="time"] {
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.business-hours-day > span {
+  color: var(--muted);
+}
+
+.business-hours-day > em {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-style: normal;
+}
+
+.business-hours-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
 .chat-support-form {
   display: flex;
   flex-direction: column;

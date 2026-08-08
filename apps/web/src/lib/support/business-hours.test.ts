@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   defaultBusinessHours,
   isWithinBusinessHours,
+  minutesToTime,
   nextOpening,
+  normaliseBusinessHours,
+  timeToMinutes,
   type BusinessHours,
 } from "./business-hours";
 
@@ -92,5 +95,52 @@ describe("nextOpening", () => {
     expect(nextOpening({ timezone: "UTC", days: [[], [], [], [], [], [], []] }))
       .toBeNull();
     expect(nextOpening(null)).toBeNull();
+  });
+});
+
+describe("time conversion", () => {
+  it("round-trips a time input", () => {
+    expect(minutesToTime(540)).toBe("09:00");
+    expect(minutesToTime(1_020)).toBe("17:00");
+    expect(timeToMinutes("09:00")).toBe(540);
+    expect(timeToMinutes("17:30")).toBe(1_050);
+  });
+
+  it("pads a single-digit hour", () => {
+    expect(minutesToTime(65)).toBe("01:05");
+  });
+
+  it("rejects nonsense rather than storing it", () => {
+    expect(timeToMinutes("25:00")).toBeNull();
+    expect(timeToMinutes("09:70")).toBeNull();
+    expect(timeToMinutes("")).toBeNull();
+    expect(timeToMinutes("9am")).toBeNull();
+  });
+});
+
+describe("normaliseBusinessHours", () => {
+  it("drops a range that ends before it starts", () => {
+    const result = normaliseBusinessHours({
+      timezone: "UTC",
+      days: [[], [{ start: 1_020, end: 540 }, { start: 540, end: 1_020 }], [], [], [], [], []],
+    });
+    expect(result?.days[1]).toHaveLength(1);
+    expect(result?.days[1][0]).toEqual({ start: 540, end: 1_020 });
+  });
+
+  it("treats an all-closed schedule as no schedule", () => {
+    // Otherwise availability would report "outside hours" forever, implying
+    // hours that do not exist.
+    expect(
+      normaliseBusinessHours({ timezone: "UTC", days: [[], [], [], [], [], [], []] }),
+    ).toBeNull();
+  });
+
+  it("always returns seven days", () => {
+    const result = normaliseBusinessHours({
+      timezone: "UTC",
+      days: [[], [{ start: 540, end: 1_020 }]],
+    });
+    expect(result?.days).toHaveLength(7);
   });
 });

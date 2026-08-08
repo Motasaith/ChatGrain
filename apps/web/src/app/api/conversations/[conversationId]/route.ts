@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { notifyTicketReply } from "@/lib/support/notify";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
@@ -76,6 +77,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ co
           .where(eq(tickets.conversationId, conversationId));
       }
     });
+
+    // Outside the transaction on purpose: the reply is already committed, and
+    // a mail server timing out must not roll back an operator's message.
+    if (input.operatorMessage) {
+      await notifyTicketReply(conversationId, input.operatorMessage);
+    }
     return NextResponse.json(
       {
         data: {

@@ -28,6 +28,21 @@ const updateAgentSchema = z
     showBranding: z.boolean(),
     collectFeedback: z.boolean(),
     followUpSuggestions: z.boolean(),
+    businessHours: z
+      .object({
+        timezone: z.string().trim().min(1).max(60),
+        days: z
+          .array(
+            z.array(
+              z.object({
+                start: z.number().int().min(0).max(1_440),
+                end: z.number().int().min(0).max(1_440),
+              }),
+            ),
+          )
+          .length(7),
+      })
+      .nullable(),
     showCitations: z.boolean(),
     strictMode: z.boolean(),
     allowedDomains: z.array(z.string().trim().min(1).max(255)).max(100),

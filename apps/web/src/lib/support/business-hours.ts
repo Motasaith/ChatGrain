@@ -112,3 +112,44 @@ export function nextOpening(
   }
   return null;
 }
+
+/** "09:00" from minutes-since-midnight, for an <input type="time">. */
+export function minutesToTime(minutes: number) {
+  const clamped = Math.max(0, Math.min(24 * 60, Math.round(minutes)));
+  const hour = Math.floor(clamped / 60);
+  const minute = clamped % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/** Minutes since midnight from an <input type="time">, or null if unusable. */
+export function timeToMinutes(value: string) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+/**
+ * Cleans a schedule coming from the editor before it is stored.
+ *
+ * Drops ranges that end at or before they start, which is what an unfinished
+ * edit looks like, and would otherwise be stored as a day that never opens
+ * while still reading as configured.
+ */
+export function normaliseBusinessHours(
+  hours: BusinessHours,
+): BusinessHours | null {
+  const days = Array.from({ length: 7 }, (_, index) =>
+    (hours.days[index] ?? [])
+      .filter((range) => range.end > range.start)
+      .map((range) => ({
+        start: Math.max(0, Math.min(1_440, range.start)),
+        end: Math.max(0, Math.min(1_440, range.end)),
+      })),
+  );
+  // Nothing open at all is "no schedule", not a schedule of closed days.
+  if (!days.some((day) => day.length)) return null;
+  return { timezone: hours.timezone || "UTC", days };
+}

@@ -10,8 +10,14 @@ import { logger } from "@/lib/observability/logger";
  * because a notification could not be sent would be a far worse outcome than a
  * visitor not getting an email.
  *
- * Set SUPPORT_EMAIL_PROVIDER=resend with RESEND_API_KEY, or =smtp with
- * SMTP_URL, plus SUPPORT_EMAIL_FROM, to turn it on.
+ * Two providers, both usable without a paid service:
+ *
+ *   SUPPORT_EMAIL_PROVIDER=smtp    SMTP_URL=smtp://user:pass@host:587
+ *   SUPPORT_EMAIL_PROVIDER=resend  RESEND_API_KEY=...
+ *
+ * plus SUPPORT_EMAIL_FROM. SMTP works against anything that speaks the
+ * protocol - a self-hosted Postfix, a docker-mailserver, or a free relay -
+ * so nothing here ties the install to a vendor.
  */
 
 export type OutboundEmail = {
@@ -27,6 +33,29 @@ export function mailerConfigured() {
   if (provider === "resend") return !!process.env.RESEND_API_KEY?.trim();
   if (provider === "smtp") return !!process.env.SMTP_URL?.trim();
   return false;
+}
+
+/**
+ * Sends through any SMTP server.
+ *
+ * The transport is created per send rather than cached: notifications are
+ * infrequent, and a long-lived pooled connection would be one more thing to
+ * fail silently after the mail server restarts.
+ */
+async function sendViaSmtp(email: OutboundEmail) {
+  const { createTransport } = await import("nodemailer");
+  const transport = createTransport(process.env.SMTP_URL?.trim() ?? "");
+  try {
+    await transport.sendMail({
+      from: process.env.SUPPORT_EMAIL_FROM?.trim(),
+      to: email.to,
+      subject: email.subject,
+      text: email.text,
+      ...(email.replyTo ? { replyTo: email.replyTo } : {}),
+    });
+  } finally {
+    transport.close();
+  }
 }
 
 async function sendViaResend(email: OutboundEmail) {
@@ -72,9 +101,11 @@ export async function sendSupportEmail(email: OutboundEmail): Promise<boolean> {
       await sendViaResend(email);
       return true;
     }
-    // SMTP would need a transport dependency; deliberately unimplemented
-    // rather than half-implemented, so the log says exactly what is missing.
-    logger.warn({ provider }, "Support email provider not implemented");
+    if (provider === "smtp") {
+      await sendViaSmtp(email);
+      return true;
+    }
+    logger.warn({ provider }, "Unknown support email provider");
     return false;
   } catch (error) {
     logger.error({ error }, "Support email failed to send");

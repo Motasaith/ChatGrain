@@ -27,7 +27,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { ChatPanel } from "@/components/chat/chat-panel";
+import { BusinessHoursEditor } from "@/components/app/business-hours-editor";
 import { deleteConfirmationMatches } from "@/lib/agents/confirm-delete";
+import { normaliseBusinessHours, type BusinessHours } from "@/lib/support/business-hours";
 
 type Agent = {
   id: string;
@@ -49,6 +51,7 @@ type Agent = {
   showBranding: boolean;
   collectFeedback: boolean;
   followUpSuggestions: boolean;
+  businessHours: BusinessHours | null;
   showCitations: boolean;
   strictMode: boolean;
   allowedDomains: string[];
@@ -250,6 +253,7 @@ export function AgentStudio({
         ...(isAdmin ? { showBranding: agent.showBranding } : {}),
         collectFeedback: agent.collectFeedback,
         followUpSuggestions: agent.followUpSuggestions,
+        businessHours: agent.businessHours,
         showCitations: agent.showCitations,
         strictMode: agent.strictMode,
         allowedDomains: agent.allowedDomains,
@@ -876,6 +880,15 @@ export function AgentStudio({
             <Toggle label="Show citations" detail="Link answers to original pages." value={agent.showCitations} onChange={(value) => patch("showCitations", value)} />
             <Toggle label="Collect feedback" detail="Ask visitors if answers helped." value={agent.collectFeedback} onChange={(value) => patch("collectFeedback", value)} />
             <Toggle label="Suggest follow-up questions" detail="Offer related questions after each answer." value={agent.followUpSuggestions} onChange={(value) => patch("followUpSuggestions", value)} />
+            <BusinessHoursEditor
+              onChange={(next) =>
+                patch(
+                  "businessHours",
+                  next ? normaliseBusinessHours(next) : null,
+                )
+              }
+              value={agent.businessHours}
+            />
             <label className="field">
               <span>Answer engine</span>
               <select value={agent.modelProvider} onChange={(event) => patch("modelProvider", event.target.value)}>
