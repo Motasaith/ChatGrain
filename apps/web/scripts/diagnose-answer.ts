@@ -31,8 +31,9 @@ async function main() {
 
   const { db } = await import("../src/lib/db/client");
   const { sql } = await import("drizzle-orm");
-  const { hybridRetrieve, retrievalQueryTerms } = await import(
-    "../src/lib/rag/retrieve"
+  const { hybridRetrieve } = await import("../src/lib/rag/retrieve");
+  const { retrievalQueryTerms, siteStopWords } = await import(
+    "../src/lib/rag/query-terms"
   );
 
   const agentRows = await db.execute<{
@@ -65,7 +66,24 @@ async function main() {
   )[0];
   heading(`Diagnosing: ${agent.name}`);
   console.log(`question: ${question}`);
-  console.log(`query terms: ${JSON.stringify(retrievalQueryTerms(question))}`);
+  // Term selection decides more than half the confidence score, so show what
+  // survived and what the site's own vocabulary removed.
+  const rootUrls = await db.execute<{ root_url: string | null }>(sql`
+    select root_url from sources where agent_id = ${agent.id}::uuid
+  `);
+  const siteWords = siteStopWords(
+    rootUrls.map((row) => row.root_url).filter((url): url is string => !!url),
+  );
+  console.log(`site words (dropped when other terms survive): ${
+    JSON.stringify([...siteWords])
+  }`);
+  const terms = retrievalQueryTerms(question, { siteWords });
+  console.log(`query terms: ${JSON.stringify(terms)}`);
+  if (!terms.length) {
+    console.log(
+      "WARNING: no terms survived. Lexical and title scoring both go to zero.",
+    );
+  }
 
   // Stage 1: is the page in the index at all?
   if (urlNeedle) {

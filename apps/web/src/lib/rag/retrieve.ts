@@ -9,6 +9,7 @@ import {
 import { db } from "@/lib/db/client";
 import { chunks, documents, sources } from "@/lib/db/schema";
 import { embedText } from "./embeddings";
+import { retrievalQueryTerms, siteStopWords } from "./query-terms";
 
 export type RetrievalHit = {
   chunkId: string;
@@ -25,73 +26,35 @@ export type RetrievalHit = {
   rankScore: number;
 };
 
-const retrievalStopWords = new Set([
-  "the",
-  "and",
-  "what",
-  "where",
-  "when",
-  "which",
-  "with",
-  "from",
-  "this",
-  "that",
-  "you",
-  "your",
-  "our",
-  "are",
-  "was",
-  "were",
-  "will",
-  "does",
-  "its",
-  "how",
-  "can",
-  "could",
-  "would",
-  "please",
-  "give",
-  "have",
-  "about",
-  "need",
-  "want",
-  "build",
-  "final",
-  "year",
-  "tell",
-  "something",
-  "uses",
-  "using",
-  "more",
-  "information",
-  "info",
-  "because",
-  "working",
-  "similar",
-  "related",
-  "enlist",
-  "list",
-  "titles",
-  "urls",
-  "article",
-  "articles",
-  "website",
-  "site",
-  "know",
-  "looking",
-  "project",
-  "projects",
-  "raspberry",
-]);
+/**
+ * The site's own vocabulary, cached per agent.
+ *
+ * Fetching the source roots on every message would add a query to a path that
+ * already runs an embedding plus three searches, and a site's domain changes
+ * about never.
+ */
+const siteWordCache = new Map<string, { words: Set<string>; expiresAt: number }>();
+const SITE_WORD_TTL_MS = 5 * 60_000;
 
-export function retrievalQueryTerms(query: string) {
-  return [
-    ...new Set(
-      (query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(
-        (term) => !retrievalStopWords.has(term),
-      ),
-    ),
-  ].slice(0, 24);
+export function clearSiteWordCache() {
+  siteWordCache.clear();
+}
+
+async function agentSiteWords(agentId: string) {
+  const cached = siteWordCache.get(agentId);
+  if (cached && cached.expiresAt > Date.now()) return cached.words;
+  const rows = await db
+    .select({ rootUrl: sources.rootUrl })
+    .from(sources)
+    .where(eq(sources.agentId, agentId));
+  const words = siteStopWords(
+    rows.map((row) => row.rootUrl).filter((url): url is string => Boolean(url)),
+  );
+  siteWordCache.set(agentId, {
+    words,
+    expiresAt: Date.now() + SITE_WORD_TTL_MS,
+  });
+  return words;
 }
 
 export async function findLatestIndexedLink(agentId: string) {
@@ -161,8 +124,13 @@ export async function hybridRetrieve(
   query: string,
   limit = 6,
 ): Promise<RetrievalHit[]> {
-  const embedding = await embedText(query);
-  const queryTerms = retrievalQueryTerms(query);
+  // The embedding and the site vocabulary are independent, and the cached
+  // lookup usually resolves instantly, so neither should wait on the other.
+  const [embedding, siteWords] = await Promise.all([
+    embedText(query),
+    agentSiteWords(agentId),
+  ]);
+  const queryTerms = retrievalQueryTerms(query, { siteWords });
   const keywordQuery = queryTerms.length
     ? queryTerms.join(" OR ")
     : query;

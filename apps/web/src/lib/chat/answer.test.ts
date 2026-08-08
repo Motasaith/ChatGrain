@@ -11,10 +11,8 @@ import {
   type AnswerHistoryMessage,
 } from "./answer";
 import { parseConversationIntent } from "@/lib/llm/client";
-import {
-  retrievalQueryTerms,
-  type RetrievalHit,
-} from "@/lib/rag/retrieve";
+import { retrievalQueryTerms, siteStopWords } from "@/lib/rag/query-terms";
+import { type RetrievalHit } from "@/lib/rag/retrieve";
 
 describe("conversation-aware article links", () => {
   it("recognizes image-based page searches and conversational follow-ups", () => {
@@ -132,16 +130,31 @@ describe("conversation-aware article links", () => {
   });
 
   it("keeps the distinctive words for conversational searches", () => {
+    // "raspberry" and "projects" match every page on this particular site, so
+    // they are stripped for this agent only - they come from its own domain,
+    // not from a global list that would break every other customer.
+    const siteWords = siteStopWords(["https://projects-raspberry.com/"]);
     expect(
       retrievalQueryTerms(
         "I want more information about Fun DIY Raspberry Pi because I am working on it. Do you have a similar article?",
+        { siteWords },
       ),
     ).toEqual(["fun", "diy"]);
     expect(
       retrievalQueryTerms(
         "I want to build a final year project. Enlist 3 projects using Nano Raspberry and weather, with titles and URLs.",
+        { siteWords },
       ),
     ).toEqual(["nano", "weather"]);
+  });
+
+  it("keeps site words for an agent whose site is not about them", () => {
+    // The same words on a different customer's agent are ordinary topic terms.
+    expect(
+      retrievalQueryTerms("raspberry jam recipe", {
+        siteWords: siteStopWords(["https://acme-bakery.com/"]),
+      }),
+    ).toEqual(["raspberry", "jam", "recipe"]);
   });
 });
 
