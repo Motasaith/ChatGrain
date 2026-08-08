@@ -196,6 +196,32 @@ export function extractBrand(html: string, pageUrl: URL): SiteBrand {
   };
 }
 
+/**
+ * Share of the page Readability must keep before its result is trusted.
+ *
+ * Readability is tuned for prose articles. On pages built from cards, grids or
+ * tabbed panels - product specs, calculator explainers, documentation - it
+ * keeps the single largest block and discards the rest, so a rich page indexes
+ * at a fraction of its real content and the agent cannot answer from sections
+ * that are plainly on screen.
+ */
+const READABILITY_MIN_SHARE = 0.55;
+
+/**
+ * Picks between Readability's article text and a whole-page reading.
+ *
+ * The whole-page text comes from a document that already had scripts, nav,
+ * footers, asides and forms removed, so falling back to it costs a little
+ * boilerplate and recovers whole sections that would otherwise be missing.
+ */
+export function chooseExtraction(readable: string, wholePage: string) {
+  if (!readable) return wholePage;
+  if (!wholePage) return readable;
+  return readable.length >= wholePage.length * READABILITY_MIN_SHARE
+    ? readable
+    : wholePage;
+}
+
 export function extractPage(html: string, pageUrl: URL): ExtractedPage {
   const dom = new JSDOM(html, { url: pageUrl.href });
   const document = dom.window.document;
@@ -241,8 +267,12 @@ export function extractPage(html: string, pageUrl: URL): ExtractedPage {
   });
   const article = reader.parse();
   const $ = cheerio.load(html);
-  const fallback = $("main").text() || $("article").text() || $("body").text();
-  const text = decodeResidualEntities(article?.textContent || fallback)
+  // Taken from the stripped document rather than the raw HTML, so the fuller
+  // reading is already free of nav, footer, aside, form and script text.
+  const wholePage = document.body?.textContent?.trim() ?? "";
+  const text = decodeResidualEntities(
+    chooseExtraction(article?.textContent?.trim() ?? "", wholePage),
+  )
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n\s+/g, "\n")

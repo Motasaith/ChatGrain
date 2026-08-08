@@ -24,7 +24,10 @@ export type MicrophoneCapture = {
 
 export async function startCapture(
   handlers: CaptureHandlers,
-  workletUrl = "/voice-capture-worklet.js",
+  // Deliberately not under /voice: a reverse-proxy rule routing that prefix to
+  // the WebSocket gateway would serve a 426 here instead of JavaScript, and
+  // addModule() fails with an unhelpful "unable to load a worklet's module".
+  workletUrl = "/audio-capture-worklet.js",
 ): Promise<MicrophoneCapture> {
   if (!navigator.mediaDevices?.getUserMedia || typeof AudioContext === "undefined") {
     throw new Error("This browser cannot capture microphone audio.");

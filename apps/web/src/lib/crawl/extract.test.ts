@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractBrand, extractPage, isSoftNotFound } from "./extract";
+import {
+  chooseExtraction,
+  extractBrand,
+  extractPage,
+  isSoftNotFound,
+} from "./extract";
 
 const pageUrl = new URL("https://example.com/docs/start");
 const html = `<!doctype html>
@@ -105,5 +110,62 @@ describe("HTML entity decoding", () => {
     );
     expect(page.title).toBe("Tom & Jerry");
     expect(page.text).toContain("Tom & Jerry");
+  });
+});
+
+describe("card and grid page extraction", () => {
+  it("recovers sections Readability discards", () => {
+    // Shaped like a calculator explainer: one prose block plus several cards
+    // carrying the details people actually ask about. Readability keeps the
+    // prose and throws the cards away.
+    const cards = [
+      "Formula and calculation methods. Total seconds = Days times 86400 plus Hours times 3600 plus Minutes times 60 plus Seconds.",
+      "Time addition and subtraction. Accumulate hours, minutes and seconds, then convert carryover so ninety minutes becomes one hour and thirty minutes.",
+      "Decimal conversion. Convert a time value to a fraction of a larger unit, so one hour and thirty minutes is one point five hours.",
+    ]
+      .map((text) => `<div class="card"><p>${text}</p></div>`)
+      .join("");
+    const page = extractPage(
+      `<html><head><title>Time calculator</title></head><body>
+         <nav>Home Calculators Blog</nav>
+         <main><article><p>${"Time uses a base-60 system rather than decimal. ".repeat(8)}</p></article>
+         <section class="grid">${cards}</section></main>
+         <footer>Copyright</footer>
+       </body></html>`,
+      new URL("https://example.test/calculators/time"),
+    );
+
+    expect(page.text).toContain("Total seconds = Days times 86400");
+    expect(page.text).toContain("Decimal conversion");
+    // Stripped chrome must not come back with them.
+    expect(page.text).not.toContain("Home Calculators Blog");
+    expect(page.text).not.toContain("Copyright");
+  });
+
+  it("leaves a normal article to Readability", () => {
+    const body = "The refund window is thirty days from delivery. ".repeat(40);
+    const page = extractPage(
+      `<html><head><title>Refunds</title></head><body>
+         <main><article><p>${body}</p></article></main>
+       </body></html>`,
+      new URL("https://example.test/refunds"),
+    );
+    expect(page.text).toContain("refund window is thirty days");
+  });
+});
+
+describe("chooseExtraction", () => {
+  it("keeps Readability when it captured most of the page", () => {
+    expect(chooseExtraction("a".repeat(90), "a".repeat(100))).toBe("a".repeat(90));
+  });
+
+  it("prefers the fuller reading when Readability dropped most of it", () => {
+    const full = "b".repeat(100);
+    expect(chooseExtraction("b".repeat(20), full)).toBe(full);
+  });
+
+  it("handles either side being empty", () => {
+    expect(chooseExtraction("", "only")).toBe("only");
+    expect(chooseExtraction("only", "")).toBe("only");
   });
 });
