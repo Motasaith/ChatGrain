@@ -9,6 +9,7 @@ import {
   generateGroundedAnswer,
   streamGroundedAnswer,
 } from "@/lib/llm/client";
+import { suggestFollowUps } from "@/lib/chat/follow-ups";
 import { logger } from "@/lib/observability/logger";
 import {
   findLatestIndexedLink,
@@ -917,22 +918,32 @@ export async function answerQuestion(
       citations: [],
     };
   }
+  const answeredHits = generated
+    ? citedEvidence(generated, evidenceHits)
+    : listFallback?.hits ?? extracted?.hits ?? [];
   return {
     answer,
     grounded: true,
     confidence,
     citations: agent.showCitations
-      ? (
-          generated
-            ? citedEvidence(generated, evidenceHits)
-            : listFallback?.hits ?? extracted?.hits ?? []
-        ).map((hit) => ({
+      ? answeredHits.map((hit) => ({
           chunkId: hit.chunkId,
           title: hit.title,
           url: hit.url,
           excerpt: hit.content.slice(0, 260),
         }))
       : [],
+    followUps: agent.followUpSuggestions
+      ? suggestFollowUps({
+          hits,
+          question,
+          // Pages this answer already covered are not a next step.
+          answeredDocumentIds: [
+            ...answeredHits.map((hit) => hit.documentId),
+            ...evidenceHits.map((hit) => hit.documentId),
+          ],
+        })
+      : undefined,
   };
 }
 
@@ -949,6 +960,8 @@ export type AnswerResult = {
   confidence: number;
   citations: AnswerCitation[];
   action?: ChatUiAction;
+  /** Tappable next questions, all answerable from the current index. */
+  followUps?: string[];
 };
 
 export type AnswerStreamEvent =
@@ -1149,17 +1162,26 @@ export async function* answerQuestionStream(
     return;
   }
 
+  const answeredHits = generated
+    ? citedEvidence(generated, evidenceHits)
+    : listFallback?.hits ?? extracted?.hits ?? [];
   yield {
     type: "final",
     answer,
     grounded: true,
     confidence,
+    followUps: agent.followUpSuggestions
+      ? suggestFollowUps({
+          hits,
+          question,
+          answeredDocumentIds: [
+            ...answeredHits.map((hit) => hit.documentId),
+            ...evidenceHits.map((hit) => hit.documentId),
+          ],
+        })
+      : undefined,
     citations: agent.showCitations
-      ? (
-          generated
-            ? citedEvidence(generated, evidenceHits)
-            : listFallback?.hits ?? extracted?.hits ?? []
-        ).map((hit) => ({
+      ? answeredHits.map((hit) => ({
           chunkId: hit.chunkId,
           title: hit.title,
           url: hit.url,

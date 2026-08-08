@@ -195,6 +195,9 @@ export const agents = pgTable(
       .notNull(),
     showBranding: boolean("show_branding").default(true).notNull(),
     collectFeedback: boolean("collect_feedback").default(true).notNull(),
+    followUpSuggestions: boolean("follow_up_suggestions")
+      .default(true)
+      .notNull(),
     showCitations: boolean("show_citations").default(true).notNull(),
     strictMode: boolean("strict_mode").default(true).notNull(),
     allowedDomains: text("allowed_domains").array().default([]).notNull(),

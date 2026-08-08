@@ -9531,6 +9531,31 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 
 /* Starter question chips ------------------------------------------------- */
 
+.chat-followups {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+  gap: 4px;
+}
+
+.chat-followups-label {
+  display: inline-flex;
+  align-items: center;
+  padding-left: 14px;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* The chips reuse the starter-question styling, so a follow-up looks like
+   something you can tap rather than a second kind of control. */
+.chat-followups .chat-suggestions {
+  padding-bottom: 0;
+}
+
 .chat-suggestions {
   display: flex;
   flex-wrap: wrap;

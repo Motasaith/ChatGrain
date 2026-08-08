@@ -28,6 +28,7 @@ export async function publicAgentData(request: Request, agentId: string) {
       helpCenterEnabled: agents.helpCenterEnabled,
       helpCenterGreeting: agents.helpCenterGreeting,
       collectFeedback: agents.collectFeedback,
+      followUpSuggestions: agents.followUpSuggestions,
       showCitations: agents.showCitations,
       showBranding: agents.showBranding,
       allowedDomains: agents.allowedDomains,

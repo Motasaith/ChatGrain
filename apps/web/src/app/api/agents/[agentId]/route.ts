@@ -27,6 +27,7 @@ const updateAgentSchema = z
     helpCenterGreeting: z.string().trim().min(1).max(160),
     showBranding: z.boolean(),
     collectFeedback: z.boolean(),
+    followUpSuggestions: z.boolean(),
     showCitations: z.boolean(),
     strictMode: z.boolean(),
     allowedDomains: z.array(z.string().trim().min(1).max(255)).max(100),

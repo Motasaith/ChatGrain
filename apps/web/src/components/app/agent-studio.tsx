@@ -46,6 +46,7 @@ type Agent = {
   helpCenterGreeting: string;
   showBranding: boolean;
   collectFeedback: boolean;
+  followUpSuggestions: boolean;
   showCitations: boolean;
   strictMode: boolean;
   allowedDomains: string[];
@@ -243,6 +244,7 @@ export function AgentStudio({
         helpCenterGreeting: agent.helpCenterGreeting,
         ...(isAdmin ? { showBranding: agent.showBranding } : {}),
         collectFeedback: agent.collectFeedback,
+        followUpSuggestions: agent.followUpSuggestions,
         showCitations: agent.showCitations,
         strictMode: agent.strictMode,
         allowedDomains: agent.allowedDomains,
@@ -845,6 +847,7 @@ export function AgentStudio({
             <Toggle label="Strict grounded mode" detail="Refuse when evidence is weak." value={agent.strictMode} onChange={(value) => patch("strictMode", value)} />
             <Toggle label="Show citations" detail="Link answers to original pages." value={agent.showCitations} onChange={(value) => patch("showCitations", value)} />
             <Toggle label="Collect feedback" detail="Ask visitors if answers helped." value={agent.collectFeedback} onChange={(value) => patch("collectFeedback", value)} />
+            <Toggle label="Suggest follow-up questions" detail="Offer related questions after each answer." value={agent.followUpSuggestions} onChange={(value) => patch("followUpSuggestions", value)} />
             <label className="field">
               <span>Answer engine</span>
               <select value={agent.modelProvider} onChange={(event) => patch("modelProvider", event.target.value)}>

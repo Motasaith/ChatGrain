@@ -64,6 +64,43 @@ export type CrawlResult = {
  * hardcoded, so tuning it had no effect. Capped to keep a crawl from
  * overwhelming a small VPS or the site being indexed.
  */
+/** Statuses that mean "you are going too fast", not "this page is broken". */
+const BACKPRESSURE_STATUSES = new Set([429, 503]);
+
+/** Never stall a whole crawl on one hostile `Retry-After`. */
+const MAX_BACKPRESSURE_MS = 30_000;
+
+/**
+ * Shared pause across the whole batch.
+ *
+ * Every page in a batch is fetched concurrently, so one worker backing off
+ * achieves nothing while five others keep hammering. Holding the pause here
+ * means a single 429 slows the entire crawl, which is what the remote server
+ * is actually asking for. The worker runs one job at a time, so module scope is
+ * the right lifetime.
+ */
+let backpressureUntil = 0;
+
+export function applyBackpressure(retryAfterHeader: string | null) {
+  const seconds = Number(retryAfterHeader);
+  const waitMs =
+    Number.isFinite(seconds) && seconds > 0
+      ? Math.min(seconds * 1_000, MAX_BACKPRESSURE_MS)
+      : 5_000;
+  backpressureUntil = Math.max(backpressureUntil, Date.now() + waitMs);
+}
+
+async function waitOutBackpressure() {
+  const remaining = backpressureUntil - Date.now();
+  if (remaining <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, remaining));
+}
+
+/** Test seam: crawls are sequential, but each one starts unthrottled. */
+export function resetBackpressure() {
+  backpressureUntil = 0;
+}
+
 function crawlConcurrency() {
   const configured = Number(process.env.CRAWL_CONCURRENCY?.trim());
   if (!Number.isFinite(configured) || configured < 1) return 6;
@@ -191,16 +228,29 @@ function matchesPath(
 async function fetchHtml(
   url: URL,
   fetchPublic: SafeFetcher,
-  retries = 2,
+  retries = 3,
 ) {
   let lastError: unknown;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
+    await waitOutBackpressure();
     try {
       const { response, finalUrl } = await fetchPublic(url, {
         timeoutMs: 15_000,
         maxBytes: 3_000_000,
       });
       if (!response.ok) {
+        if (BACKPRESSURE_STATUSES.has(response.status)) {
+          // The site is asking us to slow down. Retrying in a few hundred
+          // milliseconds - and continuing to hammer it from every other worker
+          // in the batch - turns a brief limit into a whole failed crawl.
+          applyBackpressure(response.headers.get("retry-after"));
+          throw new AppError(
+            "CRAWL_RATE_LIMITED",
+            `Remote server is rate limiting requests (HTTP ${response.status}). ` +
+              "Lower CRAWL_CONCURRENCY if this persists.",
+            503,
+          );
+        }
         throw new AppError(
           "CRAWL_HTTP_ERROR",
           `Remote server returned HTTP ${response.status}.`,
@@ -220,7 +270,7 @@ async function fetchHtml(
       lastError = error;
       if (attempt < retries) {
         await new Promise((resolve) =>
-          setTimeout(resolve, 350 * 2 ** attempt),
+          setTimeout(resolve, 500 * 2 ** attempt),
         );
       }
     }

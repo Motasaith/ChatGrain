@@ -15,6 +15,7 @@ import {
   Phone,
   Plus,
   ShieldCheck,
+  Sparkles,
   ThumbsDown,
   ThumbsUp,
   TicketCheck,
@@ -43,6 +44,8 @@ type ChatMessage = {
   }>;
   action?: ChatUiAction;
   attachments?: ChatAttachment[];
+  /** Next-question chips; only rendered under the newest assistant turn. */
+  followUps?: string[];
 };
 
 type ChatAttachment = {
@@ -1027,6 +1030,7 @@ export function ChatPanel({
           grounded: boolean;
           citations: ChatMessage["citations"];
           action?: ChatUiAction;
+          followUps?: string[];
           queuedForOperator?: boolean;
         };
         error?: { message?: string };
@@ -1046,6 +1050,7 @@ export function ChatPanel({
             grounded: payload.data!.grounded,
             citations: payload.data!.citations,
             action: payload.data!.action,
+            followUps: payload.data!.followUps,
           },
         ]);
       }
@@ -1458,6 +1463,31 @@ export function ChatPanel({
                       </details>
                     );
                   })()
+                ) : null}
+                {/* Only under the newest turn: follow-ups from earlier answers
+                    are stale, and stacking them turns the thread into chips. */}
+                {message.role === "assistant" &&
+                messageIndex === messages.length - 1 &&
+                message.followUps?.length &&
+                !busy ? (
+                  <div className="chat-followups">
+                    <span className="chat-followups-label">
+                      <Sparkles size={11} />
+                      Related
+                    </span>
+                    <div className="chat-suggestions">
+                      {message.followUps.map((question) => (
+                        <button
+                          disabled={busy || uploading}
+                          key={question}
+                          onClick={() => void askSuggested(question)}
+                          type="button"
+                        >
+                          {question}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ) : null}
                 {message.role === "assistant" &&
                 message.action &&

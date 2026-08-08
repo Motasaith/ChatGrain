@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "follow_up_suggestions" boolean DEFAULT true NOT NULL;
