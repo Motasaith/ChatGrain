@@ -57,8 +57,12 @@ function clientIp(request: IncomingMessage) {
 export function startVoiceGateway() {
   const port = voicePort();
   const httpServer = createServer((request, response) => {
-    // A plain health endpoint so the process can be probed like the web app.
-    if (request.url?.startsWith("/health")) {
+    // Answers at `/health` when probed directly, and at `/voice/health` when a
+    // proxy routes the whole `/voice` prefix here and preserves the path.
+    // Without the second form the check reports 426 through the proxy and looks
+    // like a routing failure.
+    const path = (request.url ?? "").split("?")[0];
+    if (path === "/health" || path === "/voice/health") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
