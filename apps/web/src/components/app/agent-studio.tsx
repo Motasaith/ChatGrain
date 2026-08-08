@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   BookOpen,
@@ -26,6 +27,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ChatPanel } from "@/components/chat/chat-panel";
+import { deleteConfirmationMatches } from "@/lib/agents/confirm-delete";
 
 type Agent = {
   id: string;
@@ -139,6 +141,7 @@ export function AgentStudio({
   crawlLimit: number;
   fileLimitLabel: string;
 }) {
+  const router = useRouter();
   const [agent, setAgent] = useState(initialAgent);
   const [sources, setSources] = useState(initialSources);
   const [job, setJob] = useState(initialJob);
@@ -153,6 +156,8 @@ export function AgentStudio({
   );
   const [saving, setSaving] = useState(false);
   const [removingSourceId, setRemovingSourceId] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [workerHealthy, setWorkerHealthy] = useState<boolean | null>(null);
@@ -423,6 +428,29 @@ export function AgentStudio({
       setError(payload.error?.message || "Could not pin the answer.");
     }
     setSaving(false);
+  }
+
+  async function deleteAgent() {
+    setDeleting(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/agents/${agent.id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok && response.status !== 204) {
+        const payload = await response.json().catch(() => null);
+        setError(payload?.error?.message || "Could not delete the agent.");
+        return;
+      }
+      // refresh() as well as push(): the agent list is a server component and
+      // would otherwise render the deleted agent from cache.
+      router.push("/dashboard/agents");
+      router.refresh();
+    } catch {
+      setError("Could not delete the agent.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function removePinned(pinnedId: string) {
@@ -859,6 +887,49 @@ export function AgentStudio({
               <label className="field"><span>Ollama model</span><input placeholder="gemma4:31b" value={agent.modelName || ""} onChange={(event) => patch("modelName", event.target.value || null)} /></label>
             )}
           </aside>
+          <section className="settings-panel danger-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Delete this agent</h2>
+                <p>Everything it has learned and answered goes with it.</p>
+              </div>
+              <AlertTriangle size={18} />
+            </div>
+            <p className="danger-summary">
+              Deleting <b>{agent.name}</b> permanently removes its{" "}
+              {sources.length} source{sources.length === 1 ? "" : "s"}, every
+              indexed page, and all of its conversations, tickets and captured
+              leads. This cannot be undone.
+            </p>
+            <label className="field">
+              {/* Typing the name is deliberate: agents here are routinely near
+                  duplicates of one another, so a plain confirm dialog makes
+                  deleting the wrong one a single misclick. */}
+              <span>Type the agent name to confirm</span>
+              <input
+                autoComplete="off"
+                onChange={(event) => setDeleteConfirmation(event.target.value)}
+                placeholder={agent.name}
+                value={deleteConfirmation}
+              />
+            </label>
+            <button
+              className="danger-button"
+              disabled={
+                deleting ||
+                !deleteConfirmationMatches(deleteConfirmation, agent.name)
+              }
+              onClick={deleteAgent}
+              type="button"
+            >
+              {deleting ? (
+                <LoaderCircle className="spin" size={15} />
+              ) : (
+                <Trash2 size={15} />
+              )}
+              {deleting ? "Deleting..." : "Delete agent permanently"}
+            </button>
+          </section>
         </div>
       )}
 

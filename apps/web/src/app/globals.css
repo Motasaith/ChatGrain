@@ -2082,6 +2082,53 @@ button {
 }
 
 .studio-columns,
+/* Full width beneath the two settings columns: a destructive action should
+   not sit in a sidebar where it reads as one more setting. */
+.danger-panel {
+  grid-column: 1 / -1;
+  border-color: #f0cfc9;
+}
+
+.danger-panel .panel-heading svg {
+  color: #a3271c;
+}
+
+.danger-summary {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.danger-button {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  padding: 9px 15px;
+  gap: 7px;
+  border: 1px solid #e4b4ac;
+  border-radius: 8px;
+  background: #fdecea;
+  color: #a3271c;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: background 130ms ease, border-color 130ms ease;
+}
+
+.danger-button:hover:not(:disabled) {
+  border-color: #a3271c;
+  background: #f9d9d4;
+}
+
+.danger-button:disabled {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .settings-layout,
 .appearance-layout,
 .deploy-grid {
