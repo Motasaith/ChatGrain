@@ -3,6 +3,7 @@
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { DashboardTabs } from "@/components/app/dashboard-tabs";
+import { OperatorPresence } from "@/components/app/operator-presence";
 import { usePathname } from "next/navigation";
 import {
   Activity,
@@ -198,6 +199,7 @@ export function AppShell({
             </Link>
           </div>
         </header>
+        <OperatorPresence />
         <DashboardTabs />
         <div className="app-page">{children}</div>
       </div>

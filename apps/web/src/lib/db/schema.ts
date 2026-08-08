@@ -82,6 +82,12 @@ export const ticketStatus = pgEnum("ticket_status", [
   "resolved",
   "closed",
 ]);
+export const ticketKind = pgEnum("ticket_kind", [
+  "support",
+  "bug",
+  "live",
+]);
+
 export const ticketPriority = pgEnum("ticket_priority", [
   "low",
   "normal",
@@ -198,6 +204,11 @@ export const agents = pgTable(
     followUpSuggestions: boolean("follow_up_suggestions")
       .default(true)
       .notNull(),
+    /** Published support hours; null means the team never claims to be live. */
+    businessHours: jsonb("business_hours").$type<{
+      timezone: string;
+      days: Array<Array<{ start: number; end: number }>>;
+    } | null>(),
     showCitations: boolean("show_citations").default(true).notNull(),
     strictMode: boolean("strict_mode").default(true).notNull(),
     allowedDomains: text("allowed_domains").array().default([]).notNull(),
@@ -506,6 +517,13 @@ export const tickets = pgTable(
     requesterEmail: text("requester_email"),
     requesterPhone: text("requester_phone"),
     lastReplyBy: text("last_reply_by"),
+    // Which help-centre form opened this, so the dashboard can triage a bug
+    // report differently from a general question.
+    kind: ticketKind("kind").default("support").notNull(),
+    // Form-specific extras: the page a bug was reported from, and so on.
+    details: jsonb("details").$type<Record<string, unknown>>().default({}),
+    /** Set once a reply notification has gone out, so it is sent once. */
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     ...timestamps,
   },
@@ -717,6 +735,28 @@ export const systemLogs = pgTable(
     index("system_logs_level_created_idx").on(table.level, table.createdAt),
   ],
 );
+
+/**
+ * Heartbeat from operators with the dashboard open.
+ *
+ * Presence has to be observed rather than declared: an "available" toggle
+ * someone forgot to switch off is worse than no signal at all, because the
+ * widget then promises a live person who is not there.
+ */
+export const operatorPresence = pgTable("operator_presence", {
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.workspaceId, table.userId] }),
+  index("operator_presence_seen_idx").on(table.workspaceId, table.lastSeenAt),
+]);
 
 export const systemState = pgTable("system_state", {
   key: text("key").primaryKey(),

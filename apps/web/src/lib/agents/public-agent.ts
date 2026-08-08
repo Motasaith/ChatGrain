@@ -1,9 +1,10 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { agents } from "@/lib/db/schema";
+import { agents, operatorPresence } from "@/lib/db/schema";
 import { AppError } from "@/lib/http/errors";
+import { resolveAvailability } from "@/lib/support/availability";
 import {
   createWidgetToken,
   domainAllowed,
@@ -29,6 +30,8 @@ export async function publicAgentData(request: Request, agentId: string) {
       helpCenterGreeting: agents.helpCenterGreeting,
       collectFeedback: agents.collectFeedback,
       followUpSuggestions: agents.followUpSuggestions,
+      businessHours: agents.businessHours,
+      workspaceId: agents.workspaceId,
       showCitations: agents.showCitations,
       showBranding: agents.showBranding,
       allowedDomains: agents.allowedDomains,
@@ -63,5 +66,23 @@ export async function publicAgentData(request: Request, agentId: string) {
     agent.id,
     requestingHost || "__direct__",
   );
-  return { ...agent, embedToken };
+  // Resolved here rather than in the widget: business hours and operator
+  // presence are both server state, and a client clock cannot be trusted to
+  // decide whether a team is open.
+  const [presence] = await db
+    .select({ lastSeenAt: operatorPresence.lastSeenAt })
+    .from(operatorPresence)
+    .where(eq(operatorPresence.workspaceId, agent.workspaceId))
+    .orderBy(desc(operatorPresence.lastSeenAt))
+    .limit(1);
+  const availability = resolveAvailability({
+    businessHours: agent.businessHours,
+    lastOperatorSeenAt: presence?.lastSeenAt ?? null,
+  });
+  // workspaceId and the raw schedule are internal; only the resolved
+  // availability belongs in a payload any website can read.
+  const publicAgent = { ...agent } as Partial<typeof agent>;
+  delete publicAgent.workspaceId;
+  delete publicAgent.businessHours;
+  return { ...publicAgent, embedToken, availability };
 }

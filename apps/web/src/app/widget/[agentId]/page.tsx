@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { db } from "@/lib/db/client";
-import { agents } from "@/lib/db/schema";
+import { resolveAvailability } from "@/lib/support/availability";
+import { agents, operatorPresence } from "@/lib/db/schema";
 
 export const metadata: Metadata = {
   title: "Support",
@@ -32,11 +33,25 @@ export default async function WidgetPage({
       suggestedQuestions: agents.suggestedQuestions,
       collectFeedback: agents.collectFeedback,
       showBranding: agents.showBranding,
+      businessHours: agents.businessHours,
+      workspaceId: agents.workspaceId,
     })
     .from(agents)
     .where(eq(agents.id, agentId))
     .limit(1);
   if (!agent || agent.status === "paused") notFound();
+  // Resolved server-side: a visitor's clock cannot decide whether the support
+  // team is open.
+  const [presence] = await db
+    .select({ lastSeenAt: operatorPresence.lastSeenAt })
+    .from(operatorPresence)
+    .where(eq(operatorPresence.workspaceId, agent.workspaceId))
+    .orderBy(desc(operatorPresence.lastSeenAt))
+    .limit(1);
+  const availability = resolveAvailability({
+    businessHours: agent.businessHours,
+    lastOperatorSeenAt: presence?.lastSeenAt ?? null,
+  });
   return (
     <main className="widget-page">
       <ChatPanel
@@ -46,6 +61,7 @@ export default async function WidgetPage({
         embedToken={query.token}
         logoUrl={agent.logoUrl}
         iconUrl={agent.iconUrl}
+        availability={availability}
         helpCenterEnabled={agent.helpCenterEnabled}
         helpCenterGreeting={agent.helpCenterGreeting}
         name={agent.name}

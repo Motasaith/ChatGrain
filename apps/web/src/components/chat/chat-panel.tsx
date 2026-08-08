@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
+  AlertTriangle,
   ArrowUp,
   Bell,
   CheckCircle2,
@@ -29,6 +30,7 @@ import {
   VoiceNoteRecorder,
 } from "@/components/chat/voice-note";
 import { messageTimeLabel } from "@/lib/chat/message-time";
+import { SupportForm, type SupportFormKind } from "@/components/chat/support-form";
 import type { StartCallOptions } from "@/lib/voice/client/call";
 
 type ChatMessage = {
@@ -394,6 +396,33 @@ function writeLocalValue(key: string, value?: string) {
   }
 }
 
+/**
+ * What to say when a live person is not available.
+ *
+ * "Offline" alone leaves a visitor guessing whether to wait; each case implies
+ * a different expectation, so each gets its own wording.
+ */
+function availabilityNote(availability?: {
+  reason: string;
+  nextOpenAt?: string;
+}) {
+  if (!availability) return "Leave a message and we will reply.";
+  if (availability.reason === "outside_hours" && availability.nextOpenAt) {
+    const opens = new Date(availability.nextOpenAt);
+    if (!Number.isNaN(opens.getTime())) {
+      return `Closed now. Opens ${opens.toLocaleString(undefined, {
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })}.`;
+    }
+  }
+  if (availability.reason === "nobody_available") {
+    return "Everyone is busy. Leave a message and we will reply.";
+  }
+  return "Leave a message and we will reply.";
+}
+
 function readableTextColor(hex: string) {
   const channels = hex
     .replace("#", "")
@@ -421,6 +450,7 @@ export function ChatPanel({
   iconUrl,
   embedded = false,
   collectFeedback = true,
+  availability,
   helpCenterEnabled = true,
   helpCenterGreeting = "How can we help?",
   showBranding = true,
@@ -435,6 +465,11 @@ export function ChatPanel({
   iconUrl?: string | null;
   embedded?: boolean;
   collectFeedback?: boolean;
+  availability?: {
+    live: boolean;
+    reason: "live" | "outside_hours" | "nobody_available" | "not_configured";
+    nextOpenAt?: string;
+  };
   helpCenterEnabled?: boolean;
   helpCenterGreeting?: string;
   showBranding?: boolean;
@@ -457,6 +492,8 @@ export function ChatPanel({
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [helpCenterOpen, setHelpCenterOpen] = useState(false);
+  const [supportForm, setSupportForm] = useState<SupportFormKind | null>(null);
+  const [ticketFiled, setTicketFiled] = useState<string | null>(null);
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
@@ -1237,6 +1274,37 @@ export function ChatPanel({
               <p>Ask the assistant now or continue a request with the support team.</p>
             </div>
           </div>
+          {supportForm ? (
+            <SupportForm
+              agentId={agentId}
+              embedToken={embedToken}
+              kind={supportForm}
+              onCancel={() => setSupportForm(null)}
+              onSubmitted={(reference) => {
+                setSupportForm(null);
+                setTicketFiled(reference);
+                void refreshHistory();
+              }}
+              visitorId={visitorId}
+            />
+          ) : ticketFiled ? (
+            <div className="chat-support-filed">
+              <b>Request received</b>
+              <p>
+                {ticketFiled ? (
+                  <>
+                    Your reference is <code>{ticketFiled}</code>. Replies appear
+                    here, in this widget.
+                  </>
+                ) : (
+                  "Replies appear here, in this widget."
+                )}
+              </p>
+              <button onClick={() => setTicketFiled(null)} type="button">
+                Done
+              </button>
+            </div>
+          ) : (
           <div className="chat-help-actions">
             <button
               onClick={() => prepareNewConversation()}
@@ -1248,19 +1316,34 @@ export function ChatPanel({
                 <small>Get an answer from the website knowledge base.</small>
               </span>
             </button>
-            <button
-              onClick={() =>
-                prepareNewConversation("I would like to contact the support team.")
-              }
-              type="button"
-            >
+            <button onClick={() => setSupportForm("support")} type="button">
               <TicketCheck size={17} />
               <span>
                 <b>Contact support</b>
-                <small>Send a request and receive replies in this widget.</small>
+                <small>Open a ticket and get replies in this widget.</small>
               </span>
             </button>
+            <button onClick={() => setSupportForm("bug")} type="button">
+              <AlertTriangle size={17} />
+              <span>
+                <b>Report a problem</b>
+                <small>Tell us what broke on this page.</small>
+              </span>
+            </button>
+            <button onClick={() => setSupportForm("live")} type="button">
+              <LifeBuoy size={17} />
+              <span>
+                <b>Talk to a person</b>
+                <small>
+                  {availability?.live
+                    ? "Someone is available now."
+                    : availabilityNote(availability)}
+                </small>
+              </span>
+              {availability?.live ? <i className="chat-live-dot" /> : null}
+            </button>
           </div>
+          )}
           <div className="chat-help-tickets">
             <span>
               <b>Your support tickets</b>
