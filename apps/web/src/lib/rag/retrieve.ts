@@ -10,6 +10,7 @@ import { db } from "@/lib/db/client";
 import { chunks, documents, sources } from "@/lib/db/schema";
 import { embedText } from "./embeddings";
 import { retrievalQueryTerms, siteStopWords } from "./query-terms";
+import { titlePrecision } from "./title";
 
 export type RetrievalHit = {
   chunkId: string;
@@ -23,6 +24,8 @@ export type RetrievalHit = {
   position: number;
   lexicalScore: number;
   titleScore: number;
+  /** Share of the title the query accounts for; separates exact from padded. */
+  titlePrecision: number;
   rankScore: number;
 };
 
@@ -250,6 +253,7 @@ export async function hybridRetrieve(
       position: row.position,
       lexicalScore: lexicalScore(row.title, row.content),
       titleScore: titleScore(row.title),
+      titlePrecision: titlePrecision(row.title, queryTerms),
       rankScore: 0,
     });
   });
@@ -271,6 +275,7 @@ export async function hybridRetrieve(
         position: row.position,
         lexicalScore: lexicalScore(row.title, row.content),
         titleScore: titleScore(row.title),
+        titlePrecision: titlePrecision(row.title, queryTerms),
         rankScore: 0,
       });
     }
@@ -296,6 +301,7 @@ export async function hybridRetrieve(
         position: row.position,
         lexicalScore: lexicalScore(row.title, row.content),
         titleScore: titleScore(row.title),
+        titlePrecision: titlePrecision(row.title, queryTerms),
         rankScore: 0,
       });
     }
@@ -318,6 +324,10 @@ export async function hybridRetrieve(
         Math.max(-1, Math.min(hit.keywordScore, 1)) * 0.35 +
         hit.lexicalScore * 0.25 +
         hit.titleScore * 0.9 +
+        // Without this, "Time Calculator" and "Screen Time Calculator" are
+        // indistinguishable for the query "time calculator", and whichever
+        // page is longer wins on cover density instead.
+        hit.titlePrecision * 0.35 +
         (hit.position === 0 && hit.keywordScore > 0 ? 0.05 : 0);
       return hit;
     })

@@ -63,12 +63,30 @@ export function siteStopWords(rootUrls: string[]) {
   return words;
 }
 
+/**
+ * "how does the time calculator work" asks about a calculator, not about work.
+ *
+ * Handled as a phrase rather than by adding "work" to the stopword list,
+ * because "work calculator" is a real page on that same site and a blanket
+ * stopword would make it unfindable.
+ */
+const TRAILING_VERB_PHRASE =
+  /^how\s+(?:do|does|did|is|are|can)\b.*\b(?:works?|working)\b[\s?.!]*$/i;
+
+function stripFramingVerb(query: string) {
+  return TRAILING_VERB_PHRASE.test(query.trim())
+    ? query.replace(/\b(?:works?|working)\b[\s?.!]*$/i, " ")
+    : query;
+}
+
 export function retrievalQueryTerms(
   query: string,
   { siteWords }: { siteWords?: Set<string> } = {},
 ) {
   const raw = [
-    ...new Set(query.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []),
+    ...new Set(
+      stripFramingVerb(query).toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [],
+    ),
   ];
 
   // Each narrowing is only applied if something survives it. A query stripped

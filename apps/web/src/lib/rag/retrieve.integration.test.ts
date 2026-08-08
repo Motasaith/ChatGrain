@@ -31,9 +31,22 @@ vi.mock("@/lib/db/client", () => ({
  * close enough for ranking while keeping the test hermetic and fast - the real
  * model would download 25MB and dominate the runtime.
  */
+/**
+ * Function words a real sentence encoder does not hang meaning on. Without
+ * this the stand-in rewards a body that merely repeats the question's
+ * phrasing ("how", "work"), which a trained model would not, and the fixture
+ * stops reflecting the production scores it stands in for.
+ */
+const FUNCTION_WORDS = new Set([
+  "how", "does", "do", "the", "and", "or", "of", "for", "to", "in", "on",
+  "is", "are", "it", "you", "your", "work", "works", "out", "each", "many",
+  "much", "with", "across", "from", "by", "as", "at", "that", "this",
+]);
+
 function fakeEmbedding(text: string) {
   const dims = new Array(384).fill(0);
   for (const token of text.toLowerCase().match(/[a-z0-9]+/g) ?? []) {
+    if (FUNCTION_WORDS.has(token)) continue;
     let hash = 0;
     for (let i = 0; i < token.length; i += 1) {
       hash = (hash * 31 + token.charCodeAt(i)) >>> 0;
@@ -150,6 +163,65 @@ describe("migrations", () => {
     );
     expect(columns.rows.map((r) => r.column_name)).toContain(
       "follow_up_suggestions",
+    );
+  });
+});
+
+describe("exact title matches", () => {
+  /** Real titles from homeofcalculators.com, where the exact page ranked 7th. */
+  const HOC_AGENT = "77777777-7777-7777-7777-777777777777";
+  const HOC_SOURCE = "88888888-8888-8888-8888-888888888888";
+  const PAGES = [
+    ["Time Calculator", "/calculators/time", "Add or subtract hours, minutes and seconds. Total seconds equals days times 86400 plus hours times 3600."],
+    ["Time Duration Calculator", "/calculators/time-duration", "Calculate the duration between two times in hours minutes and seconds. Useful for tracking project work, shift logs, flight times and general intervals. Duration equals end time minus start time."],
+    ["Study Time Calculator", "/calculators/study-time", "Plan revision hours across subjects and work out how much time each topic needs before an exam date."],
+    ["Screen Time Calculator", "/calculators/screen-time", "Work out how many hours of screen time you spend each day across phone, laptop and television."],
+    ["Time Card Calculator", "/calculators/time-card", "Add up clock in and clock out times for a work week and total the payable hours for each day."],
+    ["Work Calculator", "/calculators/work", "Calculate mechanical work as force times distance in joules for a given displacement."],
+  ];
+
+  beforeAll(async () => {
+    await client.exec(`
+      insert into agents (id, workspace_id, name) values ('${HOC_AGENT}', '${WORKSPACE}', 'HOC');
+      insert into sources (id, agent_id, type, name, root_url)
+        values ('${HOC_SOURCE}', '${HOC_AGENT}', 'website', 'hoc', 'https://homeofcalculators.com/');
+    `);
+    for (const [index, [title, path, body]] of PAGES.entries()) {
+      const documentId = `6666666${index}-6666-6666-6666-666666666666`;
+      const fullTitle = `${title} | Home of Calculators`;
+      await client.query(
+        `insert into documents (id, source_id, canonical_url, title, content_hash)
+         values ($1, $2, $3, $4, $5)`,
+        [documentId, HOC_SOURCE, `https://homeofcalculators.com${path}`, fullTitle, `hoc-${index}`],
+      );
+      const content = `${title}. ${body}`;
+      await client.query(
+        `insert into chunks (document_id, source_id, agent_id, position, content, token_count, embedding)
+         values ($1, $2, $3, 0, $4, $5, $6)`,
+        [documentId, HOC_SOURCE, HOC_AGENT, content, 40, JSON.stringify(fakeEmbedding(content))],
+      );
+    }
+  }, 60_000);
+
+  it("puts the exactly-named page first", async () => {
+    // Production ranked this 7th, behind four longer pages: ts_rank_cd rewards
+    // repetition, and titleScore could not tell "Time Calculator" from
+    // "Screen Time Calculator" because both contain every query word.
+    const { hybridRetrieve } = await import("./retrieve");
+    const hits = await hybridRetrieve(
+      HOC_AGENT,
+      "how does the time calculator work",
+      6,
+    );
+    expect(hits[0].url).toBe("https://homeofcalculators.com/calculators/time");
+  });
+
+  it("still favours a different page when that one is named", async () => {
+    // The signal must not simply prefer short titles.
+    const { hybridRetrieve } = await import("./retrieve");
+    const hits = await hybridRetrieve(HOC_AGENT, "time duration calculator", 6);
+    expect(hits[0].url).toBe(
+      "https://homeofcalculators.com/calculators/time-duration",
     );
   });
 });

@@ -34,6 +34,24 @@ describe("retrievalQueryTerms", () => {
     ).toEqual(["camera"]);
   });
 
+  it("treats a trailing 'work' as question framing, not a topic", () => {
+    expect(retrievalQueryTerms("how does the time calculator work")).toEqual([
+      "time",
+      "calculator",
+    ]);
+    expect(retrievalQueryTerms("how do refunds work?")).toEqual(["refunds"]);
+  });
+
+  it("keeps 'work' when it is the subject", () => {
+    // homeofcalculators.com has a genuine /calculators/work page, so a blanket
+    // stopword would make it unreachable.
+    expect(retrievalQueryTerms("work calculator")).toEqual([
+      "work",
+      "calculator",
+    ]);
+    expect(retrievalQueryTerms("how much work is a joule")).toContain("work");
+  });
+
   it("deduplicates and caps runaway queries", () => {
     const long = Array.from({ length: 60 }, (_, i) => `term${i}`).join(" ");
     expect(retrievalQueryTerms(long)).toHaveLength(24);

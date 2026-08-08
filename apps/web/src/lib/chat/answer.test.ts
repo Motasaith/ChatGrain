@@ -228,6 +228,7 @@ describe("answer presentation", () => {
             position: 0,
             lexicalScore: 1,
             titleScore: 1,
+            titlePrecision: 0,
             rankScore: 1,
           },
           {
@@ -242,6 +243,7 @@ describe("answer presentation", () => {
             position: 0,
             lexicalScore: 1,
             titleScore: 1,
+            titlePrecision: 0,
             rankScore: 1,
           },
         ],
@@ -272,6 +274,7 @@ describe("answer presentation", () => {
         position: 0,
         lexicalScore: 1,
         titleScore: 1,
+        titlePrecision: 0,
         rankScore: 1,
       }),
     );

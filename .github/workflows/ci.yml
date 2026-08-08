@@ -1,0 +1,37 @@
+# Runs the same four checks used before every deploy, on every push.
+#
+# The point is to catch a break here rather than on the VPS, where a failed
+# build leaves the site serving the previous bundle and the cause is three
+# scrollbacks up in an SSH session.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `ci` not `install`: installs exactly what the lockfile pins and fails
+      # if the two disagree, which is the check that matters here.
+      - run: npm ci
+
+      - run: npm run typecheck --workspace @docent/web
+      - run: npm run lint --workspace @docent/web
+      - run: npm test --workspace @docent/web
+
+      # Build last: it is the slowest step, so let the quick checks fail first.
+      - run: npm run build --workspace @docent/web
+        env:
+          # Enough to satisfy build-time validation. No real secret is needed
+          # because nothing here talks to a live service.
+          NEXT_PUBLIC_APP_URL: https://chatgrain.com

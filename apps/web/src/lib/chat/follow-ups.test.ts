@@ -15,6 +15,7 @@ function hit(partial: Partial<RetrievalHit> & { title: string }): RetrievalHit {
     position: 0,
     lexicalScore: 0.5,
     titleScore: 0.5,
+    titlePrecision: 0,
     rankScore: partial.rankScore ?? 0.5,
   };
 }
