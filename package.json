@@ -7,6 +7,8 @@
     "apps/web"
   ],
   "scripts": {
+    "env:sync": "tsx scripts/sync-env.mjs",
+    "env:example": "tsx scripts/sync-env.mjs --to-example",
     "dev": "npm run dev -w @docent/web",
     "dev:web": "npm run dev:web -w @docent/web",
     "build": "npm run build -w @docent/web",
