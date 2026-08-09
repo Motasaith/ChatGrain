@@ -25,10 +25,62 @@ function normalizeBaseUrl(value: string) {
 }
 
 /**
- * Reads one numbered slot. Suffix "" is the primary.
+ * Named providers, each of which may hold several keys.
  *
- * A slot needs a model and a base URL to be usable; the key is optional
- * because a self-hosted endpoint may not require one.
+ *   LLM_PROVIDERS=groq,ollama
+ *   LLM_GROQ_BASE_URL=https://api.groq.com/openai/v1
+ *   LLM_GROQ_MODEL=llama-3.3-70b-versatile
+ *   LLM_GROQ_API_KEY=gsk_first
+ *   LLM_GROQ_API_KEY_2=gsk_second
+ *
+ * Naming them beats numbering them: a log line saying "groq_2 rate limited"
+ * is actionable, "fallback_03" is not. Several keys on one provider is the
+ * common case - free tiers meter per key, so a second key is more quota on the
+ * same endpoint rather than a different vendor.
+ *
+ * Model and base URL may be overridden per key with the same suffix, so any
+ * entry can run a different model.
+ */
+function namedProviders(env: NodeJS.ProcessEnv): LlmProvider[] {
+  const order = env.LLM_PROVIDERS?.trim();
+  if (!order) return [];
+
+  const providers: LlmProvider[] = [];
+  for (const rawName of order.split(",")) {
+    const name = rawName.trim();
+    if (!name) continue;
+    const prefix = `LLM_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+    const baseUrl = env[`${prefix}_BASE_URL`]?.trim();
+    const model = env[`${prefix}_MODEL`]?.trim();
+
+    // Suffix "" is the first key; _2, _3, ... are additional quota.
+    for (let index = 1; index <= 20; index += 1) {
+      const suffix = index === 1 ? "" : `_${index}`;
+      const apiKey = env[`${prefix}_API_KEY${suffix}`]?.trim();
+      const entryBase = env[`${prefix}_BASE_URL${suffix}`]?.trim() ?? baseUrl;
+      const entryModel = env[`${prefix}_MODEL${suffix}`]?.trim() ?? model;
+
+      // A first entry may legitimately have no key, for a self-hosted
+      // endpoint. Later entries exist only because a key was added.
+      if (index > 1 && !apiKey) break;
+      if (!entryBase || !entryModel) break;
+
+      providers.push({
+        baseUrl: normalizeBaseUrl(entryBase),
+        apiKey: apiKey ?? "",
+        model: entryModel,
+        label: index === 1 ? name : `${name}_${index}`,
+      });
+    }
+  }
+  return providers;
+}
+
+/**
+ * Reads one numbered slot of the older unnamed form.
+ *
+ * Kept so an install configured before named providers existed keeps working
+ * without anyone editing a .env during a deploy.
  */
 function readSlot(
   env: NodeJS.ProcessEnv,
@@ -76,6 +128,11 @@ function readSlot(
 export function llmProviders(
   env: NodeJS.ProcessEnv = process.env,
 ): LlmProvider[] {
+  // Named providers win outright when declared: mixing both forms would make
+  // the effective order impossible to read off the file.
+  const named = namedProviders(env);
+  if (named.length) return named;
+
   const providers = [readSlot(env, "")!];
   // Stops at the first missing number rather than scanning forever, so a gap
   // in the sequence is visible instead of silently skipping _03.

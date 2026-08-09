@@ -152,3 +152,128 @@ describe("providersForAgent", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("named providers", () => {
+  it("uses the order given, not the order declared", () => {
+    const chain = llmProviders(
+      env({
+        LLM_PROVIDERS: "groq,ollama",
+        LLM_OLLAMA_BASE_URL: "https://ollama.com/v1",
+        LLM_OLLAMA_MODEL: "gemma4:31b",
+        LLM_OLLAMA_API_KEY: "olm",
+        LLM_GROQ_BASE_URL: "https://api.groq.com/openai/v1",
+        LLM_GROQ_MODEL: "llama-3.3-70b-versatile",
+        LLM_GROQ_API_KEY: "gsk_a",
+      }),
+    );
+    expect(chain.map((p) => p.label)).toEqual(["groq", "ollama"]);
+  });
+
+  it("treats extra keys on one provider as extra quota", () => {
+    const chain = llmProviders(
+      env({
+        LLM_PROVIDERS: "groq",
+        LLM_GROQ_BASE_URL: "https://api.groq.com/openai/v1",
+        LLM_GROQ_MODEL: "llama-3.3-70b-versatile",
+        LLM_GROQ_API_KEY: "gsk_a",
+        LLM_GROQ_API_KEY_2: "gsk_b",
+        LLM_GROQ_API_KEY_3: "gsk_c",
+      }),
+    );
+    expect(chain).toHaveLength(3);
+    expect(chain.map((p) => p.apiKey)).toEqual(["gsk_a", "gsk_b", "gsk_c"]);
+    // Same endpoint and model; only the key differs.
+    expect(new Set(chain.map((p) => p.model)).size).toBe(1);
+    expect(chain[1].label).toBe("groq_2");
+  });
+
+  it("lets any entry run a different model", () => {
+    const chain = llmProviders(
+      env({
+        LLM_PROVIDERS: "groq",
+        LLM_GROQ_BASE_URL: "https://api.groq.com/openai/v1",
+        LLM_GROQ_MODEL: "llama-3.3-70b-versatile",
+        LLM_GROQ_API_KEY: "gsk_a",
+        LLM_GROQ_API_KEY_2: "gsk_b",
+        LLM_GROQ_MODEL_2: "llama-3.1-8b-instant",
+      }),
+    );
+    expect(chain[1].model).toBe("llama-3.1-8b-instant");
+    expect(chain[0].model).toBe("llama-3.3-70b-versatile");
+  });
+
+  it("supports several keys for several providers at once", () => {
+    const chain = llmProviders(
+      env({
+        LLM_PROVIDERS: "ollama,groq",
+        LLM_OLLAMA_BASE_URL: "https://ollama.com/v1",
+        LLM_OLLAMA_MODEL: "gemma4:31b",
+        LLM_OLLAMA_API_KEY: "olm_a",
+        LLM_OLLAMA_API_KEY_2: "olm_b",
+        LLM_GROQ_BASE_URL: "https://api.groq.com/openai/v1",
+        LLM_GROQ_MODEL: "llama-3.3-70b-versatile",
+        LLM_GROQ_API_KEY: "gsk_a",
+      }),
+    );
+    expect(chain.map((p) => p.label)).toEqual(["ollama", "ollama_2", "groq"]);
+  });
+
+  it("allows a keyless first entry for a self-hosted endpoint", () => {
+    const chain = llmProviders(
+      env({
+        LLM_PROVIDERS: "local",
+        LLM_LOCAL_BASE_URL: "http://127.0.0.1:8000/v1",
+        LLM_LOCAL_MODEL: "qwen",
+      }),
+    );
+    expect(chain).toHaveLength(1);
+    expect(chain[0].apiKey).toBe("");
+  });
+
+  it("skips a named provider missing its URL or model", () => {
+    const chain = llmProviders(
+      env({
+        LLM_PROVIDERS: "broken,groq",
+        LLM_BROKEN_API_KEY: "x",
+        LLM_GROQ_BASE_URL: "https://api.groq.com/openai/v1",
+        LLM_GROQ_MODEL: "llama-3.3-70b-versatile",
+        LLM_GROQ_API_KEY: "gsk_a",
+      }),
+    );
+    expect(chain.map((p) => p.label)).toEqual(["groq"]);
+  });
+
+  it("stops at a gap in a provider's key numbering", () => {
+    const chain = llmProviders(
+      env({
+        LLM_PROVIDERS: "groq",
+        LLM_GROQ_BASE_URL: "https://api.groq.com/openai/v1",
+        LLM_GROQ_MODEL: "m",
+        LLM_GROQ_API_KEY: "gsk_a",
+        LLM_GROQ_API_KEY_3: "gsk_c",
+      }),
+    );
+    expect(chain).toHaveLength(1);
+  });
+
+  it("falls back to the older numbered form when none are named", () => {
+    // An install that predates this must keep working across a deploy.
+    const chain = llmProviders(
+      env({ LLM_BASE_URL: "https://ollama.com/v1", LLM_MODEL: "gemma4:31b" }),
+    );
+    expect(chain[0].label).toBe("primary");
+  });
+
+  it("ignores odd characters in a provider name", () => {
+    const chain = llmProviders(
+      env({
+        LLM_PROVIDERS: " my-host ",
+        LLM_MY_HOST_BASE_URL: "https://x/v1",
+        LLM_MY_HOST_MODEL: "m",
+        LLM_MY_HOST_API_KEY: "k",
+      }),
+    );
+    expect(chain).toHaveLength(1);
+    expect(chain[0].label).toBe("my-host");
+  });
+});

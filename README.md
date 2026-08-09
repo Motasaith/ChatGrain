@@ -1,12 +1,16 @@
-# Docent
+# ChatGrain
 
-Docent is a self-hosted alternative to website-trained support platforms. Give
-it a public URL and it crawls the site, extracts readable content, builds a
-hybrid search index, detects the brand, and produces a cited chat widget.
+ChatGrain is a self-hosted alternative to website-trained support platforms.
+Give it a public URL and it crawls the site, extracts readable content, builds
+a hybrid search index, detects the brand, and produces a cited chat widget.
 
 `Code.md` is preserved as the original visual concept. The running product is a
 new responsive Next.js application in `apps/web`; it does not execute code from
 the Markdown prototype.
+
+The package scope is still `@docent/web` and the deployment directory is
+`/var/www/docent`; renaming either would break running deployments for no
+functional gain.
 
 ## Included
 
@@ -19,12 +23,23 @@ the Markdown prototype.
   chunks, and atomic index replacement
 - Local Transformers.js embeddings with a deterministic zero-setup fallback
 - PostgreSQL full-text search plus pgvector HNSW semantic search
-- Pinned-answer support in the data model and grounded confidence fallbacks
-- Ollama Cloud generation constrained to retrieved context, with extractive
-  fallback when cloud generation is unavailable
+- Pinned answers, matched before retrieval so a curated reply always wins
+- A report of the questions agents could not answer, grouped and ranked, with
+  one-click pinning to close each gap
+- Any OpenAI-compatible provider, declared as an ordered chain with automatic
+  failover, plus per-agent bring-your-own-key stored encrypted
+- Generation constrained to retrieved context, with extractive fallback when
+  every provider is unavailable
 - Durable jobs, automatic recrawls, worker recovery/heartbeat, conversations,
   messages, persistent visitor history, unread operator replies, feedback,
   leads, and support tickets
+- A help centre that opens tickets directly, with separate forms for support
+  requests, bug reports, and live-person requests
+- Published support hours combined with observed operator presence, so a live
+  person is only offered when someone is genuinely available
+- Optional email notification when support replies, over SMTP or a hosted API
+- Per-page crawl outcomes, distinct phases, and hash-based incremental
+  reindexing
 - Protected image and voice attachments, Gemma 4 vision input, playable saved
   recordings, and optional self-hosted Whisper transcription
 - Hosted iframe widget and a one-line asynchronous `embed.js`
@@ -54,7 +69,7 @@ npm run dev
 Open `http://localhost:3000`. The web process and crawl worker run together in
 development. PostgreSQL is exposed on local port `5434`.
 
-The worker also maintains the support agent shown on Docent's own homepage.
+The worker also maintains the support agent shown on ChatGrain's own homepage.
 Set `DOCENT_SITE_URL` to the public deployment URL and configure
 `DOCENT_SITE_REFRESH_HOURS` (one hour by default). The source is refreshed when
 the worker starts and on that schedule, so newly deployed public content is
@@ -79,24 +94,127 @@ npm run dev
 The hash mode is fast and deterministic, but the default local transformer has
 better semantic retrieval quality.
 
-## Ollama Cloud answers
+## Answer providers
 
-New agents use Ollama Cloud by default. Add an API key only to
-`apps/web/.env.local`:
+The client speaks the OpenAI-compatible `/v1/chat/completions` API, so any
+endpoint implementing it works: Ollama Cloud, Groq, OpenRouter, DeepSeek, a
+self-hosted vLLM, or a local Ollama.
 
-```powershell
-LLM_BASE_URL=https://ollama.com/v1
-LLM_API_KEY=your_rotated_key
-LLM_MODEL=gemma4:31b
-VISION_LLM_MODEL=gemma4:31b
-npm run dev
+Providers are declared as an ordered chain. When one rate-limits, times out or
+fails, the next is tried; the visitor waits a few hundred milliseconds instead
+of losing the answer.
+
+```dotenv
+LLM_PROVIDERS=groq,ollama
+
+LLM_GROQ_BASE_URL=https://api.groq.com/openai/v1
+LLM_GROQ_MODEL=llama-3.3-70b-versatile
+LLM_GROQ_API_KEY=gsk_first
+LLM_GROQ_API_KEY_2=gsk_second
+LLM_GROQ_API_KEY_3=gsk_third
+
+LLM_OLLAMA_BASE_URL=https://ollama.com/v1
+LLM_OLLAMA_MODEL=gemma4:31b
+LLM_OLLAMA_API_KEY=your_key
 ```
 
-The client uses Ollama's OpenAI-compatible chat-completions endpoint. If the
-cloud request is unavailable or the evidence is too weak, Docent fails closed
-to its extractive grounded engine. A local Ollama server remains supported by
-setting `LLM_BASE_URL=http://127.0.0.1:11434/v1`; local requests do not require
-an API key.
+`LLM_PROVIDERS` sets the order. Names are yours to choose; the variables are
+`LLM_<NAME>_BASE_URL`, `LLM_<NAME>_MODEL` and `LLM_<NAME>_API_KEY`.
+
+**Several keys on one provider.** Free tiers meter per key, so `_2`, `_3` and
+so on are more quota on the same endpoint rather than a different vendor. Each
+becomes its own entry in the chain, labelled `groq`, `groq_2`, `groq_3` in the
+logs.
+
+**Different models per entry.** `LLM_GROQ_MODEL_2` overrides the model for the
+second key only, so a chain can fall back from a large model to a fast one.
+`LLM_<NAME>_BASE_URL_2` works the same way.
+
+Numbering must not skip: `_3` without `_2` stops the chain there. A gap is a
+typo, and honouring it would hide the mistake until the day the primary failed.
+
+The default model is `llama-3.3-70b-versatile`. It is tool-capable, which the
+Gemma family is not, and fast enough for multi-step answers.
+
+An older unnamed form is still read when `LLM_PROVIDERS` is unset, so existing
+installs keep working:
+
+```dotenv
+LLM_BASE_URL=https://ollama.com/v1
+LLM_API_KEY=your_key
+LLM_MODEL=gemma4:31b
+LLM_BASE_URL_02=https://api.groq.com/openai/v1
+LLM_MODEL_02=llama-3.3-70b-versatile
+LLM_API_KEY_02=gsk_second
+```
+
+A local Ollama needs no key: set `LLM_OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`.
+
+If every provider fails, or the evidence is too weak, ChatGrain fails closed to
+its extractive grounded engine rather than inventing an answer.
+
+### Customer-supplied keys
+
+Each agent can carry its own endpoint and key, set in the agent's Behavior tab.
+The customer's key is tried first and the installation's chain still follows,
+so bringing a key does not mean losing answers when their quota runs out.
+
+Keys are encrypted with AES-256-GCM before storage and are never returned to
+the browser. This requires an encryption key:
+
+```bash
+openssl rand -base64 32
+```
+
+```dotenv
+SECRET_ENCRYPTION_KEY=the_generated_value
+```
+
+Without it, saving a customer key is refused rather than stored in plaintext.
+Treat it like a database password: if it is lost, every stored key becomes
+unreadable and each customer must re-enter theirs.
+
+## Support, tickets and availability
+
+The help centre opens tickets directly, with a separate form per intent:
+contact support, report a problem (which captures the page and opens at high
+priority), and talk to a person. The in-chat lead form is unchanged and still
+captures a contact when the assistant cannot answer.
+
+An agent may publish weekly support hours, set in its Behavior tab with an IANA
+timezone. A live person is offered only when the current time is inside those
+hours **and** an operator has the dashboard open, observed via a heartbeat that
+stops while the tab is hidden. Presence is observed rather than declared so a
+widget never promises a person because someone forgot to flip a switch.
+
+Anonymous visitors are identified by a UUID in `localStorage`, so a returning
+guest sees their tickets, references and replies. Email is the durable
+fallback, since clearing storage or switching device loses that thread:
+
+```dotenv
+SUPPORT_EMAIL_PROVIDER=smtp
+SMTP_URL=smtp://user:password@mail.example.com:587
+SUPPORT_EMAIL_FROM=support@example.com
+```
+
+SMTP works against anything speaking the protocol, including a self-hosted
+mail server. `SUPPORT_EMAIL_PROVIDER=resend` with `RESEND_API_KEY` is also
+supported. Deliverability from a datacenter IP is usually the harder problem
+than the software: expect to need SPF, DKIM and DMARC, and consider a relay.
+
+Without configuration, notifications are skipped and logged; the in-widget
+unread badge still works.
+
+## Finding content gaps
+
+Every refusal is stored with `grounded = false`. The analytics page pairs each
+one with the question that caused it, groups them so the same gap asked twenty
+ways ranks as one item, and lists them by frequency.
+
+Each row offers **Pin answer**, which opens a pinned answer prefilled with the
+question and every wording it arrived in. Pinned answers are checked before
+retrieval, so a curated reply always wins, and `useCount` shows afterwards
+whether the fix is being used.
 
 ## Widget
 
@@ -132,7 +250,7 @@ that directory on persistent VPS storage.
 
 ## Voice transcription
 
-Docent records audio with the browser MediaRecorder API. Chromium-based
+ChatGrain records audio with the browser MediaRecorder API. Chromium-based
 browsers may also provide an immediate browser transcript. For consistent
 multilingual transcription, including Firefox, run the free `whisper.cpp`
 service:
@@ -243,7 +361,7 @@ previously healthy knowledge source.
 
 ## Reliability and hallucinations
 
-No generative system can honestly promise zero hallucinations. Docent reduces
+No generative system can honestly promise zero hallucinations. ChatGrain reduces
 the risk with hybrid retrieval, pinned answers, source-only prompting, a
 confidence threshold, strict fallback responses, low-temperature local
 generation, and citations. High-stakes deployments should add a domain-specific
@@ -272,8 +390,8 @@ must never be exposed to the internet.
 ## Retention and abandoned accounts
 
 The independent worker runs account retention once per day. A non-admin user
-whose authenticated Docent activity is older than the configured window has
-their Docent user record and sole-owner workspace deleted. Cascading foreign
+whose authenticated ChatGrain activity is older than the configured window has
+their ChatGrain user record and sole-owner workspace deleted. Cascading foreign
 keys remove that workspace's agents, sources, documents, embeddings, chats,
 and leads.
 
@@ -306,7 +424,7 @@ SENTRY_PROJECT=javascript-nextjs
 SENTRY_API_BASE_URL=https://de.sentry.io
 ```
 
-The DSN cannot read issues. To display recent Sentry issues in Docent's
+The DSN cannot read issues. To display recent Sentry issues in ChatGrain's
 administrator dashboard, create a server-side Sentry token with `event:read`
 scope and set `SENTRY_AUTH_TOKEN`. Never expose that token with a
 `NEXT_PUBLIC_` prefix.
@@ -362,19 +480,47 @@ from the public internet; only the application on the VPS needs it.
 
 ## Commands
 
-```powershell
-npm run dev          # Next.js + worker
+```bash
+npm run dev          # Next.js + worker + voice gateway
 npm run build        # production build
 npm run start        # production web server
 npm run worker -w @docent/web
 npm run typecheck
 npm run lint
 npm test
-npm run db:migrate
-npm run db:push
+npm run db:push      # apply the schema (see the note below)
 npm run services:up
 npm run services:down
 ```
+
+Diagnostics, run from `apps/web`:
+
+```bash
+# Why a crawl reports nothing per page.
+npm run diagnose:crawl
+
+# Why an agent answered, or refused, a specific question. Reports each stage
+# separately: indexed, retrieved, scored, or declined by the model.
+npx tsx --tsconfig tsconfig.voice.json scripts/diagnose-answer.ts   "how does the time calculator work" calculators/time --agent="HOC 2.0"
+```
+
+### Schema: push, not migrate
+
+Deployments here have always used `db:push`, which applies the schema directly
+and records nothing in the migrations journal. `db:migrate` therefore tries to
+replay migration `0000` over live tables and fails. Use `npm run db:push`, or
+apply a single migration by hand.
+
+### Deploying
+
+```bash
+bash scripts/deploy.sh
+```
+
+It discards the locally rewritten `package-lock.json` before pulling, installs
+with `npm ci`, pushes the schema, builds, and restarts the three PM2 processes
+with `--update-env`. It stops at the first failure, rather than continuing
+against stale code after an aborted pull.
 
 ## Production checklist
 
@@ -385,6 +531,16 @@ npm run services:down
 - Configure Sentry source-map upload and a server-only issue-read token if the
   administrator dashboard should display Sentry issues.
 - Set widget allowed domains, retention rules, and per-workspace quotas.
+- Generate `SECRET_ENCRYPTION_KEY` before any customer saves their own API key,
+  and back it up separately from the database.
+- Declare at least two entries in `LLM_PROVIDERS` so a rate-limited free tier
+  does not take answers down.
+- Configure `SUPPORT_EMAIL_*` if visitors should learn about replies without
+  returning to the site.
+- Set `CRAWL_CONCURRENCY` to 2-4 on a shared host; the default of 6 will
+  saturate a small VPS and provoke rate limiting from the sites being crawled.
+- Set `ADMIN_FILE_MAX_BYTES` (for example `26214400`). Zero means no limit, and
+  uploads are read into memory inside the request.
 - Review `npm audit` advisories against your deployment threat model. As of
   this lockfile, current upstream Next.js and Transformers.js transitives report
   advisories without compatible fixes.
