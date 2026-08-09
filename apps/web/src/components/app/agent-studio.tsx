@@ -52,6 +52,8 @@ type Agent = {
   collectFeedback: boolean;
   followUpSuggestions: boolean;
   businessHours: BusinessHours | null;
+  llmBaseUrl: string | null;
+  hasCustomKey?: boolean;
   showCitations: boolean;
   strictMode: boolean;
   allowedDomains: string[];
@@ -159,6 +161,7 @@ export function AgentStudio({
   );
   const [saving, setSaving] = useState(false);
   const [removingSourceId, setRemovingSourceId] = useState("");
+  const [apiKeyInput, setApiKeyInput] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -254,6 +257,8 @@ export function AgentStudio({
         collectFeedback: agent.collectFeedback,
         followUpSuggestions: agent.followUpSuggestions,
         businessHours: agent.businessHours,
+        llmBaseUrl: agent.llmBaseUrl,
+        ...(apiKeyInput ? { llmApiKey: apiKeyInput } : {}),
         showCitations: agent.showCitations,
         strictMode: agent.strictMode,
         allowedDomains: agent.allowedDomains,
@@ -897,7 +902,36 @@ export function AgentStudio({
               </select>
             </label>
             {agent.modelProvider === "ollama" && (
-              <label className="field"><span>Ollama model</span><input placeholder="gemma4:31b" value={agent.modelName || ""} onChange={(event) => patch("modelName", event.target.value || null)} /></label>
+              <>
+                <label className="field"><span>Model</span><input placeholder="llama-3.3-70b-versatile" value={agent.modelName || ""} onChange={(event) => patch("modelName", event.target.value || null)} /></label>
+                <label className="field">
+                  <span>Your own endpoint (optional)</span>
+                  <input
+                    onChange={(event) => patch("llmBaseUrl", event.target.value || null)}
+                    placeholder="https://api.groq.com/openai/v1"
+                    value={agent.llmBaseUrl || ""}
+                  />
+                  <small>
+                    Any OpenAI-compatible API. Leave blank to use the shared
+                    providers.
+                  </small>
+                </label>
+                <label className="field">
+                  <span>Your API key</span>
+                  <input
+                    onChange={(event) => setApiKeyInput(event.target.value)}
+                    placeholder={agent.hasCustomKey ? "Saved - type to replace" : "sk-... or gsk_..."}
+                    type="password"
+                    value={apiKeyInput}
+                  />
+                  <small>
+                    {/* Never sent back to the browser once stored, so there is
+                        nothing here to reveal - only to replace. */}
+                    Stored encrypted and never shown again. If your quota runs
+                    out, answers fall back to the shared providers.
+                  </small>
+                </label>
+              </>
             )}
           </aside>
           <section className="settings-panel danger-panel">

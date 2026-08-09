@@ -74,9 +74,13 @@ export default async function AgentPage({
     .from(pinnedAnswers)
     .where(eq(pinnedAnswers.agentId, agent.id));
   const previewToken = await createWidgetToken(agent.id, "__dashboard__");
+  // Only whether a key exists, never the key itself: nothing decryptable
+  // should cross into the browser.
+  const { llmApiKeyEncrypted, ...rest } = agent;
+  const studioAgent = { ...rest, hasCustomKey: !!llmApiKeyEncrypted };
   return (
     <AgentStudio
-      initialAgent={agent}
+      initialAgent={studioAgent}
       initialJob={job}
       initialPinned={pinned}
       initialSources={sourceList}

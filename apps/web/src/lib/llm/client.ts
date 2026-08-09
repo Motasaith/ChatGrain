@@ -1,4 +1,10 @@
 import { logger } from "@/lib/observability/logger";
+import {
+  DEFAULT_LLM_MODEL,
+  isRetryableStatus,
+  llmProviders,
+  type LlmProvider,
+} from "./providers";
 
 type GenerateAnswerInput = {
   model?: string | null;
@@ -10,6 +16,8 @@ type GenerateAnswerInput = {
     mimeType: string;
     base64: string;
   }>;
+  /** Ordered endpoints to try; defaults to the installation's chain. */
+  providers?: LlmProvider[];
 };
 
 type DescribeImagesInput = {
@@ -81,7 +89,7 @@ export function defaultLlmModel() {
     process.env.LLM_MODEL?.trim() ||
     process.env.VISION_LLM_MODEL?.trim() ||
     process.env.OLLAMA_MODEL?.trim() ||
-    "gemma4:31b"
+    DEFAULT_LLM_MODEL
   );
 }
 
@@ -283,26 +291,12 @@ export async function generateGroundedAnswer({
   question,
   temperature,
   images = [],
+  providers,
 }: GenerateAnswerInput) {
-  const baseUrl = llmBaseUrl();
-  const apiKey = llmApiKey();
-  const cloudRequest = new URL(baseUrl).hostname === "ollama.com";
-
-  if (cloudRequest && !apiKey) {
-    logger.warn(
-      "Ollama Cloud is the configured answer engine, but LLM_API_KEY is missing",
-    );
-    return null;
-  }
-
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model: model?.trim() || defaultLlmModel(),
+  const chain = providers?.length ? providers : llmProviders();
+  const requestBody = (chosenModel: string) =>
+    JSON.stringify({
+      model: chosenModel,
       messages: [
         {
           role: "system",
@@ -341,22 +335,55 @@ Customer question: ${question}`,
       temperature,
       max_tokens: 320,
       stream: false,
-    }),
-    signal: AbortSignal.timeout(45_000),
-  });
+    });
 
-  if (!response.ok) {
-    logger.warn(
-      { status: response.status, model: model || defaultLlmModel() },
-      "Ollama-compatible generation request failed",
-    );
-    return null;
+  // Walk the chain: a rate-limited free tier or a provider outage should cost
+  // a few hundred milliseconds, not the answer.
+  for (const [index, provider] of chain.entries()) {
+    const chosenModel = model?.trim() || provider.model;
+    const last = index === chain.length - 1;
+    try {
+      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(provider.apiKey
+            ? { authorization: `Bearer ${provider.apiKey}` }
+            : {}),
+        },
+        body: requestBody(chosenModel),
+        signal: AbortSignal.timeout(45_000),
+      });
+
+      if (!response.ok) {
+        logger.warn(
+          { status: response.status, provider: provider.label, model: chosenModel },
+          "Generation request failed",
+        );
+        if (last || !isRetryableStatus(response.status)) return null;
+        continue;
+      }
+
+      const payload = (await response.json()) as ChatCompletionResponse;
+      const answer = payload.choices?.[0]?.message?.content?.trim();
+      if (!answer) {
+        // An empty completion is a provider problem, not a refusal; the
+        // sentinel is how a model declines, and that must not be retried.
+        if (last) return null;
+        continue;
+      }
+      if (answer.includes("NOT_ENOUGH_EVIDENCE")) return null;
+      return answer;
+    } catch (error) {
+      // Timeouts and DNS failures never reach the status check above.
+      logger.warn(
+        { error, provider: provider.label },
+        "Generation request threw",
+      );
+      if (last) return null;
+    }
   }
-
-  const payload = (await response.json()) as ChatCompletionResponse;
-  const answer = payload.choices?.[0]?.message?.content?.trim();
-  if (!answer || answer.includes("NOT_ENOUGH_EVIDENCE")) return null;
-  return answer;
+  return null;
 }
 
 export type GroundedAnswerChunk =

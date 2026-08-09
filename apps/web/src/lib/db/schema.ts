@@ -212,6 +212,11 @@ export const agents = pgTable(
     showCitations: boolean("show_citations").default(true).notNull(),
     strictMode: boolean("strict_mode").default(true).notNull(),
     allowedDomains: text("allowed_domains").array().default([]).notNull(),
+    // Bring-your-own-key. Null means this agent uses the installation's
+    // configured providers; the key is encrypted at rest because it is the
+    // customer's credential, not ours.
+    llmBaseUrl: text("llm_base_url"),
+    llmApiKeyEncrypted: text("llm_api_key_encrypted"),
     modelProvider: text("model_provider").default("ollama").notNull(),
     modelName: text("model_name").default("gemma4:31b"),
     temperature: real("temperature").default(0.1).notNull(),

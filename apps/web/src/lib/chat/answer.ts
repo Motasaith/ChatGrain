@@ -10,6 +10,8 @@ import {
   streamGroundedAnswer,
 } from "@/lib/llm/client";
 import { suggestFollowUps } from "@/lib/chat/follow-ups";
+import { providersForAgent } from "@/lib/llm/providers";
+import { decryptSecret } from "@/lib/security/secrets";
 import { logger } from "@/lib/observability/logger";
 import {
   findLatestIndexedLink,
@@ -721,6 +723,13 @@ async function llmAnswer(
       question: conversationQuestion(question, history),
       temperature: agent.temperature,
       images,
+      // The agent's own key first, then the installation's chain, so a
+      // customer whose quota runs out still gets an answer.
+      providers: providersForAgent({
+        llmBaseUrl: agent.llmBaseUrl,
+        llmApiKey: decryptSecret(agent.llmApiKeyEncrypted),
+        modelName: agent.modelName,
+      }),
     });
   } catch (error) {
     logger.warn({ error, model }, "Ollama generation failed");

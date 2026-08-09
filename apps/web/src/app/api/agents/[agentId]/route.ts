@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { encryptSecret } from "@/lib/security/secrets";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAgent } from "@/lib/agents/access";
@@ -46,6 +47,9 @@ const updateAgentSchema = z
     showCitations: z.boolean(),
     strictMode: z.boolean(),
     allowedDomains: z.array(z.string().trim().min(1).max(255)).max(100),
+    llmBaseUrl: z.string().trim().max(300).nullable(),
+    /** Write-only: sent to set or clear a key, never returned. */
+    llmApiKey: z.string().trim().max(300).nullable(),
     modelProvider: z.enum(["extractive", "ollama"]),
     modelName: z.string().trim().max(120).nullable(),
     temperature: z.number().min(0).max(1),
@@ -78,6 +82,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { agentId } = await context.params;
     const { context: workspace } = await requireAgent(agentId);
     const input = updateAgentSchema.parse(await readJson(request));
+    // The raw key is handled separately below; it must not reach the column
+    // spread, which would store it in plaintext.
+    const values = { ...input };
+    delete values.llmApiKey;
     if (input.showBranding !== undefined && !workspace.isAdmin) {
       throw new AppError(
         "ADMIN_REQUIRED",
@@ -87,7 +95,20 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
     const [agent] = await db
       .update(agents)
-      .set({ ...input, updatedAt: new Date() })
+      .set({
+        ...values,
+        // Encrypted on the way in and dropped from the response, so a
+        // customer's key is never readable once saved - not by the dashboard,
+        // not by a database dump.
+        ...(input.llmApiKey === undefined
+          ? {}
+          : {
+              llmApiKeyEncrypted: input.llmApiKey
+                ? encryptSecret(input.llmApiKey)
+                : null,
+            }),
+        updatedAt: new Date(),
+      })
       .where(eq(agents.id, agentId))
       .returning();
     await recordAudit({
