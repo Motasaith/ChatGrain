@@ -1,11 +1,14 @@
-import { BarChart3, Bot, MessageCircleMore, ShieldCheck, ThumbsUp, Timer, UsersRound } from "lucide-react";
+import { BarChart3, Bot, CircleHelp, MessageCircleMore, ShieldCheck, ThumbsUp, Timer, UsersRound } from "lucide-react";
 import { eq, sql } from "drizzle-orm";
+import Link from "next/link";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
+import { unansweredQuestions } from "@/lib/analytics/unanswered";
 import { db } from "@/lib/db/client";
 import { agents, conversations, feedback, messages } from "@/lib/db/schema";
 
 export default async function AnalyticsPage() {
   const workspace = await getWorkspaceContext();
+  const gaps = await unansweredQuestions(workspace.workspaceId);
   const [summary] = await db
     .select({
       conversations: sql<number>`count(distinct ${conversations.id})::int`,
@@ -76,6 +79,51 @@ export default async function AnalyticsPage() {
           <div className="quality-row"><span><UsersRound size={13} /> Unique visitors</span><b>{Number(summary?.visitors || 0)}</b></div>
         </section>
       </div>
+      <section className="data-card gaps-card">
+        <div className="data-toolbar">
+          <span><CircleHelp size={15} /> Questions you could not answer</span>
+          <small>Last 30 days</small>
+        </div>
+        {gaps.length ? (
+          <>
+            <p className="gaps-intro">
+              Each of these is a visitor who left without an answer. Add the
+              missing content to a source, or pin an answer, and the agent
+              handles it next time.
+            </p>
+            <ol className="gaps-list">
+              {gaps.map((gap) => (
+                <li key={`${gap.conversationId}-${gap.question}`}>
+                  <span className="gaps-count" title={`Asked ${gap.count} times`}>
+                    {gap.count}&times;
+                  </span>
+                  <span className="gaps-body">
+                    <b>{gap.question}</b>
+                    {gap.variants.length ? (
+                      <small>Also asked: {gap.variants.join(" · ")}</small>
+                    ) : null}
+                    <em>
+                      {gap.agentName} · last asked{" "}
+                      {gap.lastAskedAt.toLocaleDateString()}
+                    </em>
+                  </span>
+                  <Link
+                    href={`/dashboard/activity/${gap.conversationId}`}
+                    title="Open the conversation"
+                  >
+                    Open
+                  </Link>
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : (
+          <p className="gaps-empty">
+            Nothing unanswered in the last 30 days. This fills up as visitors
+            ask things your sources do not cover.
+          </p>
+        )}
+      </section>
     </>
   );
 }
