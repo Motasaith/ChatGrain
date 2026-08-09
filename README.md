@@ -504,27 +504,6 @@ npm run diagnose:crawl
 npx tsx --tsconfig tsconfig.voice.json scripts/diagnose-answer.ts   "how does the time calculator work" calculators/time --agent="HOC 2.0"
 ```
 
-### Keeping env files in step
-
-`.env.example` is the full list of variables in a readable order; a real env
-file is the same list with values. They drift, because variables get added to
-the template and nobody backfills the files that already exist, so a default
-applies silently without ever appearing in the file meant to describe the
-install.
-
-```bash
-npm run env:sync                          # fill apps/web/.env.local
-npm run env:sync -- --file apps/web/.env  # or a server file
-npm run env:example                       # regenerate the template from it
-```
-
-`env:sync` keeps every value already set, including one deliberately blanked -
-emptying a key is how a feature is turned off, and refilling it from the
-template would switch it back on. It adds anything the template introduced,
-carries through keys the template does not mention, and reports key names only.
-`env:example` writes the template back from a real file with secrets emptied.
-Both keep a `.bak`, and neither ever prints a value.
-
 ### Schema: push, not migrate
 
 Deployments here have always used `db:push`, which applies the schema directly
