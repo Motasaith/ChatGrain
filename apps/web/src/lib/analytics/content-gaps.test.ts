@@ -13,6 +13,7 @@ const ask = (
   question,
   askedAt: new Date(Date.now() - daysAgo * 86_400_000),
   conversationId,
+  agentId: "a1",
   agentName: "HOC",
 });
 

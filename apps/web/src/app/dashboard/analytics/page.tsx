@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import Link from "next/link";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { unansweredQuestions } from "@/lib/analytics/unanswered";
+import { PinGapButton } from "@/components/app/pin-gap-button";
 import { db } from "@/lib/db/client";
 import { agents, conversations, feedback, messages } from "@/lib/db/schema";
 
@@ -107,12 +108,19 @@ export default async function AnalyticsPage() {
                       {gap.lastAskedAt.toLocaleDateString()}
                     </em>
                   </span>
-                  <Link
-                    href={`/dashboard/activity/${gap.conversationId}`}
-                    title="Open the conversation"
-                  >
-                    Open
-                  </Link>
+                  <span className="gaps-actions">
+                    <PinGapButton
+                      agentId={gap.agentId}
+                      question={gap.question}
+                      variants={gap.variants}
+                    />
+                    <Link
+                      href={`/dashboard/activity/${gap.conversationId}`}
+                      title="Open the conversation"
+                    >
+                      Open
+                    </Link>
+                  </span>
                 </li>
               ))}
             </ol>

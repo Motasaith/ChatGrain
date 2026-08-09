@@ -24,6 +24,7 @@ export async function unansweredQuestions(
     question: string;
     asked_at: string;
     conversation_id: string;
+    agent_id: string;
     agent_name: string;
   };
   const result = await db.execute<Row>(sql`
@@ -31,6 +32,7 @@ export async function unansweredQuestions(
       q.content as question,
       m.created_at as asked_at,
       c.id as conversation_id,
+      a.id as agent_id,
       a.name as agent_name
     from messages m
     join conversations c on c.id = m.conversation_id
@@ -62,6 +64,7 @@ export async function unansweredQuestions(
     question: row.question ?? "",
     askedAt: new Date(row.asked_at),
     conversationId: row.conversation_id,
+    agentId: row.agent_id,
     agentName: row.agent_name,
   }));
   return groupContentGaps(questions, limit);

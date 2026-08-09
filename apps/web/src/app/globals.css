@@ -9774,6 +9774,63 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 
 /* Starter question chips ------------------------------------------------- */
 
+.gaps-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.gaps-pin {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--green-dark);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.gaps-pin:hover {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 7%, transparent);
+}
+
+.gaps-pin-save {
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 15px;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--green);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.gaps-pin-save:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.gaps-pinned {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green-dark);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .gaps-card {
   margin-top: 15px;
 }

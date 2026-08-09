@@ -10,6 +10,7 @@ export type UnansweredQuestion = {
   question: string;
   askedAt: Date;
   conversationId: string;
+  agentId: string;
   agentName: string;
 };
 
@@ -18,6 +19,7 @@ export type ContentGap = {
   question: string;
   count: number;
   lastAskedAt: Date;
+  agentId: string;
   agentName: string;
   /** A conversation to open, so the gap can be read in context. */
   conversationId: string;
@@ -85,6 +87,7 @@ export function groupContentGaps(
         question: clearest.question,
         count: items.length,
         lastAskedAt: newest.askedAt,
+        agentId: newest.agentId,
         agentName: newest.agentName,
         conversationId: newest.conversationId,
         variants: [

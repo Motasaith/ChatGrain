@@ -76,26 +76,54 @@ const handoffAction: ChatUiAction = {
   submitLabel: "Request a reply",
 };
 
-function terms(value: string) {
+const TERM_STOP_WORDS = new Set([
+  "the", "and", "that", "this", "with", "from", "your", "what", "when",
+  "where", "how",
+]);
+
+/**
+ * Crude singularisation, deliberately not a full stemmer.
+ *
+ * Without it a pinned answer for "refund policy" never fires for "do you
+ * offer refunds", which is the same question. Only words over four characters
+ * are touched, so "its", "was" and "gas" survive intact.
+ */
+function singular(word: string) {
+  if (word.length <= 4 || !word.endsWith("s")) return word;
+  if (word.endsWith("ss") || word.endsWith("us") || word.endsWith("is")) {
+    return word;
+  }
+  return word.endsWith("es") && /(?:ch|sh|x|z|s)es$/.test(word)
+    ? word.slice(0, -2)
+    : word.slice(0, -1);
+}
+
+export function terms(value: string) {
   return new Set(
-    (value.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).filter(
-      (word) =>
-        !new Set([
-          "the",
-          "and",
-          "that",
-          "this",
-          "with",
-          "from",
-          "your",
-          "what",
-          "when",
-          "where",
-          "how",
-        ]).has(word),
-    ),
+    (value.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [])
+      .filter((word) => !TERM_STOP_WORDS.has(word))
+      .map(singular),
   );
 }
+
+/**
+ * Similarity between a visitor's question and one phrasing of a pinned answer.
+ *
+ * Cosine-style, so a long pinned phrasing does not score highly against a
+ * short question merely by containing it. Exported for testing: a pinned
+ * answer is returned instead of running retrieval at all, so a false positive
+ * silently replaces a correct answer.
+ */
+export function pinnedMatchScore(question: string, candidate: string) {
+  const query = terms(question);
+  const target = terms(candidate);
+  if (!query.size || !target.size) return 0;
+  const overlap = [...query].filter((word) => target.has(word)).length;
+  return overlap / Math.max(1, Math.sqrt(query.size * target.size));
+}
+
+/** Below this a pin is a worse answer than retrieval. */
+export const PINNED_MATCH_THRESHOLD = 0.72;
 
 function pageSpecificity(value: string) {
   try {
@@ -407,15 +435,12 @@ async function findPinnedAnswer(agentId: string, question: string) {
     .select()
     .from(pinnedAnswers)
     .where(eq(pinnedAnswers.agentId, agentId));
-  const query = terms(question);
   let best:
     | { id: string; title: string; answer: string; score: number }
     | undefined;
   for (const entry of entries) {
     for (const candidate of entry.questions) {
-      const target = terms(candidate);
-      const overlap = [...query].filter((word) => target.has(word)).length;
-      const score = overlap / Math.max(1, Math.sqrt(query.size * target.size));
+      const score = pinnedMatchScore(question, candidate);
       if (!best || score > best.score) {
         best = {
           id: entry.id,
@@ -426,7 +451,7 @@ async function findPinnedAnswer(agentId: string, question: string) {
       }
     }
   }
-  if (!best || best.score < 0.72) return null;
+  if (!best || best.score < PINNED_MATCH_THRESHOLD) return null;
   await db
     .update(pinnedAnswers)
     .set({ useCount: sql`${pinnedAnswers.useCount} + 1` })
