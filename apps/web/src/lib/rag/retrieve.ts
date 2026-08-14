@@ -130,7 +130,7 @@ export async function hybridRetrieve(
   // The embedding and the site vocabulary are independent, and the cached
   // lookup usually resolves instantly, so neither should wait on the other.
   const [embedding, siteWords] = await Promise.all([
-    embedText(query),
+    embedText(query, "query"),
     agentSiteWords(agentId),
   ]);
   const queryTerms = retrievalQueryTerms(query, { siteWords });

@@ -301,7 +301,10 @@ export const chunks = pgTable(
     position: integer("position").notNull(),
     content: text("content").notNull(),
     tokenCount: integer("token_count").default(0).notNull(),
-    embedding: vector("embedding", { dimensions: 384 }),
+    // Qwen3-Embedding-0.6B. Must match EMBEDDING_DIMENSIONS in
+    // lib/rag/embeddings.ts, and must stay <= 2000 or the HNSW index below
+    // cannot be built at all.
+    embedding: vector("embedding", { dimensions: 1024 }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

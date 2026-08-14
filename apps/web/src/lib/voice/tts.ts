@@ -2,6 +2,7 @@
 // standalone voice gateway process, where that package throws because the
 // `react-server` export condition is absent.
 import { logger } from "@/lib/observability/logger";
+import { float32ToPcm16 } from "@/lib/voice/audio";
 
 /**
  * Fallback sample rate, used only when the speech server does not declare one.
@@ -27,8 +28,66 @@ export function ttsBaseUrl() {
   return process.env.TTS_BASE_URL?.trim().replace(/\/+$/, "") || "";
 }
 
+/**
+ * Kokoro-82M in this process, via `kokoro-js`.
+ *
+ * The alternative is running Kokoro-FastAPI as a separate server, which means
+ * either a container or a Python process to supervise. Neither is worth it when
+ * the model is 82M parameters and the ONNX runtime is already loaded for
+ * embeddings - this keeps text-to-speech a library call with nothing to deploy.
+ */
+export function ttsLocal() {
+  return (process.env.TTS_PROVIDER?.trim() || "local") === "local";
+}
+
 export function ttsEnabled() {
-  return Boolean(ttsBaseUrl());
+  return ttsLocal() ? true : Boolean(ttsBaseUrl());
+}
+
+const KOKORO_SAMPLE_RATE = 24_000;
+
+type KokoroAudio = { audio: Float32Array; sampling_rate: number };
+
+type KokoroModel = {
+  stream(
+    text: unknown,
+    options: { voice?: string; speed?: number },
+  ): AsyncGenerator<{ audio: KokoroAudio }>;
+};
+
+type SplitterStream = {
+  push(...text: string[]): void;
+  close(): void;
+};
+
+let kokoroPromise: Promise<KokoroModel> | undefined;
+
+let splitterFactory: (() => SplitterStream) | undefined;
+
+async function loadKokoro() {
+  if (!kokoroPromise) {
+    kokoroPromise = import("kokoro-js").then(
+      async ({ KokoroTTS, TextSplitterStream }) => {
+        splitterFactory = () =>
+          new TextSplitterStream() as unknown as SplitterStream;
+        const model = await KokoroTTS.from_pretrained(
+          process.env.TTS_MODEL_ID?.trim() ||
+            "onnx-community/Kokoro-82M-v1.0-ONNX",
+          {
+            dtype: (process.env.TTS_DTYPE?.trim() || "q8") as "q8",
+            device: "cpu",
+          },
+        );
+        logger.info("Kokoro speech model loaded");
+        return model as unknown as KokoroModel;
+      },
+    );
+    // A failed load must not poison every later attempt with the same rejection.
+    kokoroPromise.catch(() => {
+      kokoroPromise = undefined;
+    });
+  }
+  return kokoroPromise;
 }
 
 /**
@@ -156,13 +215,63 @@ export type SpeechChunk = {
  * Streams synthesized PCM for one chunk of text. Chunks are yielded as they
  * arrive so playback can begin before synthesis finishes.
  */
+/**
+ * Yields one chunk per sentence, as the model finishes it, so playback starts
+ * on the first sentence rather than after the whole answer is synthesized.
+ */
+async function* synthesizeLocally(
+  spoken: string,
+  signal?: AbortSignal,
+): AsyncGenerator<SpeechChunk> {
+  let model: KokoroModel;
+  try {
+    model = await loadKokoro();
+  } catch (error) {
+    logger.warn({ error }, "Kokoro speech model unavailable");
+    return;
+  }
+  const speed = Number(process.env.TTS_SPEED?.trim()) || 1;
+  const voice = process.env.TTS_VOICE?.trim() || "af_bella";
+
+  // Drive the splitter ourselves rather than passing a bare string.
+  //
+  // kokoro-js 1.2.1's string path builds a TextSplitterStream internally and
+  // pushes the text but never closes it. Its iterator only stops once closed,
+  // so after the buffered sentences drain it awaits a promise nobody resolves
+  // and the generator hangs forever - and the trailing partial sentence, which
+  // only `close()` flushes, is never spoken at all. Closing it ourselves fixes
+  // both, and still yields per sentence so playback starts on the first one.
+  const splitter = splitterFactory?.();
+  if (!splitter) return;
+  splitter.push(spoken);
+  splitter.close();
+
+  try {
+    for await (const { audio } of model.stream(splitter, { voice, speed })) {
+      if (signal?.aborted) return;
+      yield {
+        pcm: float32ToPcm16(audio.audio),
+        // Trust what the model reports; only fall back if it says nothing.
+        sampleRate: audio.sampling_rate || KOKORO_SAMPLE_RATE,
+      };
+    }
+  } catch (error) {
+    if (!signal?.aborted) logger.warn({ error }, "Kokoro synthesis failed");
+  }
+}
+
 export async function* synthesizeSpeech(
   text: string,
   { signal }: { signal?: AbortSignal } = {},
 ): AsyncGenerator<SpeechChunk> {
-  const baseUrl = ttsBaseUrl();
   const spoken = speakableText(text);
-  if (!baseUrl || !spoken) return;
+  if (!spoken) return;
+  if (ttsLocal()) {
+    yield* synthesizeLocally(spoken, signal);
+    return;
+  }
+  const baseUrl = ttsBaseUrl();
+  if (!baseUrl) return;
 
   let response: Response;
   try {

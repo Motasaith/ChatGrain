@@ -1,8 +1,12 @@
 import "server-only";
 
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { AppError } from "@/lib/http/errors";
+import {
+  assertSafeKey,
+  deleteObject,
+  getObject,
+  putObject,
+} from "./object-store";
 
 export type StoredAttachmentKind = "image" | "audio";
 
@@ -21,18 +25,6 @@ const audioTypes = new Map([
   ["audio/mpeg", ".mp3"],
   ["audio/mp4", ".m4a"],
 ]);
-
-function uploadDirectory() {
-  const configuredDirectory = process.env.UPLOAD_DIR?.trim();
-  if (configuredDirectory) {
-    return path.resolve(
-      /*turbopackIgnore: true*/ configuredDirectory,
-    );
-  }
-  return path.resolve(
-    path.join(/*turbopackIgnore: true*/ process.cwd(), ".data", "uploads"),
-  );
-}
 
 function hasImageSignature(bytes: Uint8Array, mimeType: string) {
   if (mimeType === "image/jpeg") {
@@ -83,16 +75,11 @@ function hasAudioSignature(bytes: Uint8Array, mimeType: string) {
   return false;
 }
 
-function safeStoragePath(storageKey: string) {
-  if (!/^[a-f0-9-]{36}\.[a-z0-9]{2,5}$/i.test(storageKey)) {
+function requireSafeKey(storageKey: string) {
+  if (!assertSafeKey(storageKey)) {
     throw new AppError("ATTACHMENT_NOT_FOUND", "Attachment not found.", 404);
   }
-  const root = uploadDirectory();
-  const target = path.resolve(root, storageKey);
-  if (path.dirname(target) !== root) {
-    throw new AppError("ATTACHMENT_NOT_FOUND", "Attachment not found.", 404);
-  }
-  return target;
+  return storageKey;
 }
 
 export async function saveAttachment(
@@ -125,13 +112,7 @@ export async function saveAttachment(
     );
   }
   const storageKey = `${crypto.randomUUID()}${extension}`;
-  const root = uploadDirectory();
-  await mkdir(/*turbopackIgnore: true*/ root, { recursive: true });
-  await writeFile(
-    /*turbopackIgnore: true*/ safeStoragePath(storageKey),
-    bytes,
-    { flag: "wx" },
-  );
+  await putObject(requireSafeKey(storageKey), bytes, mimeType);
   return {
     storageKey,
     mimeType,
@@ -142,13 +123,13 @@ export async function saveAttachment(
 }
 
 export async function readAttachment(storageKey: string) {
-  return readFile(
-    /*turbopackIgnore: true*/ safeStoragePath(storageKey),
-  );
+  const bytes = await getObject(requireSafeKey(storageKey));
+  if (!bytes) {
+    throw new AppError("ATTACHMENT_NOT_FOUND", "Attachment not found.", 404);
+  }
+  return bytes;
 }
 
 export async function removeAttachment(storageKey: string) {
-  await unlink(
-    /*turbopackIgnore: true*/ safeStoragePath(storageKey),
-  ).catch(() => undefined);
+  await deleteObject(requireSafeKey(storageKey));
 }

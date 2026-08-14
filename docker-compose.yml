@@ -1,9 +1,20 @@
+# Optional local services.
+#
+# Nothing here is required any more: Postgres runs on Aiven, speech-to-text on
+# Groq, and text-to-speech on a local Kokoro server. These definitions are kept
+# behind profiles so a machine with no network - or a contributor who wants the
+# whole stack local - can still bring them up:
+#
+#   docker compose --profile local-db up -d postgres
+#   docker compose --profile local-ai up -d ollama
+#
 # Host ports are configurable so a shared server with occupied ports never
 # requires editing this tracked file - set them in a gitignored root `.env`
 # instead. Editing this file on a server is what makes `git pull` conflict.
 services:
   postgres:
     image: pgvector/pgvector:pg18
+    profiles: ["local-db"]
     environment:
       POSTGRES_DB: docent
       POSTGRES_USER: docent
@@ -29,46 +40,8 @@ services:
       - docent_ollama:/root/.ollama
     restart: unless-stopped
 
-  whisper:
-    image: ghcr.io/ggml-org/whisper.cpp:main
-    profiles: ["voice"]
-    entrypoint: ["/bin/sh", "-c"]
-    # `base-q5_1` is the latency/accuracy sweet spot for realtime calls on CPU;
-    # swap WHISPER_MODEL for `small` or `medium` if you have a GPU to spare.
-    command:
-      - >-
-        test -f /models/ggml-${WHISPER_MODEL:-base-q5_1}.bin ||
-        ./models/download-ggml-model.sh ${WHISPER_MODEL:-base-q5_1} /models;
-        exec whisper-server --host 0.0.0.0 --port 8080
-        --model /models/ggml-${WHISPER_MODEL:-base-q5_1}.bin --convert
-        --threads ${WHISPER_THREADS:-4} --no-timestamps
-    ports:
-      - "127.0.0.1:${WHISPER_HOST_PORT:-8080}:8080"
-    volumes:
-      - docent_whisper:/models
-    restart: unless-stopped
 
-  # Self-hosted text to speech behind an OpenAI-compatible /v1/audio/speech
-  # endpoint, so the same client code works against any compatible server.
-  # Ships Piper voices, which synthesize faster than realtime on CPU.
-  speech:
-    image: ghcr.io/matatonic/openedai-speech-min:latest
-    profiles: ["voice"]
-    environment:
-      # The image defaults both of these to the relative path `voices`, which
-      # resolves to /app/voices from its workdir. Pinned to the absolute path so
-      # downloaded voices and models always land in the mounted volume and
-      # survive `docker compose down`.
-      TTS_HOME: /app/voices
-      HF_HOME: /app/voices
-    ports:
-      - "127.0.0.1:${SPEECH_HOST_PORT:-8001}:8000"
-    volumes:
-      - docent_speech:/app/voices
-    restart: unless-stopped
 
 volumes:
   docent_postgres:
   docent_ollama:
-  docent_whisper:
-  docent_speech:

@@ -7,6 +7,27 @@ const WAV_HEADER_BYTES = 44;
  * bare PCM only with `--convert` and a matching rate, so sending a real header
  * keeps the transcribe call correct regardless of how the server was started.
  */
+/**
+ * Converts the float samples a local model emits into the 16-bit PCM the
+ * gateway streams to the browser.
+ *
+ * Clamping matters: a model can overshoot [-1, 1] by a fraction on loud
+ * syllables, and letting that wrap around turns a peak into a click.
+ */
+export function float32ToPcm16(samples: Float32Array) {
+  const out = new Uint8Array(samples.length * 2);
+  const view = new DataView(out.buffer);
+  for (let index = 0; index < samples.length; index += 1) {
+    const clamped = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(
+      index * 2,
+      clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff,
+      true,
+    );
+  }
+  return out;
+}
+
 export function pcm16ToWav(
   pcm: Uint8Array,
   sampleRate = CAPTURE_SAMPLE_RATE,

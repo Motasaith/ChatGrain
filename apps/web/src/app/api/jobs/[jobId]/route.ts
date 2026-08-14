@@ -71,7 +71,7 @@ export async function GET(_: Request, context: RouteContext) {
         })
         .from(crawlPages)
         .where(
-          sql`${crawlPages.jobId} = ${jobId} and ${crawlPages.outcome} in ('failed', 'thin')`,
+          sql`${crawlPages.jobId} = ${jobId} and ${crawlPages.outcome} in ('blocked', 'failed', 'thin')`,
         )
         .orderBy(desc(crawlPages.sequence))
         .limit(50),

@@ -10,7 +10,11 @@ export async function transcribeAudio(file: File) {
   const body = new FormData();
   body.append("file", file, file.name || "recording.webm");
   body.append("response_format", "json");
-  body.append("language", "auto");
+  // See the note in lib/voice/stt.ts: "auto" is a whisper.cpp-ism, and an
+  // OpenAI-compatible endpoint needs the model named instead.
+  const modelName = process.env.WHISPER_MODEL_NAME?.trim();
+  if (modelName) body.append("model", modelName);
+  else body.append("language", "auto");
   try {
     const response = await fetch(`${baseUrl}${path}`, {
       method: "POST",

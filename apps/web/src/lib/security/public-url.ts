@@ -99,7 +99,7 @@ async function fetchWithRedirects(
   } = init;
   const url = await validatePublicUrl(String(input), { allowPrivate });
   const headers = new Headers({
-    "user-agent": "ChatGrainBot/0.2 (+self-hosted knowledge crawler)",
+    "user-agent": "ChatGrainBot/0.2 (+https://chatgrain.com/bot)",
     accept:
       "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.1",
   });

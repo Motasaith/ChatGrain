@@ -51,11 +51,23 @@ export async function transcribeUtterance(
     "utterance.wav",
   );
   body.append("response_format", "json");
-  body.append("language", language?.trim() || "auto");
-  body.append("temperature", "0");
-  // Each utterance is independent; carrying context across turns is a common
-  // source of whisper repeating the previous sentence back.
-  body.append("no_context", "true");
+
+  // whisper.cpp infers the model from how the server was started and accepts
+  // `language=auto`. OpenAI-compatible services (Groq, OpenAI) require a model
+  // name and reject "auto" - they auto-detect when the field is simply absent.
+  const modelName = process.env.WHISPER_MODEL_NAME?.trim();
+  if (modelName) body.append("model", modelName);
+
+  const requested = language?.trim();
+  if (requested && requested !== "auto") body.append("language", requested);
+  else if (!modelName) body.append("language", "auto");
+
+  if (!modelName) {
+    body.append("temperature", "0");
+    // Each utterance is independent; carrying context across turns is a common
+    // source of whisper repeating the previous sentence back.
+    body.append("no_context", "true");
+  }
 
   try {
     const response = await fetch(`${baseUrl}${path}`, {
