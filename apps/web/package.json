@@ -17,7 +17,8 @@
     "db:push": "drizzle-kit push --force",
     "test": "vitest run",
     "diagnose:crawl": "tsx --tsconfig tsconfig.voice.json scripts/diagnose-crawl.ts",
-    "diagnose:answer": "tsx --tsconfig tsconfig.voice.json scripts/diagnose-answer.ts"
+    "diagnose:answer": "tsx --tsconfig tsconfig.voice.json scripts/diagnose-answer.ts",
+    "eval": "tsx --tsconfig tsconfig.voice.json scripts/eval.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1109.0",

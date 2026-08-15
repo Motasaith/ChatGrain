@@ -44,14 +44,14 @@ const FUNCTION_WORDS = new Set([
 ]);
 
 function fakeEmbedding(text: string) {
-  const dims = new Array(1024).fill(0);
+  const dims = new Array(768).fill(0);
   for (const token of text.toLowerCase().match(/[a-z0-9]+/g) ?? []) {
     if (FUNCTION_WORDS.has(token)) continue;
     let hash = 0;
     for (let i = 0; i < token.length; i += 1) {
       hash = (hash * 31 + token.charCodeAt(i)) >>> 0;
     }
-    dims[hash % 1024] += 1;
+    dims[hash % 768] += 1;
   }
   const norm = Math.hypot(...dims) || 1;
   return dims.map((value) => value / norm);

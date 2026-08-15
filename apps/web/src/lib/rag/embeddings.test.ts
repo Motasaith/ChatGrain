@@ -9,8 +9,8 @@ const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
   vi.resetModules();
-  process.env.EMBEDDING_DIMENSIONS = "1024";
-  process.env.EMBEDDING_MODEL = "onnx-community/Qwen3-Embedding-0.6B-ONNX";
+  process.env.EMBEDDING_DIMENSIONS = "768";
+  process.env.EMBEDDING_MODEL = "onnx-community/embeddinggemma-300m-ONNX";
   // Retries are real behaviour worth testing; waiting out real seconds is not.
   process.env.EMBEDDING_RETRY_BASE_MS = "0";
 });
@@ -41,7 +41,7 @@ describe("Cloudflare Workers AI provider", () => {
         calls.push(JSON.parse(String(init.body)));
         return {
           ok: true,
-          json: async () => ({ result: { data: [unitVector(1024)] } }),
+          json: async () => ({ result: { data: [unitVector(768)] } }),
         } as unknown as Response;
       }),
     );
@@ -68,7 +68,7 @@ describe("Cloudflare Workers AI provider", () => {
         return {
           ok: true,
           json: async () => ({
-            result: { data: body.text.map(() => unitVector(1024)) },
+            result: { data: body.text.map(() => unitVector(768)) },
           }),
         } as unknown as Response;
       }),
@@ -114,8 +114,8 @@ describe("OpenAI-compatible provider", () => {
         // with the wrong chunk would corrupt the index invisibly.
         json: async () => ({
           data: [
-            { index: 1, embedding: unitVector(1024, 2) },
-            { index: 0, embedding: unitVector(1024, 1) },
+            { index: 1, embedding: unitVector(768, 2) },
+            { index: 0, embedding: unitVector(768, 1) },
           ],
         }),
       }) as unknown as Response),
@@ -123,7 +123,7 @@ describe("OpenAI-compatible provider", () => {
     const { embedTexts } = await import("./embeddings");
 
     const [first] = await embedTexts(["first", "second"]);
-    expect(first[0]).toBeCloseTo(unitVector(1024, 1)[0], 10);
+    expect(first[0]).toBeCloseTo(unitVector(768, 1)[0], 10);
   });
 
   it("re-normalises a truncated Matryoshka vector back to unit length", async () => {
@@ -132,7 +132,7 @@ describe("OpenAI-compatible provider", () => {
       "fetch",
       vi.fn(async () => ({
         ok: true,
-        json: async () => ({ data: [{ index: 0, embedding: unitVector(1024) }] }),
+        json: async () => ({ data: [{ index: 0, embedding: unitVector(768) }] }),
       }) as unknown as Response),
     );
     const { embedText } = await import("./embeddings");
@@ -152,7 +152,69 @@ describe("hash provider", () => {
     const { embedText } = await import("./embeddings");
     const a = await embedText("same text");
     const b = await embedText("same text");
-    expect(a).toHaveLength(1024);
+    expect(a).toHaveLength(768);
     expect(a).toEqual(b);
+  });
+});
+
+describe("model family defaults", () => {
+  /**
+   * Pooling and prefixes are dictated by the model, and both fail silently:
+   * the wrong choice still returns a plausible unit vector, so nothing throws
+   * and retrieval is merely worse. These pin the pairings so a model swap
+   * cannot quietly take the wrong ones.
+   */
+  async function capture(model: string, dims = 768) {
+    // Deliberately the OpenAI-compatible path, not Cloudflare: Cloudflare takes
+    // the instruction as a request field, so prefixes never reach the text
+    // there. This is the path that actually decorates.
+    process.env.EMBEDDING_PROVIDER = "openai";
+    process.env.EMBEDDING_BASE_URL = "https://example.test/v1";
+    process.env.EMBEDDING_API_KEY = "key";
+    process.env.EMBEDDING_MODEL = model;
+    process.env.EMBEDDING_DIMENSIONS = String(dims);
+    delete process.env.EMBEDDING_MODEL_ID;
+    delete process.env.EMBEDDING_POOLING;
+    delete process.env.EMBEDDING_QUERY_PREFIX;
+    delete process.env.EMBEDDING_DOCUMENT_PREFIX;
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        seen.push(...(JSON.parse(String(init.body)).input as string[]));
+        return {
+          ok: true,
+          json: async () => ({ data: [{ index: 0, embedding: unitVector(dims) }] }),
+        } as unknown as Response;
+      }),
+    );
+    const { embedText } = await import("./embeddings");
+    await embedText("refund policy", "query");
+    await embedText("refund policy", "document");
+    return { query: seen[0], document: seen[1] };
+  }
+
+  it("gives EmbeddingGemma its task-typed prefixes on both sides", async () => {
+    const { query, document } = await capture(
+      "onnx-community/embeddinggemma-300m-ONNX",
+    );
+    expect(query).toBe("task: search result | query: refund policy");
+    expect(document).toBe("title: none | text: refund policy");
+  });
+
+  it("gives Qwen its instruction prefix on the query side only", async () => {
+    const { query, document } = await capture(
+      "onnx-community/Qwen3-Embedding-0.6B-ONNX",
+      1024,
+    );
+    expect(query.startsWith("Instruct: ")).toBe(true);
+    expect(query.endsWith("\nQuery:refund policy")).toBe(true);
+    expect(document).toBe("refund policy");
+  });
+
+  it("leaves an unrecognised model unprefixed rather than guessing", async () => {
+    const { query, document } = await capture("some-org/unknown-embedder");
+    expect(query).toBe("refund policy");
+    expect(document).toBe("refund policy");
   });
 });

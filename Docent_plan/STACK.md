@@ -15,7 +15,7 @@ not quoted from a vendor page.
 | Text to speech | **Kokoro-82M in-process** via `kokoro-js` | ✅ verified, real audio |
 | LLM | Groq + Ollama Cloud | already remote |
 | Attachments | **Backblaze B2** (`Docent`, us-east-005) | ✅ verified round-trip |
-| Embeddings | **Qwen3-Embedding-0.6B** — local now, Cloudflare-ready | ⚠️ switch before indexing, §3 |
+| Embeddings | **EmbeddingGemma-300M** local, 768 dims | ✅ chosen on measurements, §3 |
 | Crawler | in-house, now rate limited | ✅ fixed |
 
 **Docker is no longer required.** `whisper` and `speech` are gone from
@@ -124,107 +124,119 @@ Watch for: `too many connections for role "avnadmin"`.
 
 ---
 
-## 3. ⚠️ Qwen3-Embedding is wired up and works — but read this before indexing
+## 3. Embeddings — Qwen3 measured, rejected, replaced with EmbeddingGemma
 
-The switch is done and correct. Verified ✔:
+### Why Qwen3-0.6B did not survive its own benchmark
 
-- Loads from `onnx-community/Qwen3-Embedding-0.6B-ONNX` at q8
-- **1024 dimensions**, unit length — fits pgvector's 2000-dim HNSW ceiling
-- Semantic ranking is right: *"how do I get my money back"* scores **0.41** against
-  the refund passage and **0.25** against an unrelated one
-
-**A trap that was worth catching:** Qwen3 requires **`last_token` pooling**, not the
-`mean` your code used. Mean pooling returns a plausible-looking vector instead of an
-error, so this would have degraded retrieval *silently*. Also handled: Qwen3 is
-instruction-aware, so queries now get an `Instruct:` prefix and documents do not.
-
-### The problem: it is far too slow for your corpus
-
-Benchmarked on realistic 1,200-character chunks ✔ — not short test strings, which
-are misleadingly fast:
+It worked correctly — 1024 dims, unit length, sensible ranking. It was simply far
+too slow. Benchmarked on realistic 1,200-character chunks ✔ (short test strings
+are misleadingly fast):
 
 | Batch | Per chunk | Throughput |
 |---|---|---|
 | 8 | 1,789 ms | 0.6 chunks/sec |
 | 32 | 2,259 ms | 0.4 chunks/sec |
 
-Applied to your actual scale:
+At ~0.5 chunks/sec: **~19 hours for one 7,000-page site, 8-10 days for ten.** The
+root cause is architectural — Qwen3-Embedding is built on a *decoder* backbone,
+which costs far more per token than a BERT-style encoder of similar size.
 
-| | Chunks | Time at ~0.5/sec |
-|---|---|---|
-| One 7,000-page site | ~35,000 | **~19 hours** |
-| Ten sites | ~350,000 | **~8–10 days** |
+### The replacement search
 
-**The reasoning that freed up the budget does not survive contact with this.** Moving
-Whisper and TTS to APIs freed **disk and RAM**. Embedding 350,000 chunks is a
-**CPU compute** problem, and CPU is the thing you did not free up. It also *added*
-597 MB of model weights ✔ on top of the 341 MB ONNX runtime — so local embeddings
-now cost ~940 MB, more than before, not less.
+Four candidates, all measured on the **identical harness** — same 1,200-char
+chunks, batch of 8, same semantic probe (*"how do I get my money back"* against a
+refund passage vs. an unrelated one). ✔
 
-### The fix: the same model, hosted
+| Model | Params | Dims | Chunks/sec | vs Qwen | Probe margin |
+|---|---|---|---|---|---|
+| Qwen3-Embedding-0.6B (q8) | 600M | 1024 | 0.56 | 1× | 0.160 |
+| EmbeddingGemma-300M (q4) | 308M | 768 | **1.78** | **3.2×** | **0.339** |
+| arctic-embed-m-v2.0 (q8) | 305M | 768 | 2.23 | 4× | 0.283 |
+| bge-small-en-v1.5 (q8) | 33M | 384 | **7.31** | **13×** | 0.284 |
 
-**Cloudflare Workers AI serves `@cf/qwen/qwen3-embedding-0.6b`** — not a similar
-model, *the same one*. Same 1024 dims, same instruction-aware behaviour, and it
-takes the instruction as a first-class request field rather than a string prefix.
-So switching backends does not change what the vectors mean.
+⚠️ **"Probe margin" is one query pair, not a benchmark.** It is a smoke test that
+a model is wired up correctly — right pooling, right prefixes — not a measure of
+retrieval quality. The real comparison needs the eval harness that phase 0 keeps
+deferring. Published MTEB is the better guide, and it agrees on the ordering:
+EmbeddingGemma ranks **#1 among models under 500M** (69.67 English v2), arctic-m-v2
+9th overall, bge-small 19th.
 
-| | Cloudflare Workers AI | Gemini | Local CPU |
+### Measured on the harness — the first real number ✔
+
+The table above is a smoke test. This is an actual retrieval measurement, run
+through the phase-0 harness on a real corpus (84 chunks from this repo's own
+documentation, 28 LLM-generated questions). Identical corpus, identical
+questions, identical `hybridRetrieve` — only the model differs.
+
+| Model | recall@1 | recall@8 | MRR | Indexing |
+|---|---|---|---|---|
+| **EmbeddingGemma-300M** | **96.4%** | 96.4% | **0.964** | 0.51 chunks/sec |
+| bge-small-en-v1.5 | 89.3% | 96.4% | 0.929 | **2.81 chunks/sec** |
+
+Reproduce with:
+`MODEL_COMPARE=1 npx vitest run src/lib/eval/model-compare.test.ts`
+
+**What it says.** Both models find the right document within the top 8 equally
+often. The difference is *where* they put it: EmbeddingGemma ranks it **first**
+96% of the time against bge-small's 89%. That is the metric that matters most,
+because the first chunk competes least with everything else for the model's
+attention.
+
+**What it does not say.** ⚠️ This corpus has only **five documents**, so
+recall@8 is saturated — a lucky guess is 1-in-5, and both models scoring 96%
+there means the metric is not discriminating at this size, not that the models
+are equal. Only recall@1 and MRR are carrying signal here. A real customer
+corpus of thousands of pages would separate them much further, in either
+direction. **Re-run this on a real indexed site before treating it as settled.**
+
+Both models missed the same single question, which is a mild sign the question
+was poorly generated rather than that retrieval failed.
+
+### Chosen: EmbeddingGemma-300M
+
+- **3.2× faster** than Qwen, and **better on every quality signal available** —
+  best measured margin *and* best published MTEB in its class.
+- **768 dims**, comfortably under pgvector's 2,000-dim HNSW ceiling, and
+  Matryoshka-truncatable to 512/256/128 if the index ever needs to shrink.
+  (Truncation shrinks storage only; inference cost is unchanged.)
+- **Multilingual**, 100+ languages. `bge-small-en-v1.5` is English-only, which is
+  a real risk when the corpus is whatever a customer's website happens to be.
+
+**`bge-small-en-v1.5` remains the escape hatch** if speed becomes the binding
+constraint. On the harness it indexes **5.5× faster** and costs **7 points of
+recall@1**. That is now a priced trade rather than a guess: if indexing time is
+hurting onboarding more than a 7-point ranking difference hurts answers, take it.
+It is one env var plus a migration.
+
+### Timing was deliberate
+
+The swap is free **right now** and gets expensive later: migration `0016` had
+already cleared every vector and no agent had been re-indexed, so there was
+nothing to lose. Migration `0017` moves the column 1024 → 768. Applied ✔ —
+`drizzle-kit push` refused with `CheckExpectedDim` because the dev run had written
+7 fresh 1024-dim vectors, which is precisely why the migration is hand-written to
+drop the index, null the column, alter, and rebuild.
+
+### Pooling and prefixes are now per-family
+
+Two settings the model dictates, and **both fail silently** — wrong pooling still
+returns a plausible unit vector, a missing prefix still retrieves something.
+Nothing throws; retrieval is just quietly worse. So they are pinned per family in
+[embeddings.ts](apps/web/src/lib/rag/embeddings.ts) and covered by tests:
+
+| Family | Pooling | Query prefix | Document prefix |
 |---|---|---|---|
-| Cost for your ~105M tokens | **~$1.26** | ~$16 | free |
-| Time for 10 sites | hours | hours | **8–10 days** |
-| Free tier | 10k neurons/day (~12.5k embeddings), **no card** | 1,500 req/day | n/a |
-| Dimensions | 1024, matches the schema | 3072 → must truncate to 1536 | 1024 |
+| EmbeddingGemma | `mean` | `task: search result \| query: ` | `title: none \| text: ` |
+| Qwen3 | `last_token` | `Instruct: …
+Query:` | *(none)* |
+| arctic-embed | `cls` | `query: ` | *(none)* |
+| bge | `cls` | `Represent this sentence…` | *(none)* |
+| e5 | `mean` | `query: ` | `passage: ` |
 
-At $0.012 per million input tokens, indexing your entire ten-site corpus costs
-**about $1.26**. That is the whole decision.
+An unrecognised model gets no prefix rather than a guessed one — also tested.
 
-**OpenRouter also works** — you were right to ask. It added an OpenAI-compatible
-`/v1/embeddings` endpoint, and its catalogue includes Qwen3 Embedding 8B,
-`text-embedding-3-small` and Gemini Embedding 2 (which is what you were thinking
-of earlier). It is the better choice if you want to A/B several embedding models
-behind one key. For this specific job Cloudflare wins on being the identical
-model, cheaper, and card-free.
-
-### Both are implemented
-
-[embeddings.ts](apps/web/src/lib/rag/embeddings.ts) now has four backends,
-selected by `EMBEDDING_PROVIDER`:
-
-```bash
-# Cloudflare Workers AI - recommended
-EMBEDDING_PROVIDER=cloudflare
-CLOUDFLARE_ACCOUNT_ID=your_account_id
-CLOUDFLARE_API_TOKEN=your_token
-EMBEDDING_MODEL_ID=@cf/qwen/qwen3-embedding-0.6b
-
-# or any OpenAI-compatible service, OpenRouter included
-EMBEDDING_PROVIDER=openai
-EMBEDDING_BASE_URL=https://openrouter.ai/api/v1
-EMBEDDING_API_KEY=sk-or-...
-EMBEDDING_MODEL_ID=qwen/qwen3-embedding-8b
-```
-
-`local` and `hash` still work unchanged, so you can fall back with one variable.
-
-Both paths batch (64 per request by default), retry with exponential backoff
-since rate limits are the expected failure at indexing volume, sort results by
-the response's `index` field — the spec permits out-of-order returns, and
-mispairing a vector with its chunk would corrupt the index invisibly — and
-re-normalise after Matryoshka truncation.
-
-**One deliberate asymmetry with the local path:** the API providers **throw**
-instead of falling back to hash vectors. A hash vector is not a worse embedding,
-it is a meaningless one, and writing 350,000 of them would present as an accuracy
-collapse rather than an outage. Failing loudly is correct here.
-
-Six tests cover this ([embeddings.test.ts](apps/web/src/lib/rag/embeddings.test.ts)).
-
-**Still to do:** get a Cloudflare account ID and API token, set the four variables,
-and re-index. I could not test the live call without credentials.
-
-I also checked whether your **Ollama Cloud** key could serve embeddings and save a
-vendor — `qwen3-embedding`, `embeddinggemma` and `nomic-embed-text` all return
-**HTTP 404** ✔. That route is closed.
+**Still true regardless of model:** nothing has been re-indexed, so vector
+retrieval returns nothing and search is keyword-only until it is.
 
 ---
 

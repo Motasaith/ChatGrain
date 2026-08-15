@@ -3,44 +3,88 @@ import { logger } from "@/lib/observability/logger";
 /**
  * Vector width. Must match `chunks.embedding` in the schema, and pgvector will
  * not build an HNSW index above 2,000, so this is also a hard ceiling on model
- * choice: Qwen3-Embedding emits 1024 and Matryoshka-truncates below that.
+ * choice. EmbeddingGemma emits 768 and Matryoshka-truncates to 512/256/128;
+ * truncation shrinks the index but does not speed up inference, since the
+ * transformer does the same work either way.
  */
-const DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS?.trim()) || 1_024;
+const DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS?.trim()) || 768;
 
 const MODEL =
-  process.env.EMBEDDING_MODEL ?? "onnx-community/Qwen3-Embedding-0.6B-ONNX";
+  process.env.EMBEDDING_MODEL ?? "onnx-community/embeddinggemma-300m-ONNX";
 
 /**
- * Pooling strategy, which is a property of the model rather than a preference.
+ * Per-family defaults for the two settings that a model dictates rather than
+ * invites you to choose: how token vectors are pooled into one, and what
+ * prefix each side of the pair carries.
  *
- * Qwen3-Embedding is trained with last-token pooling: the final position holds
- * the sentence representation. Mean pooling still returns a plausible-looking
- * vector, so getting this wrong degrades retrieval silently rather than
- * failing - which is exactly the kind of bug an eval harness exists to catch.
- * MiniLM and most BERT-family encoders want "mean" instead.
+ * Both fail *silently*. Wrong pooling still returns a plausible unit vector;
+ * a missing prefix still retrieves something. Neither throws, so the only
+ * symptom is retrieval that is quietly worse than it should be - which is why
+ * they are written down per model instead of left to a single global default.
  */
+const FAMILIES: Array<{
+  match: RegExp;
+  pooling: "mean" | "cls" | "last_token";
+  query: string;
+  document: string;
+}> = [
+  {
+    // EmbeddingGemma asks for a task-typed prefix on both sides.
+    match: /embeddinggemma|gemma-embed/i,
+    pooling: "mean",
+    query: "task: search result | query: ",
+    document: "title: none | text: ",
+  },
+  {
+    // Qwen3-Embedding is instruction-aware and pools on the final token.
+    match: /qwen/i,
+    pooling: "last_token",
+    query:
+      "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+    document: "",
+  },
+  {
+    match: /arctic-embed/i,
+    pooling: "cls",
+    query: "query: ",
+    document: "",
+  },
+  {
+    match: /bge-/i,
+    pooling: "cls",
+    query: "Represent this sentence for searching relevant passages: ",
+    document: "",
+  },
+  {
+    match: /e5-/i,
+    pooling: "mean",
+    query: "query: ",
+    document: "passage: ",
+  },
+];
+
+const FAMILY = FAMILIES.find((entry) => entry.match.test(MODEL));
+
 const POOLING = (process.env.EMBEDDING_POOLING?.trim() ||
-  (/qwen/i.test(MODEL) ? "last_token" : "mean")) as
-  | "mean"
-  | "cls"
-  | "last_token";
+  FAMILY?.pooling ||
+  "mean") as "mean" | "cls" | "last_token";
+
+const QUERY_PREFIX = process.env.EMBEDDING_QUERY_PREFIX ?? FAMILY?.query ?? "";
+const DOCUMENT_PREFIX =
+  process.env.EMBEDDING_DOCUMENT_PREFIX ?? FAMILY?.document ?? "";
 
 const DTYPE = process.env.EMBEDDING_DTYPE?.trim() || "q8";
 
-/**
- * Qwen3-Embedding is instruction-aware: queries carry a task description and
- * documents do not. Skipping this costs a few points of retrieval accuracy,
- * and it is the one asymmetry between indexing and querying that has to be
- * threaded through the call sites.
- */
+/** Sent to providers that take the instruction as a field, not a prefix. */
 const QUERY_INSTRUCTION =
   "Given a web search query, retrieve relevant passages that answer the query";
 
 export type EmbeddingKind = "document" | "query";
 
 function decorate(text: string, kind: EmbeddingKind) {
-  if (kind !== "query" || POOLING !== "last_token") return text;
-  return `Instruct: ${QUERY_INSTRUCTION}\nQuery:${text}`;
+  // The asymmetry is the point: prefixing documents with the *query* framing
+  // would pull both vectors toward the framing instead of toward each other.
+  return (kind === "query" ? QUERY_PREFIX : DOCUMENT_PREFIX) + text;
 }
 
 type Extractor = (

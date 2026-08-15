@@ -13,6 +13,7 @@
     "start": "npm run start -w @docent/web",
     "voice": "npm run voice -w @docent/web",
     "test": "npm run test -w @docent/web",
+    "eval": "npm run eval -w @docent/web --",
     "lint": "npm run lint -w @docent/web",
     "typecheck": "npm run typecheck -w @docent/web",
     "db:push": "npm run db:push -w @docent/web",

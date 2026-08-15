@@ -3,8 +3,9 @@
 Companion to [PLAN.md](Docent_plan/PLAN.md). The plan says what to build; this file
 says what exists, what does not, and what the next move is.
 
-- **Verified against the working tree on:** 13 August 2026
-- **At commit:** `ea49f25` (branch `main`)
+- **Verified against the working tree on:** 15 August 2026
+- **Base commit:** `ea49f25` (branch `main`), plus uncommitted work from the
+  13-15 August sessions
 - **Method:** every status below was checked by reading the file it names. Nothing
   here is inferred from the plan text.
 
@@ -21,13 +22,19 @@ statuses rot faster than code.
 
 | Phase | Items | ✅ | 🟡 | ⬜ | Reading |
 |---|---|---|---|---|---|
-| 0 — Eval harness | 5 | 0 | 0 | 5 | Not begun. Blocks everything else in the plan. |
-| 1 — Accuracy stack | 8 | 0 | 0 | 8 | Not begun. Retrieval is exactly as audited. |
-| 2 — Crawler | 7 | 0 | 1 | 6 | Only the health report is under way. |
+| 0 — Eval harness | 5 | 1 | 3 | 1 | Built, tested, and has now produced its first real measurement. |
+| 1 — Accuracy stack | 8 | 1 | 0 | 7 | Embeddings done. Chunks, reranker, the rest untouched. |
+| 2 — Crawler | 7 | 1 | 2 | 4 | The big reliability work landed; it was mostly *not* plan items. |
 | 3 — Ingestion progress | 3 | 0 | 0 | 3 | Crawls report; file sources still silent. |
 | 4 — Size tiers | 5 | 0 | 0 | 5 | Not begun; depends on phases 0 and 1. |
-| 5 — Moat | 3 | 1 | 2 | 0 | The furthest along, and it was built first. |
-| **Total** | **31** | **1** | **3** | **27** | **≈8% complete** (partial counted as half) |
+| 5 — Moat | 3 | 1 | 2 | 0 | Unchanged since the last pass. |
+| **Total** | **31** | **4** | **7** | **20** | **≈24% complete** (partial counted as half) |
+
+A large amount of work happened since 13 August that the plan does not track at
+all — an infrastructure migration and a crawler bug hunt. See
+[Off-plan work](#off-plan-work-13-15-august). Judging progress by the table above
+alone would badly understate it, and judging it by effort alone would overstate
+how much of *the plan* is done.
 
 Everything in §1 of the plan — the "already have, do not rebuild" list — was
 re-verified and is **still true**. See [Baseline](#baseline--still-true).
@@ -36,22 +43,38 @@ re-verified and is **still true**. See [Baseline](#baseline--still-true).
 
 ## Where it is now
 
-The four gaps the plan names are all still open. `rag/chunk.ts` is still 47 lines
-storing bare text, `rag/embeddings.ts` is still MiniLM-L6-v2 at 384 dimensions,
-`rag/retrieve.ts` still ends in the six hand-tuned weights with no reranker after
-them, and there is still no eval harness — so there is still no number that says
-whether any change helped.
+**One of the four gaps is closed.** Gap 2, the embedding ceiling, is gone:
+`rag/embeddings.ts` now runs EmbeddingGemma-300M at 768 dimensions, chosen by
+benchmarking four models against each other rather than by reputation.
 
-What has moved since the audit is the moat, phase 5: pinned answers already
-short-circuit retrieval, and the content-gap report already clusters the questions
-agents refused and offers a one-click pin. Those shipped on 9 August in `fbdb940`
-and `f77f50a`. Crawl-side observability also went further than the plan credits —
-there is a `crawl_pages` table with a per-URL outcome and a dashboard that shows
-outcome counts and failing pages.
+**The other three are exactly as they were.** `rag/chunk.ts` is still 47 lines
+storing bare text with no title or heading prefix. `rag/retrieve.ts` still ends in
+the six hand-tuned weights with no reranker after them. And there is still no eval
+harness — so **the one gap that did close was closed without a number proving it
+helped**, which is precisely the failure mode the plan warned about.
 
-So the product got better at *reporting* what it does not know, and has not yet
-got better at knowing. That ordering is backwards from the plan, which is why
-phase 0 is still the right next thing.
+Two things are worth being blunt about:
+
+1. **Retrieval is keyword-only right now.** Migration `0016` cleared every 384-dim
+   vector because they cannot be converted, and no agent has been re-indexed since.
+   Vector search finds nothing until that happens. It degrades rather than
+   returning wrong answers, but it is degraded.
+2. **Most of the last two days went somewhere the plan does not mention** — moving
+   Postgres, speech, storage and embeddings off Docker, and hunting a crawler bug
+   that was losing 99% of a 7,000-page site. That work was worth doing and is
+   listed under [Off-plan work](#off-plan-work-13-15-august), but it did not
+   advance phases 0, 3 or 4 by a single item.
+
+Phase 0 is no longer the blocker it was, and it has now earned its keep. The
+harness exists — metrics, golden-set generator, runner, `npm run eval`, and a CI
+gate — and it has **produced its first real number**: EmbeddingGemma reaches
+**96.4% recall@1** against bge-small's 89.3% on a real corpus, while bge-small
+indexes 5.5x faster. The 1.3 decision is no longer resting on reputation.
+
+That was measured on this repo's own documentation, because a customer corpus
+needs the app running. **It is 84 chunks across five documents, which is too few
+for recall@8 to discriminate** — only recall@1 and MRR carry signal at that size.
+The next step is the same as it was: index a real site and re-run.
 
 ---
 
@@ -77,18 +100,23 @@ notice if one ever regresses.
 
 ## Phase 0 — Eval harness
 
-Plan §3. **Nothing here exists.** Assume every number quoted in a phase-1 decision
-is a guess until this ships.
+Plan §3. **The machinery now exists; it has never been pointed at real data.**
+Nothing is indexed, so no number has been produced yet.
 
 | # | Item | Status | Evidence / gap |
 |---|---|---|---|
-| 0.1 | Golden set generator: sample 150–300 chunks per agent, LLM writes a question per chunk, store question + expected URL + expected chunk id | ⬜ | No generator, no table, no fixture anywhere in `apps/web`. |
-| 0.2 | Human calibration pass over a 50-question sample | ⬜ | Depends on 0.1. |
-| 0.3 | Metrics: Recall@8, MRR, LLM-judged answer correctness, abstention precision | ⬜ | Nothing computes a retrieval metric. |
-| 0.4 | `npm run eval -w @docent/web` + CI job that fails on a recall drop | ⬜ | No `eval` script in [apps/web/package.json](apps/web/package.json). CI already runs typecheck/lint/test/build, so this is one added job, not new infrastructure. |
-| 0.5 | Customer-facing accuracy figure | ⬜ | Depends on 0.3. |
+| 0.1 | Golden set generator | ✅ | [golden-set.ts](apps/web/src/lib/eval/golden-set.ts) samples chunks at random across the corpus (skipping any under 200 chars, which yield unanswerable questions), asks the LLM what question each answers, and drops boilerplate via a `SKIP` reply. Stores question + expected chunk id + expected URL. Generates *from* the chunk rather than writing questions first, which would bias the set toward what the author already knew was on the site. |
+| 0.2 | Human calibration pass over a 50-question sample | 🟡 | `reviewSample()` picks a deterministic, evenly-spread 50 and `--generate` prints them with their source URLs for review. **The reviewing itself is yours to do** — and until it happens the generator is unvalidated, so treat early numbers as indicative. |
+| 0.3 | Metrics: Recall@8, MRR, LLM-judged answer correctness, abstention precision | 🟡 | **Built:** recall@1/5/8, MRR, abstention precision *and* recall, false-refusal count — [metrics.ts](apps/web/src/lib/eval/metrics.ts), 16 unit tests. Pure functions, no DB or model. **Missing:** LLM-judged answer correctness. Deliberate for now — it costs a second LLM call per case and turns a 30-second run into one nobody runs before pushing. Retrieval is where regressions actually appear. |
+| 0.4 | `npm run eval` + CI job that fails on a recall drop | 🟡 | **Built:** `npm run eval -- --agent=<name>` ([eval.ts](apps/web/scripts/eval.ts)) with `--generate` and `--baseline`; `compareToBaseline` exits non-zero on a recall@8 drop beyond a 2% tolerance band (the index changes on every crawl, so exact equality would go red whenever a customer edits a page). **CI gate:** [run.integration.test.ts](apps/web/src/lib/eval/run.integration.test.ts) runs the harness against real retrieval on a PGlite fixture and asserts recall@8 stays at 1.0, so `npm test` already fails on a ranking regression. **Missing:** CI cannot run `npm run eval` itself — that needs a live database and an indexed agent. |
+| 0.5 | Customer-facing accuracy figure | ⬜ | Depends on 0.2 being reviewed and on a real corpus being indexed. Nothing should be shown to a customer until the generator has been calibrated. |
 
-**Closest thing that exists.** Two diagnostic scripts —
+**What is deliberately not built.** Answer-correctness judging (0.3) and any
+customer-facing figure (0.5). Both need the generator calibrated first, and a
+number produced from an unreviewed golden set is worse than no number — it looks
+authoritative and is not.
+
+**Also worth knowing.** Two diagnostic scripts —
 [diagnose-answer.ts](apps/web/scripts/diagnose-answer.ts) explains stage by stage
 why one question was refused, and [diagnose-crawl.ts](apps/web/scripts/diagnose-crawl.ts)
 does the same for indexing. And
@@ -102,14 +130,15 @@ cases are, however, the honest seed of a golden set.
 
 ## Phase 1 — The accuracy stack
 
-Plan §4, plus the weight-fitting item from Gap 3. **Nothing here exists.** The
-order below is the plan's ROI order; keep it.
+Plan §4, plus the weight-fitting item from Gap 3. **One of eight done.** The order
+below is the plan's ROI order — note that the item that landed, 1.3, is third in
+that order, so 1.1 and 1.2 were skipped past and remain the cheapest wins left.
 
 | # | Item | Status | Evidence / gap |
 |---|---|---|---|
 | 1.1 | Contextual chunks — store `contextualContent` for embedding, keep `content` clean | ⬜ | [chunk.ts](apps/web/src/lib/rag/chunk.ts) is still 47 lines emitting `{content, position, tokenCount}`. No title or heading prefix. The `chunks` table has no such column ([schema.ts:288](apps/web/src/lib/db/schema.ts#L288)). |
 | 1.2 | Cross-encoder reranker after fusion (take 40–60, keep 8) | ⬜ | `hybridRetrieve` sorts by `rankScore` and slices — [retrieve.ts:320-338](apps/web/src/lib/rag/retrieve.ts#L320-L338). No rerank step, no model. Candidate pools are already 40/40/30, so the input side is in place. |
-| 1.3 | Modern embedding model | ⬜ | Still `Xenova/all-MiniLM-L6-v2` q8, 384 dims — [embeddings.ts:3-5](apps/web/src/lib/rag/embeddings.ts#L3-L5). The dimension is hard-coded **twice**: `DIMENSIONS` there, and `vector("embedding", { dimensions: 384 })` at [schema.ts:304](apps/web/src/lib/db/schema.ts#L304). A model swap is a migration, not a config change. |
+| 1.3 | Modern embedding model | ✅ | **EmbeddingGemma-300M**, 768 dims, q4 — [embeddings.ts](apps/web/src/lib/rag/embeddings.ts); column set by migration [0017](apps/web/drizzle/0017_big_stature.sql). Chosen by benchmarking four models on one harness: **3.2x faster than Qwen3-0.6B and #1 on MTEB under 500M params** — see [STACK.md §3](Docent_plan/STACK.md). Pooling and query/document prefixes are now pinned per model family, since both fail silently. Four backends behind `EMBEDDING_PROVIDER`, so the model stays swappable as the plan asked. **Caveat: still ~1.8 chunks/sec on CPU** (~5.5 h per 7,000-page site), and **still not compared on a real eval set**, because the harness does not exist. The plan asked for exactly that comparison. |
 | 1.4 | LLM query rewriting replacing the regex heuristic | ⬜ | [answer.ts:393](apps/web/src/lib/chat/answer.ts#L393) is still pronoun/opener regex plus a previous-message prepend. Single-question only. |
 | 1.5 | Question-indexed answer pairs | ⬜ | No generation, no storage, no retrieval target. |
 | 1.6 | Parent-child retrieval | ⬜ | No parent linkage on `chunks` beyond `documentId`. |
@@ -120,17 +149,20 @@ order below is the plan's ROI order; keep it.
 
 ## Phase 2 — The crawler
 
-Plan §5. One item genuinely under way; the rest untouched.
+Plan §5. The crawler got substantial work on 13-15 August, but read the rows
+carefully: most of what landed was **not** on this list. The plan's own items are
+still mostly open, while the actual production failure turned out to be a bug the
+plan never identified. See [Off-plan work](#off-plan-work-13-15-august).
 
 | # | Item | Status | Evidence / gap |
 |---|---|---|---|
 | 2.1 | Adaptive per-host concurrency (start 2, additive increase, halve on 429/503/challenge, persist the learned rate) | ⬜ | Fixed batch size from `CRAWL_CONCURRENCY`, default 6, capped at 24 — [crawler.ts:104](apps/web/src/lib/crawl/crawler.ts#L104). No per-host state, nothing persisted. |
-| 2.2 | Honour `Crawl-delay` | ⬜ | `parseRobots` still reads `Disallow` only — [crawler.ts:115-131](apps/web/src/lib/crawl/crawler.ts#L115-L131). |
-| 2.3 | Detect a challenge → Playwright → mark `blocked`, not failed | ⬜ | Any non-OK status other than 429/503 becomes `CRAWL_HTTP_ERROR` and lands as `outcome: "failed"` — [crawler.ts:254-258](apps/web/src/lib/crawl/crawler.ts#L254-L258), [crawler.ts:374](apps/web/src/lib/crawl/crawler.ts#L374). There is no `blocked` outcome in the vocabulary. |
+| 2.2 | Honour `Crawl-delay` | ✅ | Parsed at [crawler.ts:221-227](apps/web/src/lib/crawl/crawler.ts#L221-L227), capped at 30 s, and applied as the request-gap floor at [crawler.ts:402](apps/web/src/lib/crawl/crawler.ts#L402). Covered by tests in [backpressure.test.ts](apps/web/src/lib/crawl/backpressure.test.ts). Fixed alongside it: `parseRobots` matched `docentbot` while the fetcher sent `ChatGrainBot`, so **every site with a rule naming our bot was silently ignored**. |
+| 2.3 | Detect a challenge → Playwright → mark `blocked`, not failed | 🟡 | **Built:** a `blocked` outcome now exists ([crawler.ts:53](apps/web/src/lib/crawl/crawler.ts#L53)) and is recorded when the host refuses us ([crawler.ts:520](apps/web/src/lib/crawl/crawler.ts#L520)); 403 joined the backpressure set. **Missing:** no *content* challenge detection — nothing looks for Cloudflare's "Just a moment", a challenge body, or a suspiciously small HTML response (`grep -ci "just a moment\|challenge"` returns 0). A challenge that answers HTTP 200 still reads as a thin page, and the Playwright retry the plan asks for is not wired to this path. |
 | 2.4 | Conditional requests: store `ETag`/`Last-Modified`, send `If-None-Match`/`If-Modified-Since` | ⬜ | The full body is always fetched and hashed afterwards — [extract.ts:317](apps/web/src/lib/crawl/extract.ts#L317), compared at [process-job.ts:206](apps/web/src/lib/crawl/process-job.ts#L206). `documents` stores `contentHash` but no validators ([schema.ts:271](apps/web/src/lib/db/schema.ts#L271)). |
 | 2.5 | Resumable long-horizon crawls, and answering from a partial index | ⬜ | One job must run to completion; the queue lives in memory — [crawler.ts:313-330](apps/web/src/lib/crawl/crawler.ts#L313-L330). |
-| 2.6 | Per-host backpressure instead of module-global | ⬜ | `let backpressureUntil = 0` at module scope — [crawler.ts:82](apps/web/src/lib/crawl/crawler.ts#L82). Still correct for one worker running one job; must be keyed by host before the worker scales. |
-| 2.7 | Crawl health report | 🟡 | **Built:** per-URL rows in `crawl_pages` with outcome and reason ([schema.ts:636](apps/web/src/lib/db/schema.ts#L636)), aggregated counts, problem pages and recent pages served by the [jobs route](apps/web/src/app/api/jobs/%5BjobId%5D/route.ts), rendered in [agent-studio.tsx:100](apps/web/src/components/app/agent-studio.tsx#L100). **Missing:** the plan asks for `found / indexed / blocked / skipped-by-robots / failed`; the vocabulary is `indexed / unchanged / duplicate / thin / failed` ([process-job.ts:35-42](apps/web/src/lib/crawl/process-job.ts#L35-L42)) — no `blocked`, and robots-skipped URLs are dropped silently at [crawler.ts:336](apps/web/src/lib/crawl/crawler.ts#L336) rather than recorded. |
+| 2.6 | Per-host backpressure instead of module-global | ⬜ | Still module-global, and now there are **three** such variables rather than one: `backpressureUntil` ([crawler.ts:123](apps/web/src/lib/crawl/crawler.ts#L123)), `nextRequestAt` and `requestGapMs` ([crawler.ts:162-163](apps/web/src/lib/crawl/crawler.ts#L162-L163)). Correct while one worker runs one job; **keying by host is now a bigger job than it was**, and must happen before the worker scales. |
+| 2.7 | Crawl health report | 🟡 | **Built:** per-URL rows in `crawl_pages` with outcome and reason ([schema.ts:636](apps/web/src/lib/db/schema.ts#L636)), aggregated counts, problem pages and recent pages served by the [jobs route](apps/web/src/app/api/jobs/%5BjobId%5D/route.ts), rendered in [agent-studio.tsx:100](apps/web/src/components/app/agent-studio.tsx#L100). **Added since:** `blocked` is now in the vocabulary and surfaced in the problem-pages query ([jobs route](apps/web/src/app/api/jobs/%5BjobId%5D/route.ts)). **Still missing:** `skipped-by-robots` — those URLs are dropped silently rather than recorded, so "why is my page count lower than my sitemap" is still not fully answerable from the report. |
 
 Note that 2.7 finishes almost for free once 2.3 exists: the table, the API and the
 UI are already there and need two more outcome values.
@@ -177,6 +209,78 @@ Plan §8. The furthest along part of the plan.
 
 ---
 
+## Off-plan work, 13-15 August
+
+None of this is in [PLAN.md](Docent_plan/PLAN.md). It is recorded here so the
+progress table above is not read as "almost nothing happened", and so the work is
+not lost when someone next asks what changed. Detail and measurements live in
+[STACK.md](Docent_plan/STACK.md).
+
+### Crawler reliability — the actual production failure
+
+A 7,000-page site was returning 40 pages. The plan attributes crawler trouble to
+fixed concurrency (2.1) and global backpressure (2.6). **Both were real but
+neither was the cause.** The cause was that **`403` was not in
+`BACKPRESSURE_STATUSES`** — a security plugin blocks by IP and answers 403, so the
+crawler applied zero backoff and kept firing six-wide into a live block.
+
+| Fix | Status |
+|---|---|
+| 403/509 treated as backpressure | ✅ |
+| `Retry-After` ceiling 30 s → 300 s, and HTTP-date form parsed | ✅ |
+| Request pacing: 1 req/sec floor with jitter, widening on pushback | ✅ |
+| Circuit breaker at 20 consecutive failures | ✅ |
+| `CRAWL_BLOCKED` error with an actionable message | ✅ |
+| Redirect targets re-checked against origin/robots/route filters | ✅ |
+| User-agent given a real URL for allowlisting | ✅ |
+
+The redirect fix came out of the only live crawl run: `/dashboard` 302'd to
+`/sign-in` and **the login page was being indexed as site content**. Filters ran on
+the requested URL and never on where the redirect landed. That bug predates all of
+this and would have polluted every customer index that has a login.
+
+⚠️ **Two gaps in that work.** The redirect fix is verified by one live crawl but
+has **no unit test** — there is no full-crawl harness in CI. And the 403/circuit-breaker
+path has **never met a real blocked site**; it is unit-tested only.
+
+### Infrastructure — Docker dependency removed
+
+| Component | Was | Now |
+|---|---|---|
+| Postgres + pgvector | Docker | **Aiven** — PG 18.4, pgvector 0.8.1, 23 tables |
+| Speech to text | whisper.cpp container | **Groq** `whisper-large-v3-turbo` |
+| Text to speech | Piper container | **Kokoro-82M in-process** via `kokoro-js` |
+| Attachments | local disk | **Backblaze B2**, verified round-trip |
+| Embeddings | MiniLM local | **Qwen3-0.6B**, four swappable backends |
+
+Two defects were found and fixed on the way, both of which would have surfaced in
+production rather than in tests:
+
+- **Connection pool vs Aiven's cap.** Aiven allows 20 connections; `client.ts`
+  asked for `max: 20` *per process* across three processes. The worker would have
+  failed to connect at all. Now `DATABASE_POOL_MAX`, default 5.
+- **`kokoro-js` 1.2.1 hangs.** Its `stream()` string path builds a
+  `TextSplitterStream`, pushes, and never closes it — the iterator only exits when
+  closed, so it awaits a promise nobody resolves, and the trailing sentence is
+  never spoken. Worked around by driving the splitter directly. **The voice gateway
+  holds a listening socket, so it would have taken the hang on every call.**
+
+### Unverified — `proxy.ts`
+
+`npm run dev` was returning **404 on every route** with `TypeError: adapterFn is
+not a function`. Next 16 renamed `middleware` to `proxy` and reads the two exports
+differently: the default export is treated as the build-injected *adapter*, while
+the handler is looked up as a named `proxy` export. [proxy.ts](apps/web/src/proxy.ts)
+had only a default export.
+
+Changed to a named `proxy` export per the bundled Next docs and the runtime source
+in `next-server.js`. **This is reasoned, not tested** — the dev server was stopped
+before the fix could be exercised, at your request. Treat it as a hypothesis until
+a page loads. The file had not been touched since 28 July, so the breakage is
+unrelated to any of the work above.
+
+---
+
 ## Standing constraints
 
 Not tasks — rules that apply to the work above. Re-read before touching anything
@@ -188,22 +292,46 @@ in phase 1.
   retrieval router) from the description; do not port their Python. Plan §9.
 - **Botpress is MIT** — `plugins/knowledge/src/question-prompt.ts` may be copied
   with its licence notice, and is the intended shape for item 1.4.
-- **The embedding dimension is hard-coded in two places.** Item 1.3 needs a
-  migration for `vector("embedding", { dimensions: 384 })`, not just an env var.
+- ~~**The embedding dimension is hard-coded in two places.**~~ Resolved: it is
+  `EMBEDDING_DIMENSIONS` plus `schema.ts`, changed together by migration
+  [0016](apps/web/drizzle/0016_bright_rage.sql). **The constraint that replaces it:
+  pgvector cannot build an HNSW index above 2,000 dimensions** — confirmed against
+  the Aiven server, where 1536 succeeds and 3072 fails. Any future model must fit
+  under that, or be Matryoshka-truncated and re-normalised.
 - **Measure, then keep.** Plan §10: everything after phase 0 should be justified
   by a number the harness produces — including the items in this file, and
   including anything in the plan that turns out to be wrong for the corpus.
 
 ---
 
-## Next three actions
+## Next actions
 
-1. **0.1 and 0.3 — golden set and metrics.** Seed it from the 10 real cases
-   already in `retrieve.integration.test.ts`, then generate the rest per agent.
-2. **0.4 — `npm run eval` and a CI job.** [ci.yml](.github/workflows/ci.yml)
-   already runs four checks; make it five, failing on a recall drop.
-3. **1.1 — contextual chunks.** The first change worth measuring, the cheapest to
-   make, and it touches only `rag/chunk.ts` plus the indexing path.
+**Blocking, and now the single thing gating everything else:**
+
+0. **Re-index one agent.** Migration `0017` cleared the vectors, so retrieval is
+   keyword-only. It also unblocks the whole of phase 0: the harness cannot
+   measure an empty index.
+
+**Then, in order:**
+
+1. **Generate and review a golden set.**
+   `npm run eval -- --agent=<name> --generate=200`, then read the 50 it prints.
+   The review is the calibration step — skip it and every number downstream is
+   confidently wrong.
+2. **Pin a baseline.** `npm run eval -- --agent=<name> --baseline`. From then on
+   a bare `npm run eval` reports movement and exits non-zero on a real drop.
+3. **1.1 — contextual chunks.** The cheapest change with the largest documented
+   effect, touching only `rag/chunk.ts` and the indexing path — and now the first
+   change that can be *measured* rather than assumed.
+4. ~~**Re-run 1.3 as a comparison.**~~ Done — EmbeddingGemma 96.4% vs bge-small
+   89.3% recall@1, bge-small 5.5x faster at indexing. Worth repeating on a real
+   customer corpus, since five documents is too small to be conclusive.
+
+**Loose ends that are not plan items** (from
+[Off-plan work](#off-plan-work-13-15-august)): confirm the `proxy.ts` fix actually
+serves a page; rotate the Aiven password and B2 key, both pasted in plaintext;
+copy the existing local attachments to B2; and decide whether local embedding at
+~0.5 chunks/sec is acceptable before indexing ten sites.
 
 ---
 
@@ -212,3 +340,7 @@ in phase 1.
 | Date | Change |
 |---|---|
 | 2026-08-13 | File created. Full verification pass against `ea49f25`: 1 done, 3 partial, 27 not started. |
+| 2026-08-15 | **First measurement.** Ran the harness on a real corpus (84 chunks from this repo's docs, 28 generated questions) comparing EmbeddingGemma-300M against bge-small-en-v1.5 through live retrieval: **96.4% vs 89.3% recall@1**, MRR 0.964 vs 0.929, bge-small 5.5x faster to index. Reproduce with `MODEL_COMPARE=1 npx vitest run src/lib/eval/model-compare.test.ts`. Caveat recorded: five documents is too few for recall@8 to discriminate. |
+| 2026-08-15 | **Phase 0 built.** `lib/eval/` — metrics (recall@1/5/8, MRR, abstention precision and recall, false refusals), golden-set generator, runner, `compareToBaseline`, plus `npm run eval` with `--generate` and `--baseline`. 24 tests including an integration test that runs the harness against real retrieval on PGlite, which is the CI gate. **0.1 done; 0.2/0.3/0.4 partial; 0.5 blocked.** Not yet run against real data — nothing is indexed. |
+| 2026-08-15 | **1.3 revisited.** Benchmarked EmbeddingGemma-300M, arctic-embed-m-v2.0 and bge-small-en-v1.5 against the Qwen baseline on one harness; switched the default to **EmbeddingGemma-300M** (3.2x faster, better MTEB in class, 768 dims). Migration `0017` applied to Aiven. Pooling and prefixes moved to per-family defaults with tests, after finding that both fail silently. 295 tests pass. |
+| 2026-08-15 | Re-verified every item by reading code. **1.3 → done** (Qwen3-Embedding-0.6B, 1024 dims), **2.2 → done** (`Crawl-delay`, plus the `docentbot`/`ChatGrainBot` user-agent mismatch), **2.3 → partial** (`blocked` outcome exists; content-challenge detection does not), 2.7 improved. Totals 3 done, 4 partial, 24 not started. Added [Off-plan work](#off-plan-work-13-15-august) for the infrastructure migration and crawler bug hunt, neither of which the plan tracks. |
