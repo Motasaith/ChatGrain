@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "npm run dev -w @docent/web",
     "dev:web": "npm run dev:web -w @docent/web",
+    "dev:lite": "npm run dev:lite -w @docent/web",
     "build": "npm run build -w @docent/web",
     "start": "npm run start -w @docent/web",
     "voice": "npm run voice -w @docent/web",

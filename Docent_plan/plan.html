@@ -325,10 +325,11 @@ Read from `apps/web/src/lib`:
 - **Citations**, with a per-agent `showCitations` setting and contextual citation
   reuse for "give me the link" follow-ups.
 - **A polite crawler.** `crawl/crawler.ts` parses `robots.txt`, discovers
-  `sitemap.xml` and `sitemap_index.xml`, honours `Retry-After` on 429 and 503
-  through a shared `backpressureUntil` pause capped at 30 seconds, filters
-  binary extensions and auth routes, and has a Playwright renderer at
-  `crawl/browser-renderer.ts` for JavaScript pages.
+  `sitemap.xml` and `sitemap_index.xml`, filters binary extensions and auth
+  routes, and has a Playwright renderer at `crawl/browser-renderer.ts` for
+  JavaScript pages. *(Updated 15 August: backpressure now covers 403 and 509 as
+  well as 429 and 503, the `Retry-After` ceiling is 300 seconds rather than 30,
+  and there is a one-request-per-second floor with jitter. See section 5.)*
 - **Incremental re-indexing** by content hash, with tests in
   `crawl/incremental.test.ts` covering the case where a hash matches at a
   different URL.
@@ -358,17 +359,29 @@ Fix: change the chunk record to store `contextualContent` (prefix plus body) for
 embedding, while keeping `content` clean for display and citation. Nothing else
 in the pipeline has to change.
 
-### Gap 2: the embedding model is the ceiling
+### Gap 2: the embedding model is the ceiling — **Done, 15 August**
 
-`rag/embeddings.ts` uses `Xenova/all-MiniLM-L6-v2`, 384 dimensions, quantised to
-q8. That model is small, old and weak. No amount of fusion tuning recovers recall
-that the embedding never had.
+*Was:* `rag/embeddings.ts` used `Xenova/all-MiniLM-L6-v2`, 384 dimensions,
+quantised to q8 - small, old and weak. No amount of fusion tuning recovers
+recall that the embedding never had.
 
-Fix: move to a current retrieval model. Keep it swappable, since
-`EMBEDDING_MODEL` is already an environment variable and `DIMENSIONS` is the only
-hard-coded number. Re-embedding is a one-off cost per agent. Measure both models
-against the harness in section 3 before committing, and keep the option to run a
-hosted embedding endpoint for customers who want quality over local inference.
+*Now:* **EmbeddingGemma-300M at 768 dimensions**, chosen by benchmarking four
+models on one harness rather than by reputation. It reaches 96.4% recall@1
+against `bge-small-en-v1.5`'s 89.3% on a real corpus. Four backends sit behind
+`EMBEDDING_PROVIDER` - local, Cloudflare Workers AI, any OpenAI-compatible
+endpoint, and a hash stub for tests - so the hosted option this section asked
+for exists too.
+
+Three corrections to what this section assumed:
+
+- The dimension was **not** "the only hard-coded number": it is set in both
+  `embeddings.ts` and `schema.ts`, so a model swap is a migration, not a config
+  change.
+- **pgvector cannot build an HNSW index above 2,000 dimensions.** That is a hard
+  ceiling on model choice, confirmed against the live database.
+- Pooling and query/document prefixes are dictated by the model and **fail
+  silently** when wrong - a plausible unit vector comes back either way. They are
+  now pinned per model family.
 
 ### Gap 3: the ranking weights are hand-tuned guesses
 
@@ -401,17 +414,35 @@ Two changes:
    become parameters you can optimise against a labelled set rather than adjust
    by feel.
 
-### Gap 4: nothing measures accuracy
+### Gap 4: nothing measures accuracy — **Built, 15 August**
 
-There is no evaluation harness anywhere in the repo. That is why gap 3 looks the
+*Was:* no evaluation harness anywhere in the repo. That is why gap 3 looks the
 way it does, and why "many accuracy issues" is a feeling rather than a number.
 
-This is the first thing to build, before any of the fixes above, because
-otherwise you cannot tell which of them worked.
+*Now:* `lib/eval/` holds the metrics, a golden-set generator, a runner and
+`npm run eval`. It has produced its first real comparison (gap 2 above).
 
-## 3. Phase 0, build the harness first
+The warning in this section was right, and was ignored once: **the embedding
+model was replaced before the harness existed**, so that decision was made on
+reputation and only justified after the fact. Do not repeat it for the reranker
+or for contextual chunks.
+
+## 3. Phase 0, build the harness first — **Built, 15 August**
 
 One week, and it changes how every later decision gets made.
+
+**What exists now:** `lib/eval/metrics.ts` (recall@1/5/8, MRR, abstention
+precision *and* recall, false refusals), `lib/eval/golden-set.ts` (generator),
+`lib/eval/run.ts` (runner and baseline comparison), and
+`npm run eval -w @docent/web -- --agent=<name>` with `--generate` and
+`--baseline`. The CI gate is an integration test that runs the harness against
+real retrieval on PGlite and fails on a ranking regression.
+
+**What is still missing:** answer-correctness judging, the customer-facing
+figure, and - most importantly - **a human review of the generated questions**.
+Until that review happens the generator is uncalibrated and its numbers are
+indicative rather than quotable. The rest of this section still describes what
+to do.
 
 **Generate a golden set per agent.** After indexing, sample 150 to 300 chunks
 spread across the site, and for each one ask an LLM to write a question that
@@ -445,7 +476,10 @@ your own numbers overrule mine.
    Touches `rag/chunk.ts` and the indexing path only.
 2. **Cross-encoder reranking.** Largest per-query gain. Runs after fusion in
    `hybridRetrieve`, so it slots in at one call site.
-3. **A modern embedding model.** Re-embed and compare on the harness.
+3. ~~**A modern embedding model.**~~ **Done, 15 August** - EmbeddingGemma-300M,
+   768 dims. Note it was done *third-from-the-top out of order and before the
+   harness existed*, which is the mistake this plan warned against; items 1 and 2
+   below are still the cheapest wins and are still untouched.
 4. **LLM query rewriting**, replacing the regex heuristic in
    `contextualRetrievalQuestion`. See section 6 for the code you can lift.
 5. **Question-indexed answer pairs.** For each page, generate the three to five
@@ -465,8 +499,21 @@ You said the crawler trips security plugins and rate limits, and that asking
 clients to disable protection is unprofessional. Agreed, and it is fixable
 without ever asking them.
 
-What the code does today: fixed concurrency of 6, configurable to 24, plus a
-shared pause when a 429 or 503 arrives. What it does not do:
+> **This section misdiagnosed the problem.** A 7,000-page site was returning 40
+> pages, and neither fixed concurrency nor global backpressure was the cause.
+> **`403` was not in `BACKPRESSURE_STATUSES`** - a security plugin blocks by IP
+> and answers 403, so the crawler applied zero backoff and kept firing six-wide
+> into a live block, which is what kept the block alive. Fixed 15 August, along
+> with a request-rate floor, a circuit breaker, and a redirect bug that was
+> indexing the login page as site content. Details in `STACK.md`.
+>
+> The items below are still worth doing; they are just no longer urgent for the
+> reason this section gave.
+
+What the code does today: a one-request-per-second floor with jitter that widens
+on pushback, backpressure on 403/429/503/509, `Retry-After` honoured up to 300
+seconds in both its numeric and HTTP-date forms, and a circuit breaker that stops
+after 20 consecutive failures. What it does not do:
 
 **Adaptive concurrency per host, not fixed.** Start at 2. On a window of clean
 responses, add 1. On a 429, 503 or a challenge, halve it and never go below 1.
@@ -475,16 +522,17 @@ difference between a crawler that gets banned and one that finds a site's own
 comfortable speed by itself. Store the learned rate per host so the next crawl of
 the same site starts where the last one settled.
 
-**Honour `Crawl-delay`.** `parseRobots` reads `Disallow` only. Many WordPress
-security plugins publish a crawl delay, and obeying it is both polite and the
-cheapest way to avoid the block.
+**~~Honour `Crawl-delay`.~~ Done, 15 August.** `parseRobots` now reads it and
+applies it as the request-gap floor, capped at 30 seconds. Fixed alongside it: the
+parser matched the user agent `docentbot` while the fetcher sent `ChatGrainBot`,
+so every site with a rule naming our bot was being silently ignored.
 
-**Detect a challenge instead of recording a failure.** Cloudflare's "Just a
-moment", a 403 with a challenge body, an unusually small HTML response where a
-page was expected. Today those land as broken pages. They should trigger the
-Playwright path you already have in `crawl/browser-renderer.ts`, and if that also
-fails, mark the page as blocked rather than missing so the customer sees the
-truth.
+**Detect a challenge instead of recording a failure.** *Half done.* A `blocked`
+outcome now exists and is recorded when the host refuses us, and it is surfaced in
+the job report. Still missing is detection by *content*: Cloudflare's "Just a
+moment", a challenge body behind a 200, an unusually small HTML response where a
+page was expected. Those still land as thin pages, and the Playwright retry this
+section asks for is not wired to that path.
 
 **Conditional requests on re-crawl.** You compare content hashes after
 downloading. Store `ETag` and `Last-Modified` per URL and send `If-None-Match`
@@ -543,6 +591,11 @@ Ollama account and this codebase:
 | 200 to 2,000 | Current hybrid pipeline plus contextual chunks plus reranking. |
 | 2,000 to 20,000 | Same, plus question-indexed pairs and parent-child, plus metadata filters by URL path so retrieval can be scoped to a section. |
 | 20,000 to 100,000 | Add a topic tree: cluster pages into sections and topics with an LLM-written summary at each level, always in the prompt at a constant 5 to 8k tokens. It gives orientation, enables section filters, and is the only way to answer global questions like "what does this company sell". |
+
+*Note, 15 August: the stack these thresholds assume has changed - Postgres is on
+Aiven, speech is on Groq and in-process Kokoro, and attachments are on Backblaze
+B2. The token ceilings below are unaffected, since they are properties of the
+models rather than of where anything is hosted.*
 
 Measured ceilings behind that table, from testing on your own account:
 `gpt-oss:120b` accepts 130,981 tokens and answers a 56k-token prompt in 4.6
@@ -614,6 +667,10 @@ the idea. Do not copy their Python.
 
 ## 10. Sequence and what each phase buys
 
+*Status as of 15 August: phase 0 is built but uncalibrated, one item of phase 1
+is done, and phase 2 got the reliability fixes it actually needed rather than the
+ones listed. Phases 3, 4 and 5 are as they were. `STATUS.md` tracks this per item.*
+
 | Phase | Work | Buys |
 |---|---|---|
 | 0 | Eval harness | The ability to know anything. Non-negotiable first. |
@@ -626,6 +683,11 @@ the idea. Do not copy their Python.
 Phase 0 first. Everything after it should be justified by a number the harness
 produces, including the items in phase 1, and including anything in this document
 that turns out to be wrong for your corpus.
+
+That last clause has already been collected on twice: this document misdiagnosed
+the crawler failure (section 5), and the embedding swap it called for was made
+before the harness could judge it (section 2). Both worked out. Neither was
+knowable in advance, which is the whole argument for building the harness first.
 </script>
 
 <script>
