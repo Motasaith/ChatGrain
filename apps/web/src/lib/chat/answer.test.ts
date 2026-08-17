@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   addRequestedEvidenceLinks,
   asksToFindPageFromImage,
+  afterLastHandoff,
   asksForHumanSupport,
   cleanGeneratedAnswer,
   contextualCitation,
   contextualRetrievalQuestion,
   projectListFallback,
   referencesConversationImage,
+  smallTalkKind,
   type AnswerHistoryMessage,
 } from "./answer";
 import { parseConversationIntent } from "@/lib/llm/client";
@@ -286,5 +288,96 @@ describe("answer presentation", () => {
     expect(result?.answer.match(/https:\/\/example\.com/g)).toHaveLength(3);
     expect(result?.answer).not.toContain("Categories:");
     expect(result?.answer).not.toContain("_smart_summary:");
+  });
+});
+
+describe("human handoff routing", () => {
+  it("treats plural people the same as singular", () => {
+    // "message the website admins" is the natural phrasing, and a trailing \b
+    // after the singular noun quietly excluded every plural form of it.
+    for (const question of [
+      "send my message to the website admins",
+      "send my message to the website admin",
+      "contact the owners",
+      "let me reach your agents",
+      "can you forward my question to the team",
+    ]) {
+      expect(asksForHumanSupport(question)).toBe(true);
+    }
+  });
+
+  it("leaves ordinary questions to the knowledge base", () => {
+    for (const question of [
+      "What is the capital of France?",
+      "Do you have an EML viewer?",
+      "How does customer support software work?",
+      "how do I create an agent",
+      "what is your refund policy",
+    ]) {
+      expect(asksForHumanSupport(question)).toBe(false);
+    }
+  });
+
+  it("drops the handoff exchange from later intent checks", () => {
+    const history: AnswerHistoryMessage[] = [
+      { role: "user", content: "How can I contact support?" },
+      {
+        role: "assistant",
+        content:
+          "I can ask the website team to contact you. Submit your details below and they can follow up.",
+      },
+      { role: "user", content: "Do you have an EML viewer?" },
+      { role: "assistant", content: "Yes, there is one." },
+    ];
+    // Everything up to and including the handoff is gone, so the next question
+    // is classified on its own merits instead of inheriting "wants a person".
+    expect(afterLastHandoff(history)).toEqual(history.slice(2));
+    expect(afterLastHandoff([])).toEqual([]);
+  });
+
+  it("keeps history that contains no handoff", () => {
+    const history: AnswerHistoryMessage[] = [
+      { role: "user", content: "Is it free?" },
+      { role: "assistant", content: "Yes." },
+    ];
+    expect(afterLastHandoff(history)).toEqual(history);
+  });
+});
+
+describe("small talk", () => {
+  it("recognizes a message that is only social", () => {
+    for (const [text, kind] of [
+      ["hi", "greeting"],
+      ["Hello!", "greeting"],
+      ["hey there", "greeting"],
+      ["good morning", "greeting"],
+      ["assalam o alaikum", "greeting"],
+      ["hi, how are you?", "greeting"],
+      // An empty message is an opening, not a failed question.
+      ["", "greeting"],
+      ["thanks", "thanks"],
+      ["thank you so much", "thanks"],
+      ["shukriya", "thanks"],
+      ["bye", "farewell"],
+      // Later words win: this closes an exchange rather than opening one.
+      ["goodbye, thanks", "thanks"],
+    ] as const) {
+      expect(smallTalkKind(text)).toBe(kind);
+    }
+  });
+
+  it("leaves anything carrying a question to retrieval", () => {
+    for (const text of [
+      "hi, do you have an EML viewer?",
+      "Can you open a .dwg CAD file?",
+      "What is the capital of France?",
+      "how much does the pro plan cost",
+      "How can I contact support?",
+      "is it free",
+      "thanks for the link, but how do I open msg files",
+      "good tools for csv?",
+    ]) {
+      expect(smallTalkKind(text)).toBeNull();
+    }
   });
 });

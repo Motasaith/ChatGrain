@@ -197,6 +197,66 @@ export function extractBrand(html: string, pageUrl: URL): SiteBrand {
 }
 
 /**
+ * Elements that end a line of prose. `textContent` ignores layout entirely, so
+ * a step card renders as "2See it instantlyOur client-side parser reads..." -
+ * three separate blocks welded into one unsearchable string. That text is what
+ * gets embedded, keyword-indexed and shown to the model, so the damage is not
+ * cosmetic: "EML" inside `<li>EML</li><li>MSG</li>` becomes the token
+ * "EMLMSGMBOX", which no query for "EML" can ever match.
+ */
+const BLOCK_TAGS = new Set([
+  "address", "article", "aside", "blockquote", "details", "dd", "div", "dl",
+  "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3",
+  "h4", "h5", "h6", "header", "hgroup", "hr", "li", "main", "nav", "ol", "p",
+  "pre", "section", "summary", "table", "tbody", "tfoot", "thead", "tr", "ul",
+]);
+
+/** Cells sit side by side, so they need a separator that is not a line break. */
+const CELL_TAGS = new Set(["td", "th"]);
+
+/** Never contributes visible text, and its contents are not prose. */
+const SKIPPED_TAGS = new Set(["script", "style", "noscript", "template"]);
+
+/**
+ * Serialises an element the way a reader sees it rather than the way the DOM
+ * stores it. jsdom implements no `innerText`, so the block boundaries have to
+ * be reinstated by hand.
+ */
+export function blockText(root: Element): string {
+  let out = "";
+  const append = (value: string) => {
+    if (!value) return;
+    // Nested blocks emit a newline per level, so separators are collapsed
+    // rather than stacked. Two survive, because `chunkText` splits on the blank
+    // line; a third would only ever be a nesting artefact.
+    if (value === "\n" && /\n[ \t]*\n[ \t]*$/.test(out)) return;
+    if (value === " | " && (!out || /[\n|]\s*$/.test(out))) return;
+    out += value;
+  };
+  const walk = (node: Node) => {
+    if (node.nodeType === 3) {
+      out += node.nodeValue ?? "";
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const element = node as Element;
+    const tag = element.tagName.toLowerCase();
+    if (SKIPPED_TAGS.has(tag)) return;
+    if (tag === "br") {
+      append("\n");
+      return;
+    }
+    const block = BLOCK_TAGS.has(tag);
+    if (block) append("\n");
+    else if (CELL_TAGS.has(tag)) append(" | ");
+    for (const child of element.childNodes) walk(child);
+    if (block) append("\n");
+  };
+  walk(root);
+  return out;
+}
+
+/**
  * Share of the page Readability must keep before its result is trusted.
  *
  * Readability is tuned for prose articles. On pages built from cards, grids or
@@ -269,13 +329,20 @@ export function extractPage(html: string, pageUrl: URL): ExtractedPage {
   const $ = cheerio.load(html);
   // Taken from the stripped document rather than the raw HTML, so the fuller
   // reading is already free of nav, footer, aside, form and script text.
-  const wholePage = document.body?.textContent?.trim() ?? "";
-  const text = decodeResidualEntities(
-    chooseExtraction(article?.textContent?.trim() ?? "", wholePage),
-  )
+  const wholePage = document.body ? blockText(document.body).trim() : "";
+  // Readability returns `textContent` too, so its output needs the same repair.
+  const readable = article?.content
+    ? blockText(
+        new JSDOM(`<body>${article.content}</body>`).window.document.body,
+      ).trim()
+    : (article?.textContent?.trim() ?? "");
+  const text = decodeResidualEntities(chooseExtraction(readable, wholePage))
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
-    .replace(/\n\s+/g, "\n")
+    // Trims each line without eating the blank line between paragraphs: `\s`
+    // matches `\n`, so the old `\n\s+` collapsed every paragraph break and left
+    // the chunker with a single undifferentiated block.
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 

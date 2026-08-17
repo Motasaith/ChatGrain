@@ -7,6 +7,7 @@ import {
   defaultLlmModel,
   describeImagesForSearch,
   generateGroundedAnswer,
+  rewriteSearchQuery,
   streamGroundedAnswer,
 } from "@/lib/llm/client";
 import { suggestFollowUps } from "@/lib/chat/follow-ups";
@@ -152,6 +153,18 @@ function sourceSpecificity(url: string, title: string) {
   return pageSpecificity(url) - (genericTitle ? 4 : 0);
 }
 
+/**
+ * People a visitor can ask to be put through to.
+ *
+ * The trailing `s?` is the whole reason this is shared rather than inlined:
+ * without it "message the website admins" is not a handoff while "message the
+ * website admin" is, and the plural is the more natural way to say it.
+ */
+const PERSON =
+  "(?:a real person|human|person|people|someone|somebody|support|customer service|representative|admin|administrator|moderator|owner|agent|team|staff|webmaster)s?";
+
+const REACH = "(?:talk|speak|chat|contact|call|email|message|reply|reach|get in touch)";
+
 export function asksForHumanSupport(question: string) {
   const normalized = question
     .normalize("NFKC")
@@ -160,15 +173,19 @@ export function asksForHumanSupport(question: string) {
     .trim();
 
   return (
-    /\b(?:talk|speak|chat|contact|call|email|message|connect|transfer|reach|get in touch)\b.{0,60}\b(?:a real person|human|person|someone|support|customer service|representative|admin|owner|agent|team|staff)\b/i.test(
-      normalized,
-    ) ||
-    /\b(?:a real person|human|person|someone|support|customer service|representative|admin|owner|agent|team|staff)\b.{0,60}\b(?:talk|speak|chat|contact|call|email|message|reply|reach|get in touch)\b/i.test(
-      normalized,
-    ) ||
-    /\b(?:have|ask|get|tell)\b.{0,30}\b(?:someone|support|customer service|admin|owner|agent|team|staff)\b.{0,30}\b(?:contact|call|email|message|reply|reach)\b/i.test(
-      normalized,
-    ) ||
+    new RegExp(
+      `\\b(?:talk|speak|chat|contact|call|email|message|connect|transfer|reach|get in touch)\\b.{0,60}\\b${PERSON}\\b`,
+      "i",
+    ).test(normalized) ||
+    new RegExp(`\\b${PERSON}\\b.{0,60}\\b${REACH}\\b`, "i").test(normalized) ||
+    new RegExp(
+      `\\b(?:have|ask|get|tell|send)\\b.{0,30}\\b${PERSON}\\b.{0,30}\\b(?:contact|call|email|message|reply|reach)\\b`,
+      "i",
+    ).test(normalized) ||
+    new RegExp(
+      `\\b(?:send|pass|forward|relay)\\b.{0,40}\\b(?:message|note|query|question|feedback|request)\\b.{0,40}\\b${PERSON}\\b`,
+      "i",
+    ).test(normalized) ||
     /\b(?:phone number|direct email|email address|contact details)\b/i.test(
       normalized,
     ) ||
@@ -190,6 +207,98 @@ export function asksForHumanSupport(question: string) {
   );
 }
 
+/**
+ * Words that carry no question, only social contact.
+ *
+ * Split by kind because the reply differs: a greeting opens a conversation, a
+ * thank-you closes an exchange, and a farewell closes the conversation.
+ */
+const GREETING_WORDS = new Set([
+  "hi", "hii", "hiii", "hy", "hey", "heyy", "heya", "hello", "helo", "hallo",
+  "yo", "sup", "howdy", "greetings", "morning", "afternoon", "evening",
+  "salam", "salaam", "assalam", "assalamu", "assalamualaikum", "alaikum",
+  "alaykum", "aoa", "adaab", "namaste", "hola", "bonjour", "ciao", "ola",
+  "walaikum", "walaikumassalam", "walekum",
+]);
+const THANKS_WORDS = new Set([
+  "thanks", "thank", "thankyou", "thx", "tysm", "ty", "shukriya", "shukria",
+  "gracias", "merci", "danke", "cheers", "appreciate", "appreciated",
+]);
+const FAREWELL_WORDS = new Set([
+  "bye", "byee", "goodbye", "cya", "farewell", "adios", "khuda", "hafiz",
+  "allah", "later",
+]);
+/** Carried along with a greeting without turning it into a question. */
+const SOCIAL_FILLER = new Set([
+  "good", "day", "there", "you", "u", "ur", "your", "are", "is", "how", "hows",
+  "doing", "well", "and", "the", "a", "an", "to", "me", "my", "i", "im", "am",
+  "its", "it", "so", "much", "very", "lot", "lots", "for", "help", "helping",
+  "team", "sir", "maam", "madam", "please", "plz", "pls", "ok", "okay", "k",
+  "yes", "no", "hope", "everything", "all", "right", "again", "welcome",
+  "nice", "great", "cool", "buddy", "bro", "dear", "kya", "haal", "hai",
+  "kaise", "ho", "aap", "acha", "theek",
+  // Connectors inside transliterated greetings: "assalam o alaikum".
+  "o", "wa",
+]);
+
+export type SmallTalkKind = "greeting" | "thanks" | "farewell";
+
+/**
+ * Recognises a message that is only social, so it can be answered directly.
+ *
+ * Retrieval on "hi" scores nothing above the threshold and returns the
+ * fallback, so a visitor's first word is met with "I couldn't find a reliable
+ * answer" - the worst possible opening. This runs before retrieval.
+ *
+ * A message is only small talk when *nothing* is left after the social words
+ * are removed, so "hi, do you have an EML viewer?" is still a question.
+ */
+export function smallTalkKind(question: string): SmallTalkKind | null {
+  const words =
+    question
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[’']/g, "")
+      .match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (!words.length) return "greeting";
+  if (words.length > 8) return null;
+
+  let kind: SmallTalkKind | null = null;
+  for (const word of words) {
+    // Later words win, so "hi, thanks" closes rather than opens.
+    if (GREETING_WORDS.has(word)) kind = kind === null ? "greeting" : kind;
+    else if (THANKS_WORDS.has(word)) kind = "thanks";
+    else if (FAREWELL_WORDS.has(word)) kind = "farewell";
+    else if (!SOCIAL_FILLER.has(word)) return null;
+  }
+  return kind;
+}
+
+function smallTalkAnswer(
+  agent: Agent,
+  kind: SmallTalkKind,
+): AnswerResult {
+  const answer =
+    kind === "greeting"
+      ? agent.welcomeMessage
+      : kind === "thanks"
+        ? "Happy to help. Is there anything else you would like to know?"
+        : "Thanks for stopping by. Come back any time you need a hand.";
+  return {
+    answer,
+    // Nothing was retrieved, but nothing was missed either: this is a complete
+    // reply, and marking it ungrounded would make the next unanswered question
+    // look like a repeated failure and offer the contact form too early.
+    grounded: true,
+    confidence: 1,
+    citations: [],
+    followUps:
+      kind === "greeting" && agent.suggestedQuestions.length
+        ? agent.suggestedQuestions.slice(0, 4)
+        : undefined,
+  };
+}
+
 async function shouldOfferHumanHandoff(
   agent: Agent,
   question: string,
@@ -197,9 +306,21 @@ async function shouldOfferHumanHandoff(
 ) {
   if (asksForHumanSupport(question)) return true;
   const intent = await classifyConversationIntent({
+    // Everything up to and including the last handoff is dropped, exactly as
+    // `conversationQuestion` does it. A handoff turn left in the window reads
+    // as an unresolved request to reach a person, so the classifier keeps
+    // answering HUMAN_HANDOFF to whatever is asked next - and the visitor gets
+    // the contact form instead of an answer for the rest of the conversation.
+    history: afterLastHandoff(history).map(({ role, content }) => ({
+      role,
+      content,
+    })),
     message: question,
-    history: history.map(({ role, content }) => ({ role, content })),
-    model: agent.modelName,
+    providers: providersForAgent({
+      llmBaseUrl: agent.llmBaseUrl,
+      llmApiKey: decryptSecret(agent.llmApiKeyEncrypted),
+      modelName: agent.modelName,
+    }),
   });
   return intent === "human_handoff";
 }
@@ -350,6 +471,21 @@ function isHandoffHistoryMessage(message: AnswerHistoryMessage) {
       );
 }
 
+/**
+ * History since the last human-handoff turn.
+ *
+ * A handoff exchange is a dead end for everything downstream: it is not the
+ * topic the visitor is asking about, and it reads as an open request to reach a
+ * person. Both retrieval and intent routing have to start after it.
+ *
+ * Exported for testing: leaving a handoff turn in the window makes the intent
+ * classifier answer HUMAN_HANDOFF to every later message, which replaces the
+ * rest of the conversation with the contact form and is invisible from here.
+ */
+export function afterLastHandoff(history: AnswerHistoryMessage[]) {
+  return history.slice(history.findLastIndex(isHandoffHistoryMessage) + 1);
+}
+
 function standaloneTopicTerms(value: string) {
   const ignored = new Set([
     "want",
@@ -419,8 +555,7 @@ function conversationQuestion(
   history: AnswerHistoryMessage[],
 ) {
   if (!history.length) return question;
-  const lastHandoff = history.findLastIndex(isHandoffHistoryMessage);
-  const relevantHistory = history.slice(lastHandoff + 1);
+  const relevantHistory = afterLastHandoff(history);
   if (!relevantHistory.length) return question;
   const transcript = relevantHistory
     .slice(-8)
@@ -550,6 +685,63 @@ export function projectListFallback(
       .join("\n")}`,
     hits: projects,
   };
+}
+
+/** How much the best hit looks like an answer rather than a near miss. */
+export function retrievalConfidence(best: RetrievalHit | undefined) {
+  if (!best) return 0;
+  return Math.max(
+    0,
+    Math.min(
+      1,
+      best.vectorScore * 0.4 +
+        Math.max(0, Math.min(best.keywordScore, 0.8)) * 0.22 +
+        best.lexicalScore * 0.2 +
+        best.titleScore * 0.35,
+    ),
+  );
+}
+
+/**
+ * Retrieval, with one repair attempt when the first pass finds nothing good.
+ *
+ * A misspelled word costs more than it looks like it should: the keyword,
+ * lexical and title legs together carry more of the confidence score than the
+ * vector leg does, and none of them match a word that is spelled wrong. The
+ * rewrite runs only on that failure, so a question that already worked pays
+ * nothing for this.
+ */
+async function retrieveWithRepair(
+  agent: Agent,
+  retrievalQuestion: string,
+  question: string,
+  threshold: number,
+) {
+  const hits = await hybridRetrieve(agent.id, retrievalQuestion);
+  const confidence = retrievalConfidence(hits[0]);
+  if (confidence >= threshold) return { hits, confidence };
+
+  const rewritten = await rewriteSearchQuery({
+    question,
+    providers: providersForAgent({
+      llmBaseUrl: agent.llmBaseUrl,
+      llmApiKey: decryptSecret(agent.llmApiKeyEncrypted),
+      modelName: agent.modelName,
+    }),
+  });
+  const changed =
+    rewritten &&
+    rewritten.toLowerCase().replace(/\W+/g, " ").trim() !==
+      question.toLowerCase().replace(/\W+/g, " ").trim();
+  if (!changed) return { hits, confidence };
+
+  const repaired = await hybridRetrieve(agent.id, rewritten);
+  const repairedConfidence = retrievalConfidence(repaired[0]);
+  // Keep the better of the two. A rewrite can drop a distinctive term the
+  // visitor actually typed, and that is worse than the original miss.
+  return repairedConfidence > confidence
+    ? { hits: repaired, confidence: repairedConfidence }
+    : { hits, confidence };
 }
 
 function extractiveAnswer(question: string, hits: RetrievalHit[]) {
@@ -733,8 +925,60 @@ async function llmAnswer(
     });
   } catch (error) {
     logger.warn({ error, model }, "Ollama generation failed");
-    return null;
+    return { status: "unavailable" } as const;
   }
+}
+
+/**
+ * Distinct pages worth offering when the question itself cannot be answered.
+ *
+ * Deduplicated per document, because five chunks of one page is a list of one
+ * thing presented as five.
+ */
+function alternativePages(hits: RetrievalHit[], limit = 5) {
+  const seen = new Set<string>();
+  return hits
+    .filter((hit): hit is RetrievalHit & { url: string } => {
+      if (
+        !hit.url ||
+        seen.has(hit.documentId) ||
+        sourceSpecificity(hit.url, hit.title) <= 0
+      ) {
+        return false;
+      }
+      seen.add(hit.documentId);
+      return true;
+    })
+    .slice(0, limit);
+}
+
+/**
+ * The reply when the model read the evidence and said it does not answer the
+ * question.
+ *
+ * The old behaviour here was to run the extractive fallback, which pastes the
+ * highest-scoring sentences from those same pages. Asked for a format the site
+ * does not support, that produced a wall of run-together viewer names: a
+ * confident-looking non-answer to a question whose true answer is "no". Saying
+ * so and listing what does exist is both honest and more useful.
+ */
+function unsupportedAnswer(
+  agent: Agent,
+  hits: RetrievalHit[],
+  confidence: number,
+): AnswerResult {
+  const pages = alternativePages(hits);
+  const list = pages
+    .map((hit) => `- [${hit.title}](${hit.url})`)
+    .join("\n");
+  return {
+    answer: pages.length
+      ? `${agent.fallbackMessage}\n\nHere is what this website does cover:\n${list}`
+      : agent.fallbackMessage,
+    grounded: false,
+    confidence,
+    citations: [],
+  };
 }
 
 export async function answerQuestion(
@@ -744,6 +988,11 @@ export async function answerQuestion(
   images: Array<{ mimeType: string; base64: string }> = [],
   cachedVisualSearchText?: string | null,
 ) {
+  // Before the handoff check, which would otherwise spend a round-trip
+  // classifying "hi", and before retrieval, which has nothing to find in it.
+  const social = images.length ? null : smallTalkKind(question);
+  if (social) return smallTalkAnswer(agent, social);
+
   if (await shouldOfferHumanHandoff(agent, question, history)) {
     return humanSupportAnswer(agent);
   }
@@ -807,7 +1056,15 @@ export async function answerQuestion(
   ]
     .filter(Boolean)
     .join("\n");
-  const hits = await hybridRetrieve(agent.id, retrievalQuestion);
+  const threshold = agent.strictMode ? 0.3 : 0.18;
+  // An image already produced its own search text, and a picture cannot be
+  // misspelled, so the repair pass only applies to typed questions.
+  const { hits, confidence } = images.length
+    ? await hybridRetrieve(agent.id, retrievalQuestion).then((found) => ({
+        hits: found,
+        confidence: retrievalConfidence(found[0]),
+      }))
+    : await retrieveWithRepair(agent, retrievalQuestion, question, threshold);
   if (images.length && asksToFindPageFromImage(question)) {
     const matched = hits.find(
       (hit): hit is RetrievalHit & { url: string } =>
@@ -863,19 +1120,6 @@ export async function answerQuestion(
     }
   }
   const best = hits[0];
-  const confidence = best
-    ? Math.max(
-        0,
-        Math.min(
-          1,
-          best.vectorScore * 0.4 +
-            Math.max(0, Math.min(best.keywordScore, 0.8)) * 0.22 +
-            best.lexicalScore * 0.2 +
-            best.titleScore * 0.35,
-        ),
-      )
-    : 0;
-  const threshold = agent.strictMode ? 0.3 : 0.18;
   if (images.length) {
     const imageEvidence = hits.length
       ? coherentEvidence(hits, question)
@@ -887,17 +1131,17 @@ export async function answerQuestion(
       history,
       images,
     );
-    if (generated) {
+    if (generated.status === "answered") {
       return {
         answer: addRequestedEvidenceLinks(
-          cleanGeneratedAnswer(generated),
+          cleanGeneratedAnswer(generated.text),
           question,
           imageEvidence,
         ),
         grounded: true,
         confidence: Math.max(confidence, 0.75),
         citations: agent.showCitations
-          ? citedEvidence(generated, imageEvidence).map((hit) => ({
+          ? citedEvidence(generated.text, imageEvidence).map((hit) => ({
               chunkId: hit.chunkId,
               title: hit.title,
               url: hit.url,
@@ -928,18 +1172,27 @@ export async function answerQuestion(
   const generated =
     agent.modelProvider === "ollama"
       ? await llmAnswer(agent, question, evidenceHits, history, images)
-      : null;
-  const listFallback = generated
+      : ({ status: "unavailable" } as const);
+
+  // Retrieval found pages, but the model judged that they do not answer this.
+  // Only the extractive path could contradict that, and it does so by pasting
+  // the very text the model just rejected.
+  if (generated.status === "declined") {
+    return unsupportedAnswer(agent, evidenceHits, confidence);
+  }
+
+  const answered = generated.status === "answered" ? generated.text : null;
+  const listFallback = answered
     ? null
     : projectListFallback(question, evidenceHits);
-  const extracted = generated
+  const extracted = answered
     ? null
     : listFallback
       ? null
       : extractiveAnswer(question, evidenceHits);
-  const answer = generated
+  const answer = answered
     ? addRequestedEvidenceLinks(
-        cleanGeneratedAnswer(generated),
+        cleanGeneratedAnswer(answered),
         question,
         evidenceHits,
       )
@@ -952,8 +1205,8 @@ export async function answerQuestion(
       citations: [],
     };
   }
-  const answeredHits = generated
-    ? citedEvidence(generated, evidenceHits)
+  const answeredHits = answered
+    ? citedEvidence(answered, evidenceHits)
     : listFallback?.hits ?? extracted?.hits ?? [];
   return {
     answer,
@@ -1019,6 +1272,8 @@ export async function* answerQuestionStream(
   { voice = false, signal }: { voice?: boolean; signal?: AbortSignal } = {},
 ): AsyncGenerator<AnswerStreamEvent> {
   const nonStreaming = async (): Promise<AnswerResult | null> => {
+    const social = smallTalkKind(question);
+    if (social) return smallTalkAnswer(agent, social);
     if (await shouldOfferHumanHandoff(agent, question, history)) {
       return humanSupportAnswer(agent);
     }
@@ -1072,7 +1327,13 @@ export async function* answerQuestionStream(
   if (signal?.aborted) return;
 
   const retrievalQuestion = contextualRetrievalQuestion(question, history);
-  const hits = await hybridRetrieve(agent.id, retrievalQuestion);
+  const threshold = agent.strictMode ? 0.3 : 0.18;
+  const { hits, confidence } = await retrieveWithRepair(
+    agent,
+    retrievalQuestion,
+    question,
+    threshold,
+  );
   if (signal?.aborted) return;
 
   if (asksForContextualLink(question)) {
@@ -1099,19 +1360,6 @@ export async function* answerQuestionStream(
   }
 
   const best = hits[0];
-  const confidence = best
-    ? Math.max(
-        0,
-        Math.min(
-          1,
-          best.vectorScore * 0.4 +
-            Math.max(0, Math.min(best.keywordScore, 0.8)) * 0.22 +
-            best.lexicalScore * 0.2 +
-            best.titleScore * 0.35,
-        ),
-      )
-    : 0;
-  const threshold = agent.strictMode ? 0.3 : 0.18;
 
   if (!best || confidence < threshold) {
     const previousAssistant = [...history]

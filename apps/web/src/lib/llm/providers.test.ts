@@ -106,7 +106,15 @@ describe("isRetryableStatus", () => {
   it("does not move on for a malformed request", () => {
     // The next provider would reject it identically; only the log would grow.
     expect(isRetryableStatus(400)).toBe(false);
-    expect(isRetryableStatus(404)).toBe(false);
+  });
+
+  it("moves on for a model the provider does not serve", () => {
+    // 404 is what a vendor returns for a retired or foreign model name, and
+    // the next provider may well serve it. Treating it as terminal let one
+    // stale model name in the first entry disable generation for the whole
+    // chain, which surfaced as answers that copied the source page verbatim
+    // rather than as an error.
+    expect(isRetryableStatus(404)).toBe(true);
   });
 });
 

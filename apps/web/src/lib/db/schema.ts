@@ -301,9 +301,12 @@ export const chunks = pgTable(
     position: integer("position").notNull(),
     content: text("content").notNull(),
     tokenCount: integer("token_count").default(0).notNull(),
-    // EmbeddingGemma-300M. Must match EMBEDDING_DIMENSIONS in
-    // lib/rag/embeddings.ts, and must stay <= 2000 or the HNSW index below
-    // cannot be built at all.
+    // Must match EMBEDDING_DIMENSIONS in lib/rag/embeddings.ts, and must stay
+    // <= 2000 or the HNSW index below cannot be built at all. Models wider than
+    // this are truncated to fit, so the model has to support that (Qwen3 and
+    // EmbeddingGemma both do, via Matryoshka).
+    // Vectors from different models are not comparable: changing the model or
+    // this width means re-indexing every source, not a migration.
     embedding: vector("embedding", { dimensions: 768 }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })

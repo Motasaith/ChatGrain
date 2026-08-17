@@ -281,20 +281,23 @@ export async function embedTexts(
     return raw.map(fitDimensions);
   }
 
-  try {
-    const extractor = await loadExtractor();
-    const result = await extractor(
-      texts.map((text) => decorate(text, kind)),
-      { pooling: POOLING, normalize: true },
-    );
-    return result.tolist().map(fitDimensions);
-  } catch (error) {
-    logger.warn(
-      { error, model: MODEL },
-      "Embedding model unavailable; using deterministic local fallback",
-    );
-    return texts.map(stableFallbackEmbedding);
-  }
+  // Same reasoning as the remote providers above: a hash vector is not a
+  // degraded embedding, it is a meaningless one. Writing those into the index
+  // or searching with one produces confident answers off unrelated pages,
+  // which is far harder to diagnose than a failed job. `EMBEDDING_PROVIDER=hash`
+  // stays available for tests that want the deterministic vectors on purpose.
+  const extractor = await loadExtractor().catch((error) => {
+    // A rejected promise stays cached, so without this a single transient
+    // download failure would fail every later call for the life of the process.
+    extractorPromise = undefined;
+    logger.error({ error, model: MODEL }, "Embedding model failed to load");
+    throw error;
+  });
+  const result = await extractor(
+    texts.map((text) => decorate(text, kind)),
+    { pooling: POOLING, normalize: true },
+  );
+  return result.tolist().map(fitDimensions);
 }
 
 export async function embedText(

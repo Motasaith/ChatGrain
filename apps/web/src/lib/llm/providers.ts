@@ -15,8 +15,14 @@ export type LlmProvider = {
   label: string;
 };
 
-/** Tool-capable, fast, and available on a free tier - see the README note. */
-export const DEFAULT_LLM_MODEL = "llama-3.3-70b-versatile";
+/**
+ * Tool-capable, fast, and available on a free tier - see the README note.
+ *
+ * Vendors retire models, and a retired name here 404s on every request. That
+ * is survivable now only because `isRetryableStatus` treats 404 as a reason to
+ * try the next provider rather than to give up on the chain.
+ */
+export const DEFAULT_LLM_MODEL = "openai/gpt-oss-120b";
 
 const DEFAULT_BASE_URL = "https://ollama.com/v1";
 
@@ -149,7 +155,20 @@ export function isRetryableStatus(status: number) {
   // 429 is a rate limit and 5xx is the provider's problem; both are exactly
   // what a fallback exists for. A 400 or 401 would fail identically on retry
   // of the same request, but may still succeed elsewhere with another key.
-  return status === 401 || status === 403 || status === 429 || status >= 500;
+  //
+  // 404 is the one that matters most in practice: it is what a provider
+  // returns for a model it does not serve, either because the chain is asking
+  // for another provider's model or because the vendor retired it. Treating it
+  // as terminal meant one stale model name in the first entry silently
+  // disabled generation for the whole chain, and the caller read that as "the
+  // model declined to answer" rather than "nothing was ever asked".
+  return (
+    status === 401 ||
+    status === 403 ||
+    status === 404 ||
+    status === 429 ||
+    status >= 500
+  );
 }
 
 /**

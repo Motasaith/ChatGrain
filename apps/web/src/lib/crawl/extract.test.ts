@@ -154,6 +154,56 @@ describe("card and grid page extraction", () => {
   });
 });
 
+describe("block boundaries", () => {
+  it("keeps adjacent blocks from welding into one token", () => {
+    // The shape that produced "2See it instantlyOur client-side parser reads":
+    // a counter, a heading and a paragraph as siblings. `textContent` returns
+    // them with no separator at all, so the words never exist as themselves in
+    // the index and no query can match them.
+    const page = extractPage(
+      `<html><head><title>Viewer</title></head><body><main>
+         <div class="step"><span class="num">2</span><h3>See it instantly</h3>
+           <p>Our parser reads the message directly on your device.</p></div>
+       </main></body></html>`,
+      new URL("https://example.test/viewer"),
+    );
+
+    expect(page.text).not.toContain("instantlyOur");
+    expect(page.text).not.toContain("2See");
+    expect(page.text).toContain("See it instantly");
+  });
+
+  it("keeps list items and table cells separately searchable", () => {
+    const page = extractPage(
+      `<html><head><title>Formats</title></head><body><main>
+         <ul><li>EML</li><li>MSG</li><li>MBOX</li></ul>
+         <table><tr><th>Format</th><th>Supported</th></tr>
+                <tr><td>HEIC</td><td>Yes</td></tr></table>
+       </main></body></html>`,
+      new URL("https://example.test/formats"),
+    );
+
+    // "EMLMSGMBOX" is one token, so a search for "EML" cannot find this page.
+    expect(page.text).not.toMatch(/EMLMSG|MSGMBOX|HEICYes/);
+    for (const format of ["EML", "MSG", "MBOX", "HEIC"]) {
+      expect(page.text).toMatch(
+        new RegExp(`(?:^|[^A-Za-z])${format}(?:[^A-Za-z]|$)`),
+      );
+    }
+  });
+
+  it("keeps the blank line chunking splits on", () => {
+    const page = extractPage(
+      `<html><head><title>Two</title></head><body><main>
+         <p>First paragraph about refunds.</p>
+         <p>Second paragraph about delivery.</p>
+       </main></body></html>`,
+      new URL("https://example.test/two"),
+    );
+    expect(page.text).toContain("\n\n");
+  });
+});
+
 describe("chooseExtraction", () => {
   it("keeps Readability when it captured most of the page", () => {
     expect(chooseExtraction("a".repeat(90), "a".repeat(100))).toBe("a".repeat(90));
