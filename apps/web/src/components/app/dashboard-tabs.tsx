@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { X } from "lucide-react";
@@ -13,6 +13,20 @@ import {
 } from "@/lib/dashboard/tabs";
 
 const STORAGE_KEY = "chatgrain:dashboard-tabs";
+
+// useLayoutEffect is a no-op on the server and warns if it runs there.
+const useRestoreEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+function readStoredTabs(): DashboardTab[] | null {
+  try {
+    const stored = window.sessionStorage.getItem(STORAGE_KEY);
+    const parsed = stored ? (JSON.parse(stored) as DashboardTab[]) : null;
+    return Array.isArray(parsed) && parsed.length ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 function persist(tabs: DashboardTab[]) {
   try {
@@ -34,18 +48,15 @@ export function DashboardTabs() {
   const pathname = usePathname();
   const router = useRouter();
 
-  // Lazy initial state: reading storage in an effect would render one frame
-  // without the tabs, so the strip would flicker on every reload.
-  const [tabs, setTabs] = useState<DashboardTab[]>(() => {
-    if (typeof window === "undefined") return [HOME_TAB];
-    try {
-      const stored = window.sessionStorage.getItem(STORAGE_KEY);
-      const parsed = stored ? (JSON.parse(stored) as DashboardTab[]) : null;
-      return Array.isArray(parsed) && parsed.length ? parsed : [HOME_TAB];
-    } catch {
-      return [HOME_TAB];
-    }
-  });
+  // Hydration has to start from what the server rendered, so stored tabs are
+  // restored in a layout effect: it lands before paint, so the strip still does
+  // not flicker, but it runs after React has matched the two trees.
+  const [tabs, setTabs] = useState<DashboardTab[]>([HOME_TAB]);
+
+  useRestoreEffect(() => {
+    const stored = readStoredTabs();
+    if (stored) setTabs(stored);
+  }, []);
 
   // Adjusting state during render rather than in an effect: React re-renders
   // immediately without committing the intermediate result, so the strip never
