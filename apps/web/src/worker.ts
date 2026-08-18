@@ -6,6 +6,7 @@ import {
   eq,
   isNotNull,
   isNull,
+  like,
   lt,
   lte,
   sql,
@@ -143,6 +144,44 @@ async function discardCancelledJobs() {
   if (stopped.length) {
     logger.info({ jobs: stopped.length }, "Discarded jobs stopped while queued");
   }
+}
+
+/**
+ * Says so, loudly, when another worker is already serving this database.
+ *
+ * Job claiming is atomic, so two workers never process the same job and nothing
+ * is corrupted. What they do instead is confuse: a developer's machine pointed
+ * at the deployed `DATABASE_URL` will claim production jobs, and closing the
+ * laptop strands whatever it was holding until stale recovery fifteen minutes
+ * later. That looks exactly like a broken deployment, which is a bad thing to
+ * have to work out from the symptoms.
+ *
+ * A warning rather than a refusal: running several workers on purpose is a
+ * reasonable thing to want, and this is not the place to decide it is not.
+ */
+async function warnAboutPeers() {
+  const beats = await db
+    .select({ key: systemState.key, updatedAt: systemState.updatedAt })
+    .from(systemState)
+    .where(like(systemState.key, "worker:%"));
+  const peers = beats
+    .filter(
+      (beat) =>
+        beat.key !== `worker:${workerId}` &&
+        Date.now() - beat.updatedAt.getTime() < 60_000,
+    )
+    .map((beat) => beat.key.slice("worker:".length));
+  if (!peers.length) return;
+  logger.warn(
+    { workerId, peers },
+    "Another worker is already processing jobs on this database. " +
+      "If this is a development machine, point DATABASE_URL at a local " +
+      "database or start the web server on its own with `npm run dev:web`.",
+  );
+  await recordSystemLog("warn", "Multiple workers share this database", {
+    workerId,
+    peers,
+  });
 }
 
 async function claimJob() {
@@ -351,6 +390,7 @@ async function run() {
     });
   }
   await recoverStaleJobs();
+  await warnAboutPeers();
   logger.info({ workerId, pollInterval }, "ChatGrain worker started");
   await recordSystemLog("info", "ChatGrain worker started", {
     workerId,

@@ -504,6 +504,33 @@ npm run diagnose:crawl
 npx tsx --tsconfig tsconfig.voice.json scripts/diagnose-answer.ts   "how does the time calculator work" calculators/time --agent="HOC 2.0"
 ```
 
+### Local development against the deployed database
+
+`DATABASE_URL` is the only thing that separates a development machine from the
+deployment. Point a local `.env.local` at the deployed database and `npm run
+dev` starts a second worker on it, which will claim live jobs: closing the
+laptop then strands whatever it was holding until stale recovery fifteen
+minutes later, and the dashboard shows a stall with no obvious cause.
+
+Job claiming is atomic, so nothing is corrupted and nothing is processed twice.
+The cost is confusion, not data. A worker that finds another one beating says so
+at startup and in the system log.
+
+Use a local database:
+
+```bash
+docker compose --profile local-db up -d postgres
+# DATABASE_URL=postgres://docent:docent@localhost:5434/docent
+npm run db:push
+```
+
+Or, to read deployed data without competing for its jobs, start the web server
+on its own:
+
+```bash
+npm run dev:web
+```
+
 ### Schema: push, not migrate
 
 Deployments here have always used `db:push`, which applies the schema directly
