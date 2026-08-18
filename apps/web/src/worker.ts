@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, lt, lte, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  sql,
+} from "drizzle-orm";
 import { cleanupInactiveUsers } from "@/lib/admin/retention";
 import { ensureHomepageAgent } from "@/lib/agents/homepage-agent";
 import { processCrawlJob } from "@/lib/crawl/process-job";
@@ -103,6 +113,36 @@ async function recoverStaleJobs() {
     );
 }
 
+/**
+ * Closes out jobs stopped while they were still waiting in the queue.
+ *
+ * Without this the worker claims them anyway, starts work, and only then hits
+ * its first cancellation checkpoint - so a stop pressed on a queued job is not
+ * honoured until every job ahead of it has finished, which for a slow embedding
+ * run is many minutes of the dashboard showing "Stopping…".
+ */
+async function discardCancelledJobs() {
+  const stopped = await db
+    .update(crawlJobs)
+    .set({
+      status: "cancelled",
+      errorCode: "CANCELLED",
+      errorMessage: "Stopped before any data was indexed.",
+      finishedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(crawlJobs.status, "queued"),
+        isNotNull(crawlJobs.cancelRequestedAt),
+      ),
+    )
+    .returning({ id: crawlJobs.id });
+  if (stopped.length) {
+    logger.info({ jobs: stopped.length }, "Discarded jobs stopped while queued");
+  }
+}
+
 async function claimJob() {
   const candidates = await db
     .select()
@@ -110,6 +150,9 @@ async function claimJob() {
     .where(
       and(
         eq(crawlJobs.status, "queued"),
+        // A job flagged between this scan and the claim below still stops at
+        // its first checkpoint; this only avoids starting one needlessly.
+        isNull(crawlJobs.cancelRequestedAt),
         lte(crawlJobs.nextAttemptAt, new Date()),
       ),
     )
@@ -323,6 +366,7 @@ async function run() {
       try {
         await scheduleRefreshes();
         await runRetentionCleanup();
+        await discardCancelledJobs();
         const job = await claimJob();
         if (!job) {
           await new Promise((resolve) => setTimeout(resolve, pollInterval));

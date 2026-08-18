@@ -1,98 +1,60 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
-import { agents, crawlJobs, documents, sources } from "@/lib/db/schema";
+import { agents, crawlJobs, sources } from "@/lib/db/schema";
 import { AppError, errorResponse } from "@/lib/http/errors";
+import { cancelJobs } from "@/lib/jobs/cancel-jobs";
 import { recordAudit } from "@/lib/observability/audit";
 
 type RouteContext = { params: Promise<{ jobId: string }> };
 
-/**
- * Asks the worker to stop a running job.
- *
- * The request cannot stop the work itself: the job is owned by whichever
- * worker claimed it. Writing the flag and letting that worker unwind at its
- * next checkpoint is what keeps the stop clean, because both processors hold
- * their results until one final transaction. Nothing half-indexed can survive.
- */
+async function ownedJob(jobId: string, workspaceId: string) {
+  const [result] = await db
+    .select({
+      id: crawlJobs.id,
+      status: crawlJobs.status,
+      batchId: crawlJobs.batchId,
+      sourceId: sources.id,
+      workspaceId: agents.workspaceId,
+    })
+    .from(crawlJobs)
+    .innerJoin(sources, eq(sources.id, crawlJobs.sourceId))
+    .innerJoin(agents, eq(agents.id, sources.agentId))
+    .where(eq(crawlJobs.id, jobId))
+    .limit(1);
+  if (!result || result.workspaceId !== workspaceId) {
+    throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
+  }
+  return result;
+}
+
+/** Stops one job. */
 export async function POST(_: Request, context: RouteContext) {
   const requestId = crypto.randomUUID();
   try {
     const { jobId } = await context.params;
     const workspace = await getWorkspaceContext();
-    const [result] = await db
-      .select({
-        job: crawlJobs,
-        sourceId: sources.id,
-        workspaceId: agents.workspaceId,
-      })
-      .from(crawlJobs)
-      .innerJoin(sources, eq(sources.id, crawlJobs.sourceId))
-      .innerJoin(agents, eq(agents.id, sources.agentId))
-      .where(eq(crawlJobs.id, jobId))
-      .limit(1);
-    if (!result || result.workspaceId !== workspace.workspaceId) {
-      throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
-    }
-    if (!["queued", "running"].includes(result.job.status)) {
+    const job = await ownedJob(jobId, workspace.workspaceId);
+    if (!["queued", "running"].includes(job.status)) {
       throw new AppError(
         "JOB_NOT_RUNNING",
         "This job has already finished.",
         409,
       );
     }
-
-    // A job that no worker has claimed can be closed out here, because there is
-    // nobody to notice the flag.
-    const cancelledNow = await db
-      .update(crawlJobs)
-      .set({
-        status: "cancelled",
-        cancelRequestedAt: new Date(),
-        errorCode: "CANCELLED",
-        errorMessage: "Stopped before any data was indexed.",
-        finishedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(crawlJobs.id, jobId), eq(crawlJobs.status, "queued")))
-      .returning({ id: crawlJobs.id });
-
-    if (cancelledNow.length) {
-      // Same rule the worker applies: a source that never finished indexing
-      // has nothing to show, and leaving it listed implies content the agent
-      // cannot answer from. One that already has documents keeps them.
-      const [indexed] = await db
-        .select({ value: sql<number>`count(*)::int` })
-        .from(documents)
-        .where(eq(documents.sourceId, result.sourceId));
-      if (indexed?.value) {
-        await db
-          .update(sources)
-          .set({ status: "ready", updatedAt: new Date() })
-          .where(eq(sources.id, result.sourceId));
-      } else {
-        await db.delete(sources).where(eq(sources.id, result.sourceId));
-      }
-    } else {
-      await db
-        .update(crawlJobs)
-        .set({ cancelRequestedAt: new Date(), updatedAt: new Date() })
-        .where(eq(crawlJobs.id, jobId));
-    }
-
+    const result = await cancelJobs([jobId]);
     await recordAudit({
       workspaceId: workspace.workspaceId,
       actorUserId: workspace.userId,
       actorEmail: workspace.email,
       action: "source.training_cancelled",
       targetType: "source",
-      targetId: result.sourceId,
+      targetId: job.sourceId,
       message: "Training stopped before any data was indexed.",
     });
-
     return NextResponse.json({
-      data: { stopping: !cancelledNow.length },
+      data: { stopping: result.stopping.length > 0 },
       requestId,
     });
   } catch (error) {
@@ -111,19 +73,9 @@ export async function DELETE(request: Request, context: RouteContext) {
   try {
     const { jobId } = await context.params;
     const workspace = await getWorkspaceContext();
-    const [anchor] = await db
-      .select({ batchId: crawlJobs.batchId, workspaceId: agents.workspaceId })
-      .from(crawlJobs)
-      .innerJoin(sources, eq(sources.id, crawlJobs.sourceId))
-      .innerJoin(agents, eq(agents.id, sources.agentId))
-      .where(eq(crawlJobs.id, jobId))
-      .limit(1);
-    if (!anchor || anchor.workspaceId !== workspace.workspaceId) {
-      throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
-    }
-    if (!anchor.batchId) {
-      return POST(request, context);
-    }
+    const anchor = await ownedJob(jobId, workspace.workspaceId);
+    if (!anchor.batchId) return POST(request, context);
+
     const siblings = await db
       .select({ id: crawlJobs.id })
       .from(crawlJobs)
@@ -133,20 +85,20 @@ export async function DELETE(request: Request, context: RouteContext) {
           inArray(crawlJobs.status, ["queued", "running"]),
         ),
       );
-    if (siblings.length) {
-      await db
-        .update(crawlJobs)
-        .set({ cancelRequestedAt: new Date(), updatedAt: new Date() })
-        .where(
-          inArray(
-            crawlJobs.id,
-            siblings.map((job) => job.id),
-          ),
-        );
-    }
-    return NextResponse.json(
-      { data: { stopping: siblings.length }, requestId },
-    );
+    const result = await cancelJobs(siblings.map((job) => job.id));
+    await recordAudit({
+      workspaceId: workspace.workspaceId,
+      actorUserId: workspace.userId,
+      actorEmail: workspace.email,
+      action: "source.training_cancelled",
+      targetType: "agent",
+      targetId: anchor.sourceId,
+      message: `Stopped ${siblings.length} queued or running file job(s).`,
+    });
+    return NextResponse.json({
+      data: { stopping: result.stopping.length },
+      requestId,
+    });
   } catch (error) {
     return errorResponse(error, requestId);
   }

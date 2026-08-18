@@ -18,6 +18,7 @@
     "db:push": "drizzle-kit push --force",
     "test": "vitest run",
     "diagnose:crawl": "tsx --tsconfig tsconfig.voice.json scripts/diagnose-crawl.ts",
+    "diagnose:worker": "tsx --tsconfig tsconfig.voice.json scripts/diagnose-worker.ts",
     "diagnose:answer": "tsx --tsconfig tsconfig.voice.json scripts/diagnose-answer.ts",
     "eval": "tsx --tsconfig tsconfig.voice.json scripts/eval.ts"
   },
