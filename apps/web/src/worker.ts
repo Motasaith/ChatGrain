@@ -38,20 +38,22 @@ let lastRefreshScan = 0;
 let lastRetentionScan = 0;
 
 async function heartbeat() {
-  await db
-    .insert(systemState)
-    .values({
-      key: "worker",
-      value: { workerId, pid: process.pid },
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: systemState.key,
-      set: {
-        value: { workerId, pid: process.pid },
-        updatedAt: new Date(),
-      },
-    });
+  const value = { workerId, pid: process.pid };
+  // Two keys on purpose. The shared one answers "is anything processing jobs",
+  // which is what the dashboard shows. The per-worker one answers "is the
+  // process holding *this* job still alive", which the shared key cannot: any
+  // second worker - a developer's machine pointed at the same database, say -
+  // overwrites it, so a job orphaned by one worker looks healthy because
+  // another is beating.
+  for (const key of ["worker", `worker:${workerId}`]) {
+    await db
+      .insert(systemState)
+      .values({ key, value, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: systemState.key,
+        set: { value, updatedAt: new Date() },
+      });
+  }
 }
 
 async function scheduleRefreshes() {

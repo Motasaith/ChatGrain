@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -9,21 +9,26 @@ import {
 } from "@/lib/db/schema";
 
 /**
- * Whether a worker is present to act on a stop request.
+ * The workers currently beating, by id.
  *
- * The heartbeat runs on its own timer, independent of whatever job is being
- * processed, so a stale one means the process is gone rather than merely busy.
- * Without this a job claimed by a worker that later died stays "Stopping…"
- * forever: the flag is set and nobody is left to read it.
+ * Asking only whether *some* worker is alive is not enough once more than one
+ * exists - which happens by accident whenever a developer runs `npm run dev`
+ * against the deployed database. A job orphaned by a worker that died then
+ * looks healthy because a different worker is still beating, and its stop
+ * request waits for a process that is never coming back.
+ *
+ * The heartbeat runs on its own timer, independent of job processing, so a
+ * missing beat means gone rather than busy.
  */
-async function workerIsAlive() {
-  const [beat] = await db
-    .select({ updatedAt: systemState.updatedAt })
+async function liveWorkerIds() {
+  const beats = await db
+    .select({ key: systemState.key, updatedAt: systemState.updatedAt })
     .from(systemState)
-    .where(eq(systemState.key, "worker"))
-    .limit(1);
-  return Boolean(
-    beat?.updatedAt && Date.now() - beat.updatedAt.getTime() < 60_000,
+    .where(like(systemState.key, "worker:%"));
+  return new Set(
+    beats
+      .filter((beat) => Date.now() - beat.updatedAt.getTime() < 60_000)
+      .map((beat) => beat.key.slice("worker:".length)),
   );
 }
 
@@ -41,16 +46,30 @@ async function workerIsAlive() {
  */
 export async function cancelJobs(jobIds: string[]) {
   if (!jobIds.length) return { cancelled: [] as string[], stopping: [] as string[] };
-  const alive = await workerIsAlive();
+  const live = await liveWorkerIds();
 
-  // With no worker running, even a claimed job is abandoned, so nothing has to
-  // be left pending.
-  const closeable = alive
-    ? and(inArray(crawlJobs.id, jobIds), eq(crawlJobs.status, "queued"))
-    : and(
-        inArray(crawlJobs.id, jobIds),
-        inArray(crawlJobs.status, ["queued", "running"]),
-      );
+  // Only a job held by a worker that is still beating has to wait for it.
+  // Anything queued has no owner, and anything held by a departed worker has
+  // lost the only process that could have read its stop flag.
+  const held = await db
+    .select({ id: crawlJobs.id, lockedBy: crawlJobs.lockedBy })
+    .from(crawlJobs)
+    .where(
+      and(inArray(crawlJobs.id, jobIds), eq(crawlJobs.status, "running")),
+    );
+  const abandoned = held
+    .filter((job) => !job.lockedBy || !live.has(job.lockedBy))
+    .map((job) => job.id);
+
+  const closeable = and(
+    inArray(crawlJobs.id, jobIds),
+    abandoned.length
+      ? or(
+          eq(crawlJobs.status, "queued"),
+          inArray(crawlJobs.id, abandoned),
+        )
+      : eq(crawlJobs.status, "queued"),
+  );
 
   const cancelled = await db
     .update(crawlJobs)

@@ -250,7 +250,20 @@ export function AgentStudio({
     let stopped = false;
     const poll = async () => {
       const response = await fetch(`/api/jobs/batch/${uploadBatch}`);
-      if (!response.ok || stopped) return;
+      if (stopped) return;
+      // Stopping a job deletes the source it was indexing, and the job row
+      // goes with it. Returning here without clearing state left the panel
+      // frozen on its last render - which, for a stop, is "Stopping…" forever.
+      if (response.status === 404) {
+        stopped = true;
+        window.clearInterval(timer);
+        setBatch(undefined);
+        setUploadBatch(undefined);
+        setAgent((current) => ({ ...current, status: "ready" }));
+        router.refresh();
+        return;
+      }
+      if (!response.ok) return;
       const payload = (await response.json()) as { data: UploadBatch };
       setBatch(payload.data);
       if (payload.data.active === 0) {
@@ -317,6 +330,16 @@ export function AgentStudio({
     if (!jobId || !jobStatus || !["queued", "running"].includes(jobStatus)) return;
     const timer = window.setInterval(async () => {
       const response = await fetch(`/api/jobs/${jobId}`);
+      // As above: a stopped job takes its source, and therefore its own row,
+      // with it. Without this the banner keeps its last frame indefinitely.
+      if (response.status === 404) {
+        window.clearInterval(timer);
+        setJob(undefined);
+        setJobDetail(undefined);
+        setAgent((current) => ({ ...current, status: "ready" }));
+        router.refresh();
+        return;
+      }
       if (!response.ok) return;
       const payload = await response.json() as {
         data: {
@@ -347,7 +370,7 @@ export function AgentStudio({
       }
     }, 1800);
     return () => window.clearInterval(timer);
-  }, [jobId, jobStatus]);
+  }, [jobId, jobStatus, router]);
 
   async function save() {
     setSaving(true);
