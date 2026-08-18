@@ -6,6 +6,21 @@ const nextConfig: NextConfig = {
   outputFileTracingExcludes: {
     "/*": ["./.data/**/*"],
   },
+  experimental: {
+    /**
+     * Because this app has a `proxy.ts`, Next buffers every request body in
+     * memory so it can be read twice. The 10MB default silently truncated
+     * uploads: the route received a partial multipart body and failed to parse
+     * it, which surfaced as a 500 rather than as "your file is too big".
+     *
+     * Sized for one file at the 25MB cap plus multipart overhead, not for a
+     * whole batch. Batches upload one file per request precisely so that this
+     * number does not have to scale with how many files were selected - the
+     * buffer is per request, and 25 files sharing one would be 600MB held in
+     * memory at once.
+     */
+    proxyClientMaxBodySize: "32mb",
+  },
   serverExternalPackages: [
     "@huggingface/transformers",
     "onnxruntime-node",

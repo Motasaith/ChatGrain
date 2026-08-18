@@ -34,7 +34,16 @@ export async function POST(request: Request, context: RouteContext) {
 
     const maximumBytes = fileUploadLimit(workspace.isAdmin);
     const limitLabel = formatByteLimit(maximumBytes);
-    const form = await request.formData();
+    // A body over the proxy buffer arrives truncated rather than rejected, so
+    // parsing it throws something opaque. Saying which limit was hit is more
+    // use than the 500 that produced.
+    const form = await request.formData().catch(() => {
+      throw new AppError(
+        "FILE_TOO_LARGE",
+        `That upload is larger than the ${limitLabel} limit, or was cut short in transit.`,
+        413,
+      );
+    });
     // "file" is what the single-upload client sent; "files" is the batch form.
     const candidates = [...form.getAll("files"), ...form.getAll("file")].filter(
       (value): value is File => value instanceof File,
@@ -74,7 +83,15 @@ export async function POST(request: Request, context: RouteContext) {
       return { file, kind };
     });
 
-    const batchId = crypto.randomUUID();
+    // The client sends one file per request and reuses a batch id across them,
+    // so the in-memory body stays the size of a single file no matter how many
+    // were selected. A request without one is a batch of its own.
+    const supplied = form.get("batchId");
+    const batchId =
+      typeof supplied === "string" &&
+      /^[0-9a-f-]{36}$/i.test(supplied)
+        ? supplied
+        : crypto.randomUUID();
     const queued: Array<{ jobId: string; sourceId: string; name: string }> = [];
 
     for (const { file, kind } of planned) {

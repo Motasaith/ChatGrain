@@ -540,25 +540,42 @@ export function AgentStudio({
     await sendUpload(files);
   }
 
+  /**
+   * Uploads one file per request, all sharing a batch id.
+   *
+   * Next buffers the whole request body in memory before the route sees it, so
+   * sending a batch as one request makes that buffer scale with how many files
+   * were selected. One at a time keeps it at the size of the largest file, and
+   * the first file starts indexing while the rest are still uploading.
+   */
   async function sendUpload(files: File[]) {
     setSaving(true);
     setError("");
-    const form = new FormData();
-    for (const file of files) form.append("files", file);
-    const response = await fetch(`/api/agents/${agent.id}/sources/file`, {
-      method: "POST",
-      body: form,
-    });
-    const payload = await response.json();
-    if (response.ok) {
-      // Indexing now happens in the worker, so there is nothing to show yet
-      // beyond the queue. The batch view takes over from here.
-      setUploadBatch(payload.data.batchId);
-      setAgent((current) => ({ ...current, status: "training" }));
-      router.refresh();
-    } else {
-      setError(payload.error?.message || "Could not upload the file.");
+    const batchId = crypto.randomUUID();
+    let queued = 0;
+    for (const file of files) {
+      const form = new FormData();
+      form.append("files", file);
+      form.append("batchId", batchId);
+      const response = await fetch(`/api/agents/${agent.id}/sources/file`, {
+        method: "POST",
+        body: form,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok) {
+        queued += 1;
+        // Shown as soon as the first file lands, so a long batch is visibly
+        // progressing rather than sitting behind a spinner.
+        setUploadBatch(batchId);
+        setAgent((current) => ({ ...current, status: "training" }));
+      } else {
+        setError(
+          payload.error?.message ||
+            `Could not upload ${file.name}.`,
+        );
+      }
     }
+    if (queued) router.refresh();
     setSaving(false);
   }
 
