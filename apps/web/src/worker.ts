@@ -4,8 +4,16 @@ import { cleanupInactiveUsers } from "@/lib/admin/retention";
 import { ensureHomepageAgent } from "@/lib/agents/homepage-agent";
 import { processCrawlJob } from "@/lib/crawl/process-job";
 import { db } from "@/lib/db/client";
-import { agents, crawlJobs, sources, systemState } from "@/lib/db/schema";
+import {
+  agents,
+  crawlJobs,
+  documents,
+  sources,
+  systemState,
+} from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import { JobCancelled } from "@/lib/jobs/cancellation";
+import { processFileJob } from "@/lib/sources/process-file-job";
 import { recordSystemLog } from "@/lib/observability/system-log";
 import { captureWorkerException } from "@/lib/observability/worker-sentry";
 
@@ -132,6 +140,90 @@ async function claimJob() {
   return claimed[0] ?? null;
 }
 
+/**
+ * Sends a claimed job to the processor for its source type.
+ *
+ * Uploads and crawls share the queue, the locking, the retry policy and the
+ * progress reporting, and differ only in how bytes become text.
+ */
+async function runJob(job: NonNullable<Awaited<ReturnType<typeof claimJob>>>) {
+  const [source] = await db
+    .select({ type: sources.type })
+    .from(sources)
+    .where(eq(sources.id, job.sourceId))
+    .limit(1);
+  if (source?.type === "file" || source?.type === "text") {
+    await processFileJob(job.id, job.sourceId);
+    return;
+  }
+  await processCrawlJob(job.id, job.sourceId);
+}
+
+/**
+ * Unwinds a job the operator stopped.
+ *
+ * Nothing indexed is left behind, because both processors only write their
+ * results in a single transaction at the very end. A run stopped before that
+ * point has changed nothing, which is why stopping is safe to offer at all: a
+ * source that has never finished is removed, and a re-run of an existing
+ * source still has its previous index intact.
+ */
+async function finishCancelledJob(
+  job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
+) {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(crawlJobs)
+      .set({
+        status: "cancelled",
+        errorCode: "CANCELLED",
+        errorMessage: "Stopped before any data was indexed.",
+        finishedAt: new Date(),
+        lockedAt: null,
+        lockedBy: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(crawlJobs.id, job.id));
+    const [existing] = await tx
+      .select({ value: sql<number>`count(*)::int` })
+      .from(documents)
+      .where(eq(documents.sourceId, job.sourceId));
+    const [source] = await tx
+      .select({ agentId: sources.agentId })
+      .from(sources)
+      .where(eq(sources.id, job.sourceId))
+      .limit(1);
+    if (existing?.value) {
+      // A refresh: the previous index was never touched, so the source is
+      // still exactly as usable as it was before the run started.
+      await tx
+        .update(sources)
+        .set({ status: "ready", updatedAt: new Date() })
+        .where(eq(sources.id, job.sourceId));
+    } else {
+      // A first run: there is nothing to fall back to, and an empty source
+      // in the list is a promise the agent cannot keep.
+      await tx.delete(sources).where(eq(sources.id, job.sourceId));
+    }
+    if (source) {
+      const [remaining] = await tx
+        .select({ value: sql<number>`count(*)::int` })
+        .from(sources)
+        .where(
+          and(eq(sources.agentId, source.agentId), eq(sources.status, "ready")),
+        );
+      await tx
+        .update(agents)
+        .set({
+          status: remaining?.value ? "ready" : "draft",
+          updatedAt: new Date(),
+        })
+        .where(eq(agents.id, source.agentId));
+    }
+  });
+  logger.info({ jobId: job.id }, "Job cancelled by operator");
+}
+
 async function failJob(
   job: NonNullable<Awaited<ReturnType<typeof claimJob>>>,
   error: unknown,
@@ -237,9 +329,15 @@ async function run() {
           continue;
         }
         try {
-          await processCrawlJob(job.id, job.sourceId);
+          await runJob(job);
         } catch (error) {
-          await failJob(job, error);
+          // Stopping is an instruction, not a fault: it must not retry, and it
+          // must not mark the agent broken.
+          if (error instanceof JobCancelled) {
+            await finishCancelledJob(job);
+          } else {
+            await failJob(job, error);
+          }
         }
       } catch (error) {
         logger.error({ error }, "Worker poll failed");

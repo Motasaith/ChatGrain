@@ -4,6 +4,7 @@ import { requireAgent } from "@/lib/agents/access";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources } from "@/lib/db/schema";
 import { AppError, errorResponse } from "@/lib/http/errors";
+import { discardStagedUpload } from "@/lib/sources/upload-store";
 
 type Context = {
   params: Promise<{ agentId: string; sourceId: string }>;
@@ -56,8 +57,14 @@ export async function DELETE(_: Request, context: Context) {
   const requestId = crypto.randomUUID();
   try {
     const { agentId, sourceId } = await context.params;
-    await requireSource(agentId, sourceId);
+    const existing = await requireSource(agentId, sourceId);
     await db.delete(sources).where(eq(sources.id, sourceId));
+    // A staged upload outlives its job when that job failed, so that a retry
+    // does not need the file again. Deleting the source is the point at which
+    // nothing will ever read it, and leaving it would leak storage silently.
+    const staged = (existing.metadata?.upload as { storageKey?: string } | undefined)
+      ?.storageKey;
+    if (staged) await discardStagedUpload(staged);
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     return errorResponse(error, requestId);

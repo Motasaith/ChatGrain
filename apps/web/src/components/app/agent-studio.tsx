@@ -9,6 +9,7 @@ import {
   Bot,
   Check,
   CheckCircle2,
+  CircleStop,
   Clipboard,
   Code2,
   ExternalLink,
@@ -25,6 +26,7 @@ import {
   SlidersHorizontal,
   DatabaseZap,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { ChatPanel } from "@/components/chat/chat-panel";
 import { BusinessHoursEditor } from "@/components/app/business-hours-editor";
@@ -78,7 +80,7 @@ type Job = {
   id: string;
   sourceId: string;
   status: string;
-  phase: "queued" | "crawling" | "embedding" | "indexing" | "done";
+  phase: "queued" | "crawling" | "parsing" | "embedding" | "indexing" | "done";
   progress: number;
   pagesDiscovered: number;
   pagesProcessed: number;
@@ -87,6 +89,36 @@ type Job = {
   pagesEmbedded: number;
   chunksIndexed: number;
   errorMessage: string | null;
+  /** Serialised from the server on load, an ISO string over the API. */
+  cancelRequestedAt?: Date | string | null;
+};
+
+type UploadFile = {
+  id: string;
+  sourceId: string;
+  name: string;
+  status: string;
+  phase: Job["phase"];
+  progress: number;
+  pagesDiscovered: number;
+  pagesProcessed: number;
+  pagesEmbedded: number;
+  pagesSkipped: number;
+  chunksIndexed: number;
+  errorMessage: string | null;
+  stopping: boolean;
+};
+
+type UploadBatch = {
+  batchId: string;
+  files: UploadFile[];
+  total: number;
+  finished: number;
+  failed: number;
+  cancelled: number;
+  chunksIndexed: number;
+  progress: number;
+  active: number;
 };
 
 type CrawlPageRow = {
@@ -106,10 +138,17 @@ type JobDetail = {
 const PHASE_LABEL: Record<Job["phase"], string> = {
   queued: "Waiting for the worker",
   crawling: "Fetching pages",
+  parsing: "Reading the file",
   embedding: "Generating embeddings",
   indexing: "Writing the search index",
   done: "Finished",
 };
+
+/**
+ * A file job and a crawl job run the same stages under different names, and
+ * showing "Fetching pages" over an uploaded PDF is worse than showing nothing.
+ */
+const READ_PHASE = { file: "parsing", website: "crawling" } as const;
 
 type PinnedAnswer = {
   id: string;
@@ -173,6 +212,14 @@ export function AgentStudio({
   const [pinnedOpen, setPinnedOpen] = useState(false);
   const [pinnedQuestion, setPinnedQuestion] = useState("");
   const [pinnedAnswer, setPinnedAnswer] = useState("");
+  const [uploadBatch, setUploadBatch] = useState<string>();
+  const [batch, setBatch] = useState<UploadBatch>();
+  const [pendingUpload, setPendingUpload] = useState<{
+    files: File[];
+    conflicts: string[];
+  }>();
+  const [confirmStop, setConfirmStop] = useState<"job" | "batch">();
+  const [stopping, setStopping] = useState(false);
 
   const jobId = job?.id;
   const jobStatus = job?.status;
@@ -195,6 +242,76 @@ export function AgentStudio({
       cancelled = true;
     };
   }, [jobId, jobDetail]);
+
+  // A batch is one job per file, so a single unreadable PDF fails alone. The
+  // roll-up is computed server side to keep this to one request per tick.
+  useEffect(() => {
+    if (!uploadBatch) return;
+    let stopped = false;
+    const poll = async () => {
+      const response = await fetch(`/api/jobs/batch/${uploadBatch}`);
+      if (!response.ok || stopped) return;
+      const payload = (await response.json()) as { data: UploadBatch };
+      setBatch(payload.data);
+      if (payload.data.active === 0) {
+        stopped = true;
+        window.clearInterval(timer);
+        setAgent((current) => ({
+          ...current,
+          status: payload.data.failed === payload.data.total
+            ? "error"
+            : "ready",
+        }));
+        router.refresh();
+      }
+    };
+    const timer = window.setInterval(poll, 1800);
+    void poll();
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [uploadBatch, router]);
+
+  async function stopTraining(scope: "job" | "batch") {
+    setStopping(true);
+    setError("");
+    const target = scope === "batch" ? batch?.files[0]?.id : jobId;
+    if (target) {
+      const response = await fetch(`/api/jobs/${target}/cancel`, {
+        method: scope === "batch" ? "DELETE" : "POST",
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        setError(payload.error?.message || "Could not stop training.");
+      }
+    }
+    setConfirmStop(undefined);
+    setStopping(false);
+    router.refresh();
+  }
+
+  /** Re-queues only the files that failed, not the whole batch. */
+  async function retryFailed() {
+    const failures = batch?.files.filter((file) => file.status === "failed");
+    if (!failures?.length) return;
+    setSaving(true);
+    setError("");
+    const response = await fetch(`/api/agents/${agent.id}/sources/retry`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sourceIds: failures.map((file) => file.sourceId),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) {
+      setUploadBatch(payload.data?.batchId ?? uploadBatch);
+    } else {
+      setError(payload.error?.message || "Could not retry those files.");
+    }
+    setSaving(false);
+  }
 
   useEffect(() => {
     if (!jobId || !jobStatus || !["queued", "running"].includes(jobStatus)) return;
@@ -384,27 +501,61 @@ export function AgentStudio({
     setSaving(false);
   }
 
-  async function uploadFile(file: File) {
+  /**
+   * Names this agent already has, so replacing one is a decision rather than
+   * something discovered afterwards.
+   */
+  async function conflictingNames(files: File[]) {
+    try {
+      const response = await fetch(
+        `/api/agents/${agent.id}/sources/file/preflight`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            fileNames: files.map((file) => file.name.slice(0, 180)),
+          }),
+        },
+      );
+      if (!response.ok) return [];
+      const payload = await response.json();
+      return (payload.data?.conflicts ?? []).map(
+        (item: { name: string }) => item.name,
+      ) as string[];
+    } catch {
+      // A failed check must not block the upload; the worker still replaces
+      // by name, the operator simply was not asked first.
+      return [];
+    }
+  }
+
+  async function uploadFiles(files: File[]) {
+    if (!files.length) return;
+    setError("");
+    const conflicts = await conflictingNames(files);
+    if (conflicts.length) {
+      setPendingUpload({ files, conflicts });
+      return;
+    }
+    await sendUpload(files);
+  }
+
+  async function sendUpload(files: File[]) {
     setSaving(true);
     setError("");
     const form = new FormData();
-    form.set("file", file);
+    for (const file of files) form.append("files", file);
     const response = await fetch(`/api/agents/${agent.id}/sources/file`, {
       method: "POST",
       body: form,
     });
     const payload = await response.json();
     if (response.ok) {
-      setSources((current) => [
-        {
-          ...payload.data.source,
-          rootUrl: null,
-          errorMessage: null,
-          documentCount: 1,
-        },
-        ...current,
-      ]);
-      setAgent((current) => ({ ...current, status: "ready" }));
+      // Indexing now happens in the worker, so there is nothing to show yet
+      // beyond the queue. The batch view takes over from here.
+      setUploadBatch(payload.data.batchId);
+      setAgent((current) => ({ ...current, status: "training" }));
+      router.refresh();
     } else {
       setError(payload.error?.message || "Could not upload the file.");
     }
@@ -480,9 +631,19 @@ export function AgentStudio({
   const jobSource = job
     ? sources.find((source) => source.id === job.sourceId)
     : undefined;
-  const crawlTarget = job?.pagesDiscovered
-    ? Math.min(job.pagesDiscovered, jobSource?.pageLimit ?? job.pagesDiscovered)
-    : jobSource?.pageLimit;
+  const uploadJob = jobSource ? jobSource.type !== "website" : false;
+  const readPhase = uploadJob ? READ_PHASE.file : READ_PHASE.website;
+  // "page 12 of 340" reads correctly for a PDF and wrongly for a workbook.
+  const uploadUnit = /\.(?:xlsx|xlsm|xls|csv)$/i.test(jobSource?.name ?? "")
+    ? "rows"
+    : "pages";
+  // An upload knows exactly how many pages or rows it holds, so there is no
+  // page limit to clamp against the way a crawl has.
+  const crawlTarget = uploadJob
+    ? (job?.pagesDiscovered ?? 0)
+    : job?.pagesDiscovered
+      ? Math.min(job.pagesDiscovered, jobSource?.pageLimit ?? job.pagesDiscovered)
+      : jobSource?.pageLimit;
   const processedTowardTarget =
     job && crawlTarget
       ? Math.min(job.pagesProcessed, crawlTarget)
@@ -493,7 +654,10 @@ export function AgentStudio({
   // value for the next phase.
   const crawlProgressCeiling = 60;
   const visibleProgress =
-    job?.status === "running" && crawlTarget && job.phase === "crawling"
+    job?.status === "running" &&
+    !uploadJob &&
+    crawlTarget &&
+    job.phase === "crawling"
       ? Math.max(
           job.progress,
           Math.min(
@@ -547,8 +711,156 @@ export function AgentStudio({
         ))}
       </nav>
 
+      {pendingUpload ? (
+        <div className="training-banner training-confirm">
+          <span><TriangleAlert size={17} /></span>
+          <div>
+            <b>
+              Replace {pendingUpload.conflicts.length} existing file
+              {pendingUpload.conflicts.length === 1 ? "" : "s"}?
+            </b>
+            <small>
+              {pendingUpload.conflicts.slice(0, 4).join(", ")}
+              {pendingUpload.conflicts.length > 4
+                ? ` and ${pendingUpload.conflicts.length - 4} more`
+                : ""}
+              {" "}already indexed for this agent. Uploading again replaces
+              everything they contributed with the new contents. The current
+              answers stay live until the new version finishes.
+            </small>
+          </div>
+          <button
+            className="app-secondary-button"
+            onClick={() => setPendingUpload(undefined)}
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            className="app-primary-button"
+            onClick={() => {
+              const files = pendingUpload.files;
+              setPendingUpload(undefined);
+              void sendUpload(files);
+            }}
+            type="button"
+          >
+            Replace
+          </button>
+        </div>
+      ) : null}
+      {confirmStop ? (
+        <div className="training-banner training-confirm">
+          <span><TriangleAlert size={17} /></span>
+          <div>
+            <b>Stop training?</b>
+            <small>
+              Nothing indexed so far is kept. Training writes its results only
+              at the very end, so stopping now discards this entire run rather
+              than leaving the agent with half a source.
+              {sources.length
+                ? " Anything indexed before this run stays exactly as it is."
+                : ""}
+            </small>
+          </div>
+          <button
+            className="app-secondary-button"
+            disabled={stopping}
+            onClick={() => setConfirmStop(undefined)}
+            type="button"
+          >
+            Keep training
+          </button>
+          <button
+            className="app-danger-button"
+            disabled={stopping}
+            onClick={() => void stopTraining(confirmStop)}
+            type="button"
+          >
+            {stopping ? "Stopping…" : "Stop and discard"}
+          </button>
+        </div>
+      ) : null}
+      {batch ? (
+        <div className="upload-batch">
+          <div className="upload-batch-head">
+            <b>
+              {batch.active
+                ? `Indexing ${batch.finished + 1} of ${batch.total} file${batch.total === 1 ? "" : "s"}`
+                : `${batch.total - batch.failed - batch.cancelled} of ${batch.total} file${batch.total === 1 ? "" : "s"} indexed`}
+            </b>
+            <div className="training-progress">
+              <i style={{ width: `${Math.max(4, batch.progress)}%` }} />
+            </div>
+            <strong>{batch.progress}%</strong>
+            {batch.active ? (
+              <button
+                className="app-secondary-button"
+                onClick={() => setConfirmStop("batch")}
+                type="button"
+              >
+                <CircleStop size={13} /> Stop
+              </button>
+            ) : batch.failed ? (
+              <button
+                className="app-secondary-button"
+                disabled={saving}
+                onClick={() => void retryFailed()}
+                type="button"
+              >
+                Retry {batch.failed} failed
+              </button>
+            ) : (
+              <button
+                className="app-secondary-button"
+                onClick={() => {
+                  setBatch(undefined);
+                  setUploadBatch(undefined);
+                }}
+                type="button"
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+          <div className="upload-batch-files">
+            {batch.files.map((file) => (
+              <article key={file.id}>
+                <i className={`crawl-outcome is-${
+                  file.status === "succeeded"
+                    ? "indexed"
+                    : file.status === "failed"
+                      ? "failed"
+                      : file.status === "cancelled"
+                        ? "thin"
+                        : "unchanged"
+                }`} />
+                <span>
+                  <em>{file.name}</em>
+                  <small>
+                    {file.status === "succeeded"
+                      ? `${file.chunksIndexed.toLocaleString()} searchable passages${file.pagesSkipped ? ` · ${file.pagesSkipped} duplicate skipped` : ""}`
+                      : file.status === "failed"
+                        ? file.errorMessage || "Could not be indexed."
+                        : file.status === "cancelled"
+                          ? "Stopped before indexing."
+                          : file.stopping
+                            ? "Stopping…"
+                            : `${PHASE_LABEL[file.phase]}${file.pagesDiscovered ? ` · ${file.pagesProcessed} of ${file.pagesDiscovered}` : ""}`}
+                  </small>
+                </span>
+                <strong>
+                  {["succeeded", "failed", "cancelled"].includes(file.status)
+                    ? ""
+                    : `${file.progress}%`}
+                </strong>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {job && ["queued", "running"].includes(job.status) && (
-        <div className="training-banner">
+        <div className="training-banner has-stop">
           <span><LoaderCircle className="spin" size={17} /></span>
           <div>
             <b>
@@ -560,23 +872,38 @@ export function AgentStudio({
               {job.status === "queued" && workerHealthy === false
                 ? "Start the worker to begin discovering pages."
                 : job.phase === "embedding"
-                  ? `${job.pagesEmbedded.toLocaleString()} embedded · ${job.pagesSkipped.toLocaleString()} unchanged and reused of ${job.pagesProcessed.toLocaleString()} pages`
+                  ? uploadJob
+                    ? `${job.pagesEmbedded.toLocaleString()} of ${job.pagesDiscovered.toLocaleString()} ${uploadUnit} embedded${job.pagesSkipped ? ` · ${job.pagesSkipped.toLocaleString()} duplicate` : ""}`
+                    : `${job.pagesEmbedded.toLocaleString()} embedded · ${job.pagesSkipped.toLocaleString()} unchanged and reused of ${job.pagesProcessed.toLocaleString()} pages`
                   : job.phase === "indexing"
                     ? "Replacing the search index"
-                    : job.pagesDiscovered
-                      ? `${processedTowardTarget} of ${crawlTarget} selected pages processed · ${job.pagesDiscovered.toLocaleString()} URLs discovered`
-                      : "Preparing page discovery"}
+                    : job.phase === "parsing"
+                      ? job.pagesDiscovered
+                        ? `Reading ${uploadUnit} ${job.pagesProcessed.toLocaleString()} of ${job.pagesDiscovered.toLocaleString()}`
+                        : "Opening the file"
+                      : job.pagesDiscovered
+                        ? `${processedTowardTarget} of ${crawlTarget} selected pages processed · ${job.pagesDiscovered.toLocaleString()} URLs discovered`
+                        : "Preparing page discovery"}
             </small>
           </div>
           <div className="training-progress"><i style={{ width: `${Math.max(4, visibleProgress)}%` }} /></div>
           <strong>{visibleProgress}%</strong>
+          <button
+            className="app-secondary-button"
+            disabled={stopping || Boolean(job.cancelRequestedAt)}
+            onClick={() => setConfirmStop("job")}
+            type="button"
+          >
+            <CircleStop size={13} />{" "}
+            {job.cancelRequestedAt ? "Stopping…" : "Stop"}
+          </button>
         </div>
       )}
       {job && jobDetail ? (
         <div className="crawl-detail">
           <div className="crawl-phases">
-            {(["crawling", "embedding", "indexing"] as const).map((phase) => {
-              const order = ["queued", "crawling", "embedding", "indexing", "done"];
+            {([readPhase, "embedding", "indexing"] as const).map((phase) => {
+              const order = ["queued", readPhase, "embedding", "indexing", "done"];
               const current = order.indexOf(job.phase);
               const mine = order.indexOf(phase);
               const state =
@@ -702,15 +1029,16 @@ export function AgentStudio({
               <button disabled={saving}><Plus size={14} /> Add website</button>
             </form>
             <div className="knowledge-tools">
-              <label title="Upload a PDF, Excel, CSV, TXT, Markdown, JSON, or HTML file">
-                <FileText size={13} /> Upload file
+              <label title="Upload PDF, Excel, CSV, TXT, Markdown, JSON, or HTML files">
+                <FileText size={13} /> Upload files
                 <input
                   accept=".pdf,.xlsx,.xlsm,.xls,.txt,.md,.markdown,.csv,.json,.html,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/plain,text/markdown,text/csv,application/json,text/html"
                   disabled={saving}
+                  multiple
                   onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) uploadFile(file);
+                    const chosen = [...(event.target.files ?? [])];
                     event.target.value = "";
+                    void uploadFiles(chosen);
                   }}
                   type="file"
                 />

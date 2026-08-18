@@ -37,6 +37,8 @@ export const sourceStatus = pgEnum("source_status", [
   "indexing",
   "ready",
   "error",
+  /** Stopped by the operator. Distinct from error: nothing went wrong. */
+  "cancelled",
 ]);
 /**
  * Where a crawl job currently is. `progress` alone cannot explain a stall -
@@ -46,6 +48,8 @@ export const sourceStatus = pgEnum("source_status", [
 export const jobPhase = pgEnum("job_phase", [
   "queued",
   "crawling",
+  /** Reading an upload into text: PDF pages, workbook sheets, CSV rows. */
+  "parsing",
   "embedding",
   "indexing",
   "done",
@@ -594,6 +598,18 @@ export const crawlJobs = pgTable(
       .notNull()
       .references(() => sources.id, { onDelete: "cascade" }),
     status: jobStatus("status").default("queued").notNull(),
+    /**
+     * Groups the jobs created by one multi-file upload, so the dashboard can
+     * show "4 of 12 files" without the client having to track a list of ids
+     * across a page reload.
+     */
+    batchId: uuid("batch_id"),
+    /**
+     * Set by the operator pressing stop. A running job is owned by its worker,
+     * so the request cannot simply write `cancelled` and expect the work to
+     * halt; the worker reads this at each safe point and unwinds itself.
+     */
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
     attempt: integer("attempt").default(0).notNull(),
     maxAttempts: integer("max_attempts").default(3).notNull(),
     priority: integer("priority").default(0).notNull(),
@@ -628,6 +644,7 @@ export const crawlJobs = pgTable(
       table.nextAttemptAt,
       table.priority,
     ),
+    index("crawl_jobs_batch_idx").on(table.batchId),
   ],
 );
 

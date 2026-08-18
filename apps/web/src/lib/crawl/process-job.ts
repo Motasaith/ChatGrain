@@ -9,6 +9,7 @@ import {
   documents,
   sources,
 } from "@/lib/db/schema";
+import { assertNotCancelled } from "@/lib/jobs/cancellation";
 import { logger } from "@/lib/observability/logger";
 import { recordSystemLog } from "@/lib/observability/system-log";
 import { chunkText } from "@/lib/rag/chunk";
@@ -128,6 +129,9 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
       record.source.metadata?.trustedInternal === true,
     onPage: recordPage,
     onProgress: async ({ discovered, processed }) => {
+      // Throwing here unwinds out of the crawler, which is the earliest a stop
+      // can take effect: the fetch loop has no other checkpoint.
+      await assertNotCancelled(jobId);
       const crawlTarget = Math.max(
         1,
         Math.min(discovered, record.source.pageLimit),
@@ -219,6 +223,7 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
       continue;
     }
 
+    await assertNotCancelled(jobId);
     const textChunks = chunkText(page.text);
     const embeddedChunks: (typeof prepared)[number]["chunks"] = [];
 
@@ -259,6 +264,8 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
   }
   await flushPageEvents(true);
 
+  // Last checkpoint before the transaction that makes the run durable.
+  await assertNotCancelled(jobId);
   const indexedChunks =
     prepared.reduce((total, item) => total + item.chunks.length, 0) +
     reusedChunkCount;

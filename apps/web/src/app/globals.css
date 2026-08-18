@@ -10576,3 +10576,133 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
     transition: none;
   }
 }
+
+/* Upload batches and stoppable training ---------------------------------- */
+
+/* The base banner is a fixed four-column grid, so a stop control needs its
+   own track rather than being squeezed into the percentage column. */
+.training-banner.has-stop {
+  grid-template-columns: auto minmax(170px, 1fr) minmax(90px, 220px) 35px auto;
+}
+
+/* Amber rather than green: this asks a question instead of reporting work. */
+.training-confirm {
+  grid-template-columns: auto 1fr auto auto;
+  border-color: #efd9b4;
+  color: #7a5312;
+  background: #fdf6e8;
+}
+
+.training-confirm > span {
+  background: #f6e6c6;
+}
+
+.training-confirm small {
+  color: #8a6a35;
+  max-width: 70ch;
+}
+
+.upload-batch {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 15px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 12px 14px;
+  background: var(--surface, #fff);
+}
+
+.upload-batch-head {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(90px, 240px) 42px auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.upload-batch-head > b {
+  font-size: 13px;
+}
+
+.upload-batch-head > strong {
+  font-family: var(--font-mono), monospace;
+  font-size: 12.5px;
+}
+
+.upload-batch-head button {
+  justify-self: end;
+  white-space: nowrap;
+}
+
+/* Long batches scroll inside the panel instead of pushing the page down. */
+.upload-batch-files {
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.upload-batch-files article {
+  display: grid;
+  grid-template-columns: 9px 1fr auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.upload-batch-files article > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.upload-batch-files em {
+  font-style: normal;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-batch-files small {
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-batch-files strong {
+  font-family: var(--font-mono), monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.upload-batch-files .crawl-outcome {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.upload-batch-files .crawl-outcome.is-unchanged {
+  background: #9bb0a4;
+}
+
+.upload-batch-files .crawl-outcome.is-thin {
+  background: #d99a2b;
+}
+
+.upload-batch-files .crawl-outcome.is-failed {
+  background: #d7463a;
+}
+
+@media (max-width: 640px) {
+  .training-banner.has-stop,
+  .training-confirm {
+    grid-template-columns: auto 1fr;
+  }
+
+  .upload-batch-head {
+    grid-template-columns: 1fr auto;
+  }
+}

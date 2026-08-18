@@ -1,5 +1,6 @@
-import "server-only";
-
+// No `server-only` marker: the crawl worker is a plain Node process that
+// stages and reads uploaded training files through this module, and that
+// import throws under any runtime which is not the Next.js server.
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 

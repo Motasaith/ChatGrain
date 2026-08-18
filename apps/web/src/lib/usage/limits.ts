@@ -1,6 +1,11 @@
 import { AppError } from "@/lib/http/errors";
 
-const DEFAULT_USER_FILE_BYTES = 5 * 1024 * 1024;
+/**
+ * Uploads are staged and indexed by the worker rather than inside the request,
+ * so the ceiling is no longer the request timeout. What remains is embedding
+ * time, which scales with the text in the file rather than its bytes.
+ */
+const DEFAULT_USER_FILE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_USER_CRAWL_PAGES = 10_000;
 const DEFAULT_ADMIN_CRAWL_PAGES = 10_000;
 
