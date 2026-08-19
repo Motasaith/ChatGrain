@@ -717,7 +717,12 @@ async function retrieveWithRepair(
   question: string,
   threshold: number,
 ) {
-  const hits = await hybridRetrieve(agent.id, retrievalQuestion);
+  // An overview question needs a wide net: the answer is distributed across
+  // pages rather than concentrated in one, so the usual handful truncates it.
+  const limit = asksForCorpusOverview(question)
+    ? OVERVIEW_RETRIEVAL_LIMIT
+    : undefined;
+  const hits = await hybridRetrieve(agent.id, retrievalQuestion, limit);
   const confidence = retrievalConfidence(hits[0]);
   if (confidence >= threshold) return { hits, confidence };
 
@@ -735,7 +740,7 @@ async function retrieveWithRepair(
       question.toLowerCase().replace(/\W+/g, " ").trim();
   if (!changed) return { hits, confidence };
 
-  const repaired = await hybridRetrieve(agent.id, rewritten);
+  const repaired = await hybridRetrieve(agent.id, rewritten, limit);
   const repairedConfidence = retrievalConfidence(repaired[0]);
   // Keep the better of the two. A rewrite can drop a distinctive term the
   // visitor actually typed, and that is worse than the original miss.
@@ -796,6 +801,37 @@ function extractiveAnswer(question: string, hits: RetrievalHit[]) {
   };
 }
 
+/**
+ * Questions about the corpus as a whole rather than about one page.
+ *
+ * "How many viewers are there" cannot be answered from the handful of chunks
+ * that serve a normal question: the answer is spread across every category
+ * page, and six chunks reach six of them. The model then counts what it was
+ * given and reports a confident undercount, which reads as a hallucination and
+ * is really a truncated question.
+ */
+export function asksForCorpusOverview(question: string) {
+  return (
+    /\b(?:how many|complete list|full list|entire list|list them all)\b/i.test(
+      question,
+    ) ||
+    /\b(?:list|show|name|tell me)\b.{0,20}\b(?:all|every|each)\b/i.test(
+      question,
+    ) ||
+    /\b(?:all|every)\b.{0,25}\b(?:formats?|file types?|viewers?|tools?|categories|services?|products?|pages?|articles?)\b/i.test(
+      question,
+    ) ||
+    /\b(?:what|which)\b.{0,20}\b(?:formats?|file types?|viewers?|tools?|categories)\b.{0,30}\b(?:support(?:s|ed)?|available|offer(?:s|ed)?|have|has|there)\b/i.test(
+      question,
+    )
+  );
+}
+
+/** Chunks pulled for an overview question, against 6 for a normal one. */
+const OVERVIEW_RETRIEVAL_LIMIT = 40;
+/** Distinct pages handed to the model for an overview question. */
+const OVERVIEW_EVIDENCE_PAGES = 14;
+
 function asksForRelatedContent(question: string) {
   return /\b(?:similar|related|alternative|another|other|more like|recommend)\b/i.test(
     question,
@@ -805,6 +841,18 @@ function asksForRelatedContent(question: string) {
 function coherentEvidence(hits: RetrievalHit[], question: string) {
   const best = hits[0];
   if (!best) return [];
+  // Before the single-document branch below: an overview question is the one
+  // case where narrowing to the best-matching page is exactly wrong.
+  if (asksForCorpusOverview(question)) {
+    const seen = new Set<string>();
+    return hits
+      .filter((hit) => {
+        if (seen.has(hit.documentId)) return false;
+        seen.add(hit.documentId);
+        return true;
+      })
+      .slice(0, OVERVIEW_EVIDENCE_PAGES);
+  }
   if (asksForRelatedContent(question) || requestedProjectList(question)) {
     const seen = new Set<string>();
     return hits

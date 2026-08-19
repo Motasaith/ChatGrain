@@ -321,15 +321,22 @@ export function extractPage(html: string, pageUrl: URL): ExtractedPage {
       heading.remove();
     }
   }
+  // Read before Readability runs. `parse()` is destructive: it rewrites the
+  // document down to the article it chose, so anything read from `document`
+  // afterwards is Readability's own output wearing the whole page's name.
+  // That made `chooseExtraction` compare a value against itself and always
+  // keep the article - on a card grid or a category hub, around a fifth of the
+  // page. The fallback that exists to recover those sections could never fire.
+  //
+  // Taken from the stripped document rather than the raw HTML, so the fuller
+  // reading is already free of nav, footer, aside, form and script text.
+  const wholePage = document.body ? blockText(document.body).trim() : "";
   const reader = new Readability(dom.window.document, {
     charThreshold: 120,
     keepClasses: false,
   });
   const article = reader.parse();
   const $ = cheerio.load(html);
-  // Taken from the stripped document rather than the raw HTML, so the fuller
-  // reading is already free of nav, footer, aside, form and script text.
-  const wholePage = document.body ? blockText(document.body).trim() : "";
   // Readability returns `textContent` too, so its output needs the same repair.
   const readable = article?.content
     ? blockText(

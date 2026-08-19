@@ -219,3 +219,40 @@ describe("chooseExtraction", () => {
     expect(chooseExtraction("only", "")).toBe("only");
   });
 });
+
+describe("Readability fallback", () => {
+  it("keeps the sections Readability throws away", () => {
+    // Readability.parse() rewrites the document down to the article it chose.
+    // Reading the whole-page fallback afterwards therefore returned
+    // Readability's own output wearing the full page's name, so
+    // chooseExtraction compared a value against itself and the recovery path
+    // could never fire. On a category hub that cost about four fifths of the
+    // page: the format names survived in nav-like markup while every
+    // description around them was discarded.
+    const prose = "The site opens files in your browser without uploading them. ".repeat(6);
+    const cards = [
+      ["EML Viewer", "Open EML email messages and download their attachments."],
+      ["MBOX Viewer", "Inspect Google Takeout mailbox archives without Thunderbird."],
+      ["SQLite Viewer", "Browse database tables and run queries in the browser."],
+      ["HEIC Viewer", "View iPhone photos and convert them to JPEG or PNG."],
+      ["GPX Viewer", "View GPS routes, tracks and elevation on a map."],
+    ]
+      .map(([name, blurb]) => `<div class="card"><h3>${name}</h3><p>${blurb}</p></div>`)
+      .join("");
+
+    const page = extractPage(
+      `<html><head><title>Categories</title></head><body>
+         <main><article><p>${prose}</p></article>
+         <section class="grid">${cards}</section></main>
+       </body></html>`,
+      new URL("https://example.test/categories"),
+    );
+
+    for (const viewer of ["EML", "MBOX", "SQLite", "HEIC", "GPX"]) {
+      expect(page.text).toContain(`${viewer} Viewer`);
+    }
+    // The descriptions are the part that was being lost, not the headings.
+    expect(page.text).toContain("Google Takeout mailbox archives");
+    expect(page.text).toContain("convert them to JPEG or PNG");
+  });
+});

@@ -3,6 +3,7 @@ import {
   addRequestedEvidenceLinks,
   asksToFindPageFromImage,
   afterLastHandoff,
+  asksForCorpusOverview,
   asksForHumanSupport,
   cleanGeneratedAnswer,
   contextualCitation,
@@ -378,6 +379,36 @@ describe("small talk", () => {
       "good tools for csv?",
     ]) {
       expect(smallTalkKind(text)).toBeNull();
+    }
+  });
+});
+
+describe("corpus overview questions", () => {
+  it("recognizes questions that span the whole site", () => {
+    // These cannot be answered from the six chunks a normal question gets:
+    // the answer is spread across every category page, so six chunks reach
+    // six of them and the model reports a confident undercount.
+    for (const question of [
+      "how many viewers available on the website",
+      "list all the file formats you support",
+      "what formats are supported",
+      "which file types do you have",
+      "show me every viewer",
+      "give me the complete list of tools",
+    ]) {
+      expect(asksForCorpusOverview(question)).toBe(true);
+    }
+  });
+
+  it("leaves ordinary questions on the narrow path", () => {
+    for (const question of [
+      "how do I open a msg file without outlook",
+      "is FileViewerHub free to use",
+      "are my files uploaded to a server",
+      "can you open a .dwg CAD file",
+      "how can I contact support",
+    ]) {
+      expect(asksForCorpusOverview(question)).toBe(false);
     }
   });
 });
