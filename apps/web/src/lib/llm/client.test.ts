@@ -146,3 +146,83 @@ describe("declining on insufficient evidence", () => {
     ).resolves.toEqual({ status: "unavailable" });
   });
 });
+
+describe("model routing across a provider chain", () => {
+  function twoProviders() {
+    vi.stubEnv("LLM_PROVIDERS", "groq,ollama");
+    vi.stubEnv("LLM_GROQ_BASE_URL", "https://api.groq.test/v1");
+    vi.stubEnv("LLM_GROQ_MODEL", "openai/gpt-oss-120b");
+    vi.stubEnv("LLM_GROQ_API_KEY", "gsk_test");
+    vi.stubEnv("LLM_OLLAMA_BASE_URL", "https://ollama.test/v1");
+    vi.stubEnv("LLM_OLLAMA_MODEL", "gemma4:31b");
+    vi.stubEnv("LLM_OLLAMA_API_KEY", "olm_test");
+  }
+
+  function recorder() {
+    const seen: Array<{ host: string; model: string }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      seen.push({ host: new URL(String(input)).host, model: body.model });
+      return Response.json({ choices: [{ message: { content: "Answered." } }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return seen;
+  }
+
+  it("asks each provider for the model it actually serves", async () => {
+    // Every agent carries gemma4:31b as its schema default. Applying that to
+    // the whole chain asked Groq for an Ollama model, which is a 404 and a
+    // wasted round trip before falling through to the slowest provider.
+    twoProviders();
+    const seen = recorder();
+
+    await generateGroundedAnswer({
+      model: "gemma4:31b",
+      systemPrompt: "Stay grounded.",
+      context: "[1] Parquet Viewer",
+      question: "How do I open a parquet file?",
+      temperature: 0.1,
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].host).toBe("api.groq.test");
+    // Groq's own model, not the caller's.
+    expect(seen[0].model).toBe("openai/gpt-oss-120b");
+  });
+
+  it("keeps the caller's model where the provider serves it", async () => {
+    twoProviders();
+    const seen = recorder();
+
+    await generateGroundedAnswer({
+      model: "openai/gpt-oss-120b",
+      systemPrompt: "Stay grounded.",
+      context: "[1] Parquet Viewer",
+      question: "How do I open a parquet file?",
+      temperature: 0.1,
+    });
+
+    expect(seen[0].model).toBe("openai/gpt-oss-120b");
+  });
+
+  it("skips providers that cannot serve the vision model", async () => {
+    // A text provider sent image content answers badly or returns 400, which
+    // is not retryable, so the chain would end on a provider that never could
+    // have helped.
+    twoProviders();
+    const seen = recorder();
+
+    await generateGroundedAnswer({
+      model: "gemma4:31b",
+      systemPrompt: "Stay grounded.",
+      context: "[1] Product page",
+      question: "What is shown here?",
+      temperature: 0.1,
+      images: [{ mimeType: "image/png", base64: "iVBORw0KGgo=" }],
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].host).toBe("ollama.test");
+    expect(seen[0].model).toBe("gemma4:31b");
+  });
+});
