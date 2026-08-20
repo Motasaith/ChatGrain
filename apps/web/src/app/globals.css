@@ -8436,6 +8436,14 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 
 .chat-history-list {
   display: grid;
+  /* Rows must be pinned to their content, or they collapse instead of
+     overflowing. `.chat-history-item` sets `overflow: hidden`, which makes its
+     automatic minimum size zero rather than min-content, so the implicit rows
+     had a base size of nothing. Inside this fixed-height track the grid then
+     compressed every row to fit however many conversations existed, the total
+     never exceeded the container, and `overflow-y` had nothing to scroll: past
+     a certain number of chats each row squeezed down to an unreadable sliver. */
+  grid-auto-rows: min-content;
   align-content: start;
   gap: 8px;
   overflow-y: auto;
