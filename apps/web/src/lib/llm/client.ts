@@ -393,43 +393,6 @@ labels such as "title" or "keywords". Return one plain-text line only.`,
   return null;
 }
 
-/**
- * The model to ask one provider for.
- *
- * A caller's model is honoured only where the provider can actually serve it:
- * its own endpoint, or a provider configured with that exact model. Applying it
- * to the whole chain sends one vendor's model name to another, which is a 404
- * and a wasted round trip.
- *
- * That is not theoretical. Every agent carries `gemma4:31b` as its schema
- * default, so every installation asked Groq for an Ollama model, got a 404, and
- * quietly fell through to its slowest provider - measured at 4.4s against
- * 0.94s for the Groq model that was configured and never used.
- */
-function modelFor(provider: LlmProvider, requested?: string | null) {
-  const wanted = requested?.trim();
-  if (!wanted) return provider.model;
-  return provider.label === "agent" || provider.model === wanted
-    ? wanted
-    : provider.model;
-}
-
-/**
- * Providers that can serve a model the request cannot do without.
- *
- * Only images need this. A text model sent image content answers badly or
- * rejects the request with a 400, which is not retryable, so the chain would
- * end on a provider that was never able to help.
- */
-function providersServing(chain: LlmProvider[], required: string | undefined) {
-  const wanted = required?.trim();
-  if (!wanted) return chain;
-  const usable = chain.filter(
-    (provider) => provider.label === "agent" || provider.model === wanted,
-  );
-  return usable.length ? usable : chain;
-}
-
 export type GroundedAnswer =
   /** The model answered from the evidence. */
   | { status: "answered"; text: string }
@@ -447,13 +410,7 @@ export async function generateGroundedAnswer({
   images = [],
   providers,
 }: GenerateAnswerInput): Promise<GroundedAnswer> {
-  // An image request cannot be served by a text-only provider, so the chain is
-  // narrowed to those that carry the vision model rather than letting one
-  // reject the request and end the walk.
-  const chain = providersServing(
-    providers?.length ? providers : llmProviders(),
-    images.length ? (model ?? undefined) : undefined,
-  );
+  const chain = providers?.length ? providers : llmProviders();
   const requestBody = (chosenModel: string) =>
     JSON.stringify({
       model: chosenModel,
@@ -504,7 +461,7 @@ Customer question: ${question}`,
   // Walk the chain: a rate-limited free tier or a provider outage should cost
   // a few hundred milliseconds, not the answer.
   for (const [index, provider] of chain.entries()) {
-    const chosenModel = modelFor(provider, model);
+    const chosenModel = model?.trim() || provider.model;
     const last = index === chain.length - 1;
     try {
       const response = await fetch(`${provider.baseUrl}/chat/completions`, {
@@ -605,7 +562,7 @@ export async function* streamGroundedAnswer({
             : {}),
         },
         body: JSON.stringify({
-          model: modelFor(provider, model),
+          model: model?.trim() || provider.model,
           messages: [
             {
               role: "system",
