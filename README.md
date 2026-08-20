@@ -66,8 +66,7 @@ Push-Location apps/web
 clerk auth login
 clerk init --app app_3H8quwjQyIaOh6fqiJJEobqCSZP
 Pop-Location
-npm run services:up
-npm run db:migrate
+npm run db:push
 npm run dev
 ```
 
@@ -257,15 +256,8 @@ that directory on persistent VPS storage.
 
 ChatGrain records audio with the browser MediaRecorder API. Chromium-based
 browsers may also provide an immediate browser transcript. For consistent
-multilingual transcription, including Firefox, run the free `whisper.cpp`
-service:
-
-```powershell
-docker compose --profile voice up -d whisper
-```
-
-The first start downloads the Whisper base model into the
-`docent_whisper` volume. Configure the web process with:
+multilingual transcription, including Firefox, transcription runs through a
+hosted Whisper endpoint. Configure the web process with:
 
 ```dotenv
 WHISPER_BASE_URL=http://127.0.0.1:8080
@@ -283,13 +275,11 @@ visitor talks, the agent answers out loud, and either side can interrupt the
 other. It is entirely self-hosted, sharing the same retrieval and grounding
 rules as the text chat.
 
-Start both speech services:
-
-```powershell
-docker compose --profile voice up -d whisper speech
-```
-
-`whisper` handles recognition and `speech` provides an OpenAI-compatible
+Speech needs no separate services. Recognition uses the hosted Whisper endpoint
+in `WHISPER_BASE_URL`, and speech synthesis runs in-process with Kokoro when
+`TTS_PROVIDER=local` — the model downloads into `MODEL_CACHE_DIR` on first use,
+so warm it once after a deploy rather than making a caller wait. `TTS_BASE_URL`
+still accepts an OpenAI-compatible
 `/v1/audio/speech` endpoint backed by Piper voices. Configure the web process:
 
 ```dotenv
@@ -447,15 +437,8 @@ The Administration screen uses PostgreSQL's own size functions and shows the
 database plus each table's data and indexes. From the VPS shell, the equivalent
 database query is:
 
-```powershell
-docker compose exec postgres psql -U docent -d docent -c "SELECT pg_size_pretty(pg_database_size(current_database()));"
-```
-
-Docker's complete image, container, and volume usage is:
-
-```powershell
-docker system df -v
-docker volume inspect docent_docent_postgres
+```bash
+psql "$DATABASE_URL" -c "SELECT pg_size_pretty(pg_database_size(current_database()));"
 ```
 
 The Docker volume will be larger than `pg_database_size` because it includes
@@ -475,8 +458,8 @@ cd docent
 cp .env.example apps/web/.env.local
 # Edit apps/web/.env.local with production URLs and secrets.
 npm ci
-docker compose up -d postgres
-npm run db:migrate
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector"
+npm run db:push
 npm run build
 npm install -g pm2
 pm2 start npm --name docent-web -- run start
@@ -501,8 +484,6 @@ npm run typecheck
 npm run lint
 npm test
 npm run db:push      # apply the schema (see the note below)
-npm run services:up
-npm run services:down
 ```
 
 Diagnostics, run from `apps/web`:

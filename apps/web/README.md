@@ -7,9 +7,8 @@ Run commands from the repository root so the web process and worker share the
 same environment:
 
 ```powershell
-npm run services:up
-npm run db:migrate
 Copy-Item ../../.env.example .env.local
+npm run db:push
 npm run dev
 ```
 

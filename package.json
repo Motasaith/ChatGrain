@@ -1,6 +1,6 @@
 {
   "name": "docent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Open-source AI customer support agents trained on your knowledge.",
   "workspaces": [
@@ -19,9 +19,7 @@
     "typecheck": "npm run typecheck -w @docent/web",
     "db:push": "npm run db:push -w @docent/web",
     "db:migrate": "npm run db:migrate -w @docent/web",
-    "site-agent:sync": "npm run site-agent:sync -w @docent/web",
-    "services:up": "docker compose up -d",
-    "services:down": "docker compose down"
+    "site-agent:sync": "npm run site-agent:sync -w @docent/web"
   },
   "engines": {
     "node": ">=22"
