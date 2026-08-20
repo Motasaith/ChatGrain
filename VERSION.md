@@ -8,29 +8,46 @@
 
 ## Restore point
 
-The exact commit this release describes. Everything below is measured against
-this tree.
+The tag `v0.3.0` marks this release. A tag is a permanent name for one commit —
+unlike a branch it never moves, so it keeps pointing here however far `main`
+travels afterwards.
 
 | | |
 |---|---|
-| **Commit** | `77693b8e3a78513507cb9d3228ffd12f5dfec15c` |
-| **Short** | `77693b8` |
-| **Date** | 2026-08-20 16:19:34 +0500 |
+| **Tag** | `v0.3.0` |
+| **Released** | 2026-08-20 |
 | **Branch** | `main` |
 | **Tests** | 342 passing, 1 skipped. Typecheck and lint clean. |
+
+### Commits in this release
+
+The pipeline repair landed first; the rest is documentation and cleanup.
+
+| Commit | Change |
+|---|---|
+| `77693b8` | Provider selection: ask each provider for the model it serves. **Last code change in 0.3.0** |
+| `ac501ef` | Changelog and version files; context stuffing under 200 pages dropped |
+| `61af6f3` | Docker Compose and the Postgres init script removed |
+| `0caf948` | README updates; root `package.json` to `0.3.0` |
+| `91b8477` | PLAN.md §11: the four crawler faults, and the 0.4.0 decisions |
+
+`77693b8` is where the source last changed. Everything after it touches only
+documentation and configuration, so a code-level comparison against `v0.3.0` and
+against `77693b8` gives the same answer.
 
 ### Getting back here
 
 Inspect it without moving your branch:
 
 ```bash
-git switch --detach 77693b8
+git checkout v0.3.0        # look around
+git switch -               # return to where you were
 ```
 
 Return a broken `main` to this exact state, keeping history (safe, no force push):
 
 ```bash
-git revert --no-commit 77693b8..HEAD
+git revert --no-commit v0.3.0..HEAD
 git commit -m "Return to 0.3.0"
 ```
 
@@ -38,14 +55,13 @@ Discard everything after it instead (rewrites history; needs a force push, and
 destroys anything committed since):
 
 ```bash
-git reset --hard 77693b8
+git reset --hard v0.3.0
 ```
 
-Tag it so the number is findable without this file:
+If the tag is missing on a fresh clone, fetch it:
 
 ```bash
-git tag -a v0.3.0 77693b8 -m "0.3.0 - verified answer pipeline"
-git push origin v0.3.0
+git fetch --tags
 ```
 
 **A restore of the code is not a restore of the index.** Stored vectors and
@@ -78,11 +94,12 @@ See [CHANGELOG.md](CHANGELOG.md) for the full list.
 | Location | Value | Note |
 |---|---|---|
 | `VERSION.md` | `0.3.0` | This file. The release designation. |
-| `package.json` | `0.2.0` | Not bumped — no code was changed to produce this file. |
+| `package.json` | `0.3.0` | The root manifest, kept in step with this file. |
 | `apps/web/package.json` | `0.1.0` | Workspace package, versioned independently. |
 
-To make the manifest agree, bump the root `package.json` to `0.3.0`. That is a
-deliberate one-line change and is left to you.
+The workspace package is deliberately left alone: it names the deployment
+directory and the PM2 processes, and renaming it would break running
+deployments for no functional gain.
 
 ---
 
