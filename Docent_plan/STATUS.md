@@ -3,9 +3,9 @@
 Companion to [PLAN.md](Docent_plan/PLAN.md). The plan says what to build; this file
 says what exists, what does not, and what the next move is.
 
-- **Verified against the working tree on:** 15 August 2026
-- **Base commit:** `ea49f25` (branch `main`), plus uncommitted work from the
-  13-15 August sessions
+- **Verified against the working tree on:** 20 August 2026
+- **Base commit:** `77693b8` (branch `main`), release 0.3.0 — see
+  [VERSION.md](../VERSION.md) for the restore point
 - **Method:** every status below was checked by reading the file it names. Nothing
   here is inferred from the plan text.
 
@@ -15,6 +15,13 @@ says what exists, what does not, and what the next move is.
 statuses rot faster than code.
 
 **Legend:** ✅ done · 🟡 partial · ⬜ not started
+
+> **20 August, 0.3.0.** The answer pipeline is verified end to end for the first
+> time: three faults meant the generation model was never reached and every
+> answer came from the extractive fallback. Embeddings are Qwen3-Embedding-0.6B
+> at q8. Context stuffing under 200 pages is **dropped** — retrieval measures
+> good at that size (PLAN.md §7). The next release is the worker, not retrieval:
+> memory, checkpointing and honest progress (PLAN.md §11).
 
 ---
 

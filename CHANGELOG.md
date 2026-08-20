@@ -7,7 +7,7 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ---
 
-## [0.3.0] — 2026-08-19
+## [0.3.0] — 2026-08-20
 
 The release where the answer pipeline was found not to be running, and repaired.
 
@@ -86,6 +86,26 @@ to observe what the pipeline was doing.
 
 - **Uploaded HTML went through a second copy of the welding bug.** Cheerio's
   `.text()` has the same no-separator behaviour as `textContent`.
+
+- **Groq was in the answer chain but never answered.** Every agent carries
+  `gemma4:31b` as its schema default, and that name was applied to the whole
+  provider chain rather than to the agent's own endpoint. Groq — configured with
+  `openai/gpt-oss-120b` and never asked for it — received an Ollama model name,
+  returned 404, and the chain fell through. The log read
+  `Generation request failed, provider: groq` on every request, which looks like
+  a key problem; a bad key is a 401. Providers are now ordered so whoever serves
+  the requested model answers first, and a provider that cannot serve it uses its
+  own model as a genuine fallback rather than being asked for one it lacks.
+  Image requests exclude providers without the vision model instead of demoting
+  them, since a text model sent image content does not fail cleanly.
+
+- **The widget's conversation history shrank instead of scrolling.**
+  `.chat-history-item` sets `overflow: hidden` for its rounded corners, which
+  makes a grid item's automatic minimum size zero rather than min-content. The
+  implicit rows had no floor, so inside a fixed-height track the grid compressed
+  every row to fit, the total never exceeded the container, and `overflow-y` had
+  nothing to scroll. Past a certain number of conversations each row squeezed
+  down to an unreadable sliver.
 
 ### Added
 

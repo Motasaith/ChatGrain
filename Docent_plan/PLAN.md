@@ -290,10 +290,38 @@ Ollama account and this codebase:
 
 | Site size | Configuration |
 |---|---|
-| Under 200 pages | Skip retrieval. Distil the whole site into one knowledge document of 6 to 9k tokens and put it in the system prompt. Fastest and most accurate mode you can offer, and no competitor does it. |
+| Under 200 pages | ~~Skip retrieval and stuff the whole site into the prompt.~~ **Dropped, 20 August.** Retrieval is measured good at this size; see the note below. |
 | 200 to 2,000 | Current hybrid pipeline plus contextual chunks plus reranking. |
 | 2,000 to 20,000 | Same, plus question-indexed pairs and parent-child, plus metadata filters by URL path so retrieval can be scoped to a section. |
 | 20,000 to 100,000 | Add a topic tree: cluster pages into sections and topics with an LLM-written summary at each level, always in the prompt at a constant 5 to 8k tokens. It gives orientation, enables section filters, and is the only way to answer global questions like "what does this company sell". |
+
+### Context stuffing under 200 pages: dropped, 20 August
+
+Measured on a 49-page site with the 0.3.0 pipeline: retrieval returns the right
+page at rank 1 for 8 of 8 literal questions, and 6 of 8 for paraphrases sharing
+no vocabulary with the target page (8 of 8 within the top three). Five deep
+questions answered correctly with the right citations. The tier existed to fix a
+recall problem that turned out to be three bugs in extraction and provider
+routing, all fixed in 0.3.0.
+
+Stuffing is also worse on its own terms once measured:
+
+- It pays for the whole site on **every message** — 6 to 9k tokens against the
+  1 to 2k a retrieval pass sends.
+- The plan's own ceiling below says a 56k-token prompt answers in 4.6 seconds.
+  Retrieval-based answers land at roughly 3 seconds today. Stuffing is slower at
+  the sizes it was proposed for.
+- It would not have avoided any 0.3.0 fault. The extraction bug corrupted the
+  text *before* any tier saw it, and the dead provider chain would have left
+  stuffing with no fallback at all, where retrieval at least degraded to
+  extractive answers.
+
+**What survives is the reason the tier was attractive: orientation.** Retrieval
+cannot answer questions about the corpus as a whole, and it can never answer
+about absence — no page states that a format is unsupported, so there is nothing
+to retrieve. A compact **site capability index** in the system prompt, a few
+hundred tokens listing what the site covers, buys that at a twentieth of the
+cost and works at any size. That, not stuffing, is the item to build.
 
 *Note, 15 August: the stack these thresholds assume has changed - Postgres is on
 Aiven, speech is on Groq and in-process Kokoro, and attachments are on Backblaze
@@ -391,3 +419,87 @@ That last clause has already been collected on twice: this document misdiagnosed
 the crawler failure (section 5), and the embedding swap it called for was made
 before the harness could judge it (section 2). Both worked out. Neither was
 knowable in advance, which is the whole argument for building the harness first.
+
+---
+
+## 11. Next release, 0.4.0 — a worker that survives its own job
+
+*Written 20 August 2026, after 0.3.0. Discussion and scope only; nothing here is
+built.*
+
+0.3.0 made answers correct. It did nothing for the process that produces them.
+The crawler works on a developer machine and fails on a small VPS, and the way
+it fails is the problem: silently, from the beginning, and with counters that
+disagree with reality.
+
+### The three faults, as observed
+
+**1. Peak memory scales with the site.** `processCrawlJob` holds every crawled
+page in `result.pages` and every embedding in `prepared`, and writes nothing
+until a single transaction at the very end. On a few thousand pages the vectors
+alone are hundreds of megabytes before any text is counted. This is why crawls
+die on a constrained host and not locally.
+
+**2. A retry double-counts itself.** Page events are cleared with
+`ne(crawlPages.jobId, jobId)`, and a retry reuses the same job row, so the
+previous attempt's rows survive. The dashboard sums them. A reporter watched
+3,400 indexed become 6,800, then keep climbing — while the job restarted at 0%
+each time. Both numbers were honest reports of a broken model: the progress bar
+reads the current attempt, the totals read every attempt at once.
+
+**3. There is no checkpoint.** A crawl that dies at 92% — the embedding ceiling,
+which is also peak memory — is requeued by stale-job recovery fifteen minutes
+later and starts again at the first URL. Nothing it did survives, because
+nothing is durable until the end.
+
+Those three compound: the run dies because of (1), restarts from nothing because
+of (3), and reports nonsense because of (2). To an operator it looks like one
+mysterious failure.
+
+### What to build
+
+**Durable, incremental writes.** The single closing transaction is what forces
+everything into memory and what makes partial work worthless. Pages should be
+committed in batches as they finish. This is the root change; the rest follows
+from it.
+
+The reason the transaction exists is real and must be preserved: the old index
+stays live until the new one is complete, so a failed run cannot erase a working
+source. Incremental writing needs a different mechanism for that — a generation
+or run id on documents, with the switchover at the end — rather than dropping
+the guarantee.
+
+**Resume from a checkpoint.** Once pages are durable, a restarted job can skip
+what it already indexed and continue. The operator decides: resume, restart, or
+abandon. Today they are not asked and cannot tell which happened.
+
+**Counters that mean one thing.** Scope page events to an attempt, not just a
+job, so a retry reports the current run rather than the sum of all runs.
+
+**Live worker status.** Heartbeat, current phase, current URL, memory in use,
+and time since last progress — visible while it runs, not reconstructed from
+logs afterwards. `diagnose:worker` reports some of this from the command line
+already; the dashboard should show it.
+
+**Bounded memory as a property, not a hope.** A page limit is not a memory
+limit. The worker should stream, cap what it holds, and refuse a job it cannot
+finish rather than dying halfway through one.
+
+### Open questions
+
+- Where does the checkpoint live? Extra columns on `crawl_jobs`, or a separate
+  progress table keyed by run?
+- Should resume be automatic, or always the operator's choice? Automatic is
+  kinder; it also silently re-crawls pages that may have changed.
+- What is a safe memory ceiling on the smallest VPS worth supporting, and should
+  the worker measure it or be told?
+- Does data integrity need chunk-level checkpointing, or is page-level enough?
+  A page half-embedded is discardable; a page half-*extracted* is corrupt, and
+  currently nothing detects that.
+
+### Not in scope
+
+Replacing the crawler with Crawlee or another framework. That was evaluated in
+INFRASTRUCTURE.md §E2 and remains the right answer for phase 2 scale work, but
+none of the three faults above are fetching problems — they are all in what
+happens to a page after it is fetched.

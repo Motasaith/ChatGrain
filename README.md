@@ -12,6 +12,11 @@ The package scope is still `@docent/web` and the deployment directory is
 `/var/www/docent`; renaming either would break running deployments for no
 functional gain.
 
+**Current release: `0.3.0`.** See [VERSION.md](VERSION.md) for the restore
+point, the upgrade steps and the measured limits, and [CHANGELOG.md](CHANGELOG.md)
+for what changed. Upgrading to 0.3.0 **requires re-indexing every source** — both
+the embedding model and text extraction changed, and neither failure is loud.
+
 ## Included
 
 - Responsive marketing site, dashboard, agent builder, playground, inbox,
@@ -359,6 +364,13 @@ The worker calculates a complete replacement index before opening the database
 transaction. A failed crawl or model download therefore cannot erase a
 previously healthy knowledge source.
 
+That guarantee has a cost, and on a small VPS it is the dominant one: because
+nothing is durable until the closing transaction, peak memory scales with the
+size of the site, and a run that dies has nothing to resume from. Replacing the
+single transaction with durable incremental writes — while keeping the "old
+index stays live" property by another mechanism — is the subject of the next
+release. See `Docent_plan/PLAN.md` §11.
+
 ## Reliability and hallucinations
 
 No generative system can honestly promise zero hallucinations. ChatGrain reduces
@@ -516,13 +528,19 @@ Job claiming is atomic, so nothing is corrupted and nothing is processed twice.
 The cost is confusion, not data. A worker that finds another one beating says so
 at startup and in the system log.
 
-Use a local database:
+Give each environment its own database. A second Aiven database is the least
+work; anything reachable with pgvector will do:
 
 ```bash
-docker compose --profile local-db up -d postgres
-# DATABASE_URL=postgres://docent:docent@localhost:5434/docent
-npm run db:push
+# apps/web/.env.local -> DATABASE_URL pointing at the development database
+psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector"
+npm run db:push --workspace @docent/web
 ```
+
+`CREATE EXTENSION` has to run before the push: `chunks.embedding` is
+`vector(768)` and the type must resolve at `CREATE TABLE` time. A fresh database
+does not enable it by default, and the failure is a wall of "relation does not
+exist" rather than anything about vectors.
 
 Or, to read deployed data without competing for its jobs, start the web server
 on its own:

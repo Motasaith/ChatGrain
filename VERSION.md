@@ -1,8 +1,57 @@
 # ChatGrain — Version
 
 **Current release:** `0.3.0`
-**Released:** 2026-08-19
+**Released:** 2026-08-20
 **Status:** Stable. First release where the answer pipeline is verified end to end.
+
+---
+
+## Restore point
+
+The exact commit this release describes. Everything below is measured against
+this tree.
+
+| | |
+|---|---|
+| **Commit** | `77693b8e3a78513507cb9d3228ffd12f5dfec15c` |
+| **Short** | `77693b8` |
+| **Date** | 2026-08-20 16:19:34 +0500 |
+| **Branch** | `main` |
+| **Tests** | 342 passing, 1 skipped. Typecheck and lint clean. |
+
+### Getting back here
+
+Inspect it without moving your branch:
+
+```bash
+git switch --detach 77693b8
+```
+
+Return a broken `main` to this exact state, keeping history (safe, no force push):
+
+```bash
+git revert --no-commit 77693b8..HEAD
+git commit -m "Return to 0.3.0"
+```
+
+Discard everything after it instead (rewrites history; needs a force push, and
+destroys anything committed since):
+
+```bash
+git reset --hard 77693b8
+```
+
+Tag it so the number is findable without this file:
+
+```bash
+git tag -a v0.3.0 77693b8 -m "0.3.0 - verified answer pipeline"
+git push origin v0.3.0
+```
+
+**A restore of the code is not a restore of the index.** Stored vectors and
+stored page text belong to whichever extraction and embedding model produced
+them. Rolling code back across either change means re-indexing again; see
+*Upgrading* below, which applies in both directions.
 
 ---
 
@@ -101,7 +150,20 @@ LLM_GROQ_MODEL=openai/gpt-oss-120b
 | Embeddings | Qwen3-Embedding-0.6B-ONNX, q8, 768 dims (MRL-truncated from 1024) |
 | Answer models | `openai/gpt-oss-120b` (Groq), `gemma4:31b` (Ollama) |
 
-Test suite: 339 passing, 1 skipped. Typecheck and lint clean.
+Test suite: 342 passing, 1 skipped. Typecheck and lint clean.
+
+### Measured on this tree
+
+| Stage | Warm |
+|---|---|
+| Intent classification (Groq) | ~670 ms |
+| Query embedding (local Qwen, CPU) | ~420 ms |
+| Retrieval, 3 parallel queries | ~1.3 s |
+| Answer generation (Ollama gemma4:31b) | ~4.4 s |
+| Database round trip to Aiven | 167 ms, on every query |
+
+Retrieval recall on a 49-page site: 8/8 at rank 1 for literal phrasing, 6/8 at
+rank 1 and 8/8 within top 3 for paraphrases sharing no vocabulary with the page.
 
 ---
 
@@ -130,3 +192,20 @@ worker warns at startup when it finds another one beating.
 **No corpus-quality harness.** The extraction fault in this release was found
 by ad-hoc probing. A check comparing raw HTML size against stored text would
 have caught it in seconds, and does not exist yet.
+
+**A crawl holds the whole site in memory.** `processCrawlJob` keeps every
+crawled page and every embedding in `result.pages` and `prepared` until one
+final transaction at the end. Nothing is durable before that, so peak memory
+scales with the site: a few thousand pages is hundreds of megabytes of vectors
+alone, which is what kills a crawl on a small VPS. This is the subject of the
+next release; see `Docent_plan/PLAN.md` §11.
+
+**A retried crawl double-counts its own progress.** Page events are cleared
+with `ne(crawlPages.jobId, jobId)`, and a retry reuses the same job row, so the
+previous attempt's rows survive and the dashboard adds them together. A reporter
+saw 3,400 indexed become 6,800 on the second attempt. The counts are wrong; the
+indexed data is not.
+
+**A crawl that dies restarts from zero.** There is no checkpoint. Stale-job
+recovery requeues the job fifteen minutes after its lock went cold, and the
+worker begins the site again from the first URL.
