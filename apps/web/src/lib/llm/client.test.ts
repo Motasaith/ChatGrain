@@ -146,3 +146,72 @@ describe("declining on insufficient evidence", () => {
     ).resolves.toEqual({ status: "unavailable" });
   });
 });
+
+describe("provider ordering in the answer path", () => {
+  function twoProviders() {
+    vi.stubEnv("LLM_PROVIDERS", "groq,ollama");
+    vi.stubEnv("LLM_GROQ_BASE_URL", "https://api.groq.test/v1");
+    vi.stubEnv("LLM_GROQ_MODEL", "openai/gpt-oss-120b");
+    vi.stubEnv("LLM_GROQ_API_KEY", "gsk_test");
+    vi.stubEnv("LLM_OLLAMA_BASE_URL", "https://ollama.test/v1");
+    vi.stubEnv("LLM_OLLAMA_MODEL", "gemma4:31b");
+    vi.stubEnv("LLM_OLLAMA_API_KEY", "olm_test");
+  }
+
+  /** Records every attempt; `failing` hosts answer with the given status. */
+  function recorder(failing: Record<string, number> = {}) {
+    const seen: Array<{ host: string; model: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const host = new URL(String(input)).host;
+        seen.push({ host, model: JSON.parse(String(init?.body)).model });
+        return failing[host]
+          ? new Response("no", { status: failing[host] })
+          : Response.json({ choices: [{ message: { content: "Answered." } }] });
+      }),
+    );
+    return seen;
+  }
+
+  const answer = (extra: Record<string, unknown> = {}) =>
+    generateGroundedAnswer({
+      model: "gemma4:31b",
+      systemPrompt: "Stay grounded.",
+      context: "[1] Parquet Viewer",
+      question: "How do I open a parquet file?",
+      temperature: 0.1,
+      ...extra,
+    });
+
+  it("asks the provider that serves the model, and only that one", async () => {
+    // Configured order is groq first, but groq has no gemma4:31b. Asking it
+    // anyway was a 404 and a wasted round trip on every single answer.
+    twoProviders();
+    const seen = recorder();
+    await answer();
+    expect(seen).toEqual([{ host: "ollama.test", model: "gemma4:31b" }]);
+  });
+
+  it("still falls back when the preferred provider is down", async () => {
+    // Demoted, not removed: the failover the README asks for survives, and the
+    // fallback uses its own model rather than one it cannot serve.
+    twoProviders();
+    const seen = recorder({ "ollama.test": 503 });
+    await expect(answer()).resolves.toEqual({
+      status: "answered",
+      text: "Answered.",
+    });
+    expect(seen).toEqual([
+      { host: "ollama.test", model: "gemma4:31b" },
+      { host: "api.groq.test", model: "openai/gpt-oss-120b" },
+    ]);
+  });
+
+  it("excludes providers that cannot see, rather than demoting them", async () => {
+    twoProviders();
+    const seen = recorder();
+    await answer({ images: [{ mimeType: "image/png", base64: "iVBORw0KGgo=" }] });
+    expect(seen).toEqual([{ host: "ollama.test", model: "gemma4:31b" }]);
+  });
+});

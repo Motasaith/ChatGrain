@@ -312,7 +312,13 @@ export async function describeImagesForSearch({
   if (!images.length) return null;
   // Chain, for the same reason as the other two callers: the old LLM_API_KEY
   // guard disabled visual search outright on a named-provider install.
-  const chain = llmProviders();
+  //
+  // Restricted rather than reordered: reading an image needs a vision model,
+  // and a text-only provider handed one does not fail cleanly. It describes
+  // nothing, which is worse than being skipped.
+  const visionModel =
+    model?.trim() || process.env.VISION_LLM_MODEL?.trim() || undefined;
+  const chain = providersServing(llmProviders(), visionModel);
   const requestBody = (chosenModel: string) =>
     JSON.stringify({
       model: chosenModel,
@@ -348,10 +354,7 @@ labels such as "title" or "keywords". Return one plain-text line only.`,
 
   for (const [index, provider] of chain.entries()) {
     const last = index === chain.length - 1;
-    const chosenModel =
-      model?.trim() ||
-      process.env.VISION_LLM_MODEL?.trim() ||
-      provider.model;
+    const chosenModel = modelFor(provider, visionModel);
     try {
       const response = await fetch(`${provider.baseUrl}/chat/completions`, {
         method: "POST",
@@ -393,6 +396,60 @@ labels such as "title" or "keywords". Return one plain-text line only.`,
   return null;
 }
 
+/** Whether a provider can be asked for a particular model. */
+function serves(provider: LlmProvider, wanted: string) {
+  // The agent's own endpoint is configured with the agent's own model, so it
+  // serves whatever the agent asked for by definition.
+  return provider.label === "agent" || provider.model === wanted;
+}
+
+/**
+ * The model to ask one provider for.
+ *
+ * A caller's model is honoured only where the provider can serve it. Applying
+ * it to the whole chain sends one vendor's model name to another, which is a
+ * 404 and a wasted round trip on every single answer.
+ */
+function modelFor(provider: LlmProvider, requested?: string | null) {
+  const wanted = requested?.trim();
+  if (!wanted) return provider.model;
+  return serves(provider, wanted) ? wanted : provider.model;
+}
+
+/**
+ * The chain reordered so whoever serves the requested model answers first.
+ *
+ * Every agent carries `gemma4:31b` as its schema default, so asking the whole
+ * chain in configured order meant Groq was tried first for a model it does not
+ * have, 404'd, and Ollama answered anyway - the same answer, one wasted round
+ * trip later. Ordering by capability removes the round trip without removing
+ * the failover: providers that cannot serve the model stay in the chain, behind
+ * those that can, and answer with their own model only if the preferred one is
+ * unreachable.
+ */
+function preferProvidersServing(chain: LlmProvider[], requested?: string | null) {
+  const wanted = requested?.trim();
+  if (!wanted) return chain;
+  const preferred = chain.filter((provider) => serves(provider, wanted));
+  return preferred.length
+    ? [...preferred, ...chain.filter((provider) => !serves(provider, wanted))]
+    : chain;
+}
+
+/**
+ * Providers that can serve a model the request cannot do without.
+ *
+ * Images need this rather than mere reordering. A text model sent image content
+ * does not fail cleanly - it answers about nothing, or returns a 400, which is
+ * not retryable - so a text-only provider must be excluded, not demoted.
+ */
+function providersServing(chain: LlmProvider[], required?: string | null) {
+  const wanted = required?.trim();
+  if (!wanted) return chain;
+  const usable = chain.filter((provider) => serves(provider, wanted));
+  return usable.length ? usable : chain;
+}
+
 export type GroundedAnswer =
   /** The model answered from the evidence. */
   | { status: "answered"; text: string }
@@ -410,7 +467,12 @@ export async function generateGroundedAnswer({
   images = [],
   providers,
 }: GenerateAnswerInput): Promise<GroundedAnswer> {
-  const chain = providers?.length ? providers : llmProviders();
+  const configured = providers?.length ? providers : llmProviders();
+  // Images exclude providers that cannot serve the vision model; text merely
+  // demotes them, so they remain available if the preferred one is down.
+  const chain = images.length
+    ? providersServing(configured, model)
+    : preferProvidersServing(configured, model);
   const requestBody = (chosenModel: string) =>
     JSON.stringify({
       model: chosenModel,
@@ -461,7 +523,7 @@ Customer question: ${question}`,
   // Walk the chain: a rate-limited free tier or a provider outage should cost
   // a few hundred milliseconds, not the answer.
   for (const [index, provider] of chain.entries()) {
-    const chosenModel = model?.trim() || provider.model;
+    const chosenModel = modelFor(provider, model);
     const last = index === chain.length - 1;
     try {
       const response = await fetch(`${provider.baseUrl}/chat/completions`, {
@@ -547,7 +609,10 @@ export async function* streamGroundedAnswer({
   // directly, so on an install configured with named providers every voice
   // answer stopped at the guard below and the caller only ever saw
   // `insufficient`.
-  const chain = providers?.length ? providers : llmProviders();
+  const chain = preferProvidersServing(
+    providers?.length ? providers : llmProviders(),
+    model,
+  );
 
   let response: Response | undefined;
   for (const [index, provider] of chain.entries()) {
@@ -562,7 +627,7 @@ export async function* streamGroundedAnswer({
             : {}),
         },
         body: JSON.stringify({
-          model: model?.trim() || provider.model,
+          model: modelFor(provider, model),
           messages: [
             {
               role: "system",
