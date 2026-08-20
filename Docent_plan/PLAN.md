@@ -432,7 +432,7 @@ The crawler works on a developer machine and fails on a small VPS, and the way
 it fails is the problem: silently, from the beginning, and with counters that
 disagree with reality.
 
-### The three faults, as observed
+### The four faults, as observed
 
 **1. Peak memory scales with the site.** `processCrawlJob` holds every crawled
 page in `result.pages` and every embedding in `prepared`, and writes nothing
@@ -452,9 +452,38 @@ which is also peak memory — is requeued by stale-job recovery fifteen minutes
 later and starts again at the first URL. Nothing it did survives, because
 nothing is durable until the end.
 
-Those three compound: the run dies because of (1), restarts from nothing because
-of (3), and reports nonsense because of (2). To an operator it looks like one
-mysterious failure.
+**4. A crawl that gave up reports success.** After twenty consecutive fetch
+failures the circuit breaker sets `stoppedEarly` and breaks out of the loop.
+That path then logs a warning and **returns normally**, so the job finishes at
+100% with whatever it managed to collect. The only trace is a log line.
+
+Brand detection fails with it, and silently. `brand ??= pageBrand` captures from
+the first page that succeeds, so if the root page is among the refused ones the
+crawl falls back to:
+
+```js
+brand: brand ?? {
+  name: root.hostname.replace(/^www\./, ""),
+  iconUrl: new URL("/favicon.ico", root).href,   // guessed, never fetched
+  primaryColor: "#177e51",                        // the default green
+}
+```
+
+No logo, a guessed favicon path, and the stock colour — presented exactly like a
+successful detection.
+
+Observed on 20 August: the same 50-page site trained correctly from a developer
+machine and, from the VPS, trained "100%" while missing pages, the logo and the
+favicon. The likely cause is the host rather than the code — a datacenter IP
+against a Cloudflare-protected site is challenged far more readily than a
+residential one, and `CRAWL_CONCURRENCY` defaults to 6, which is enough parallel
+requests to look like exactly what the protection is for. But an operator has no
+way to learn any of that from the dashboard, which is the fault worth fixing
+here.
+
+Those four compound: the run dies because of (1), restarts from nothing because
+of (3), reports nonsense because of (2), and when it gives up it says it
+succeeded because of (4). To an operator it looks like one mysterious failure.
 
 ### What to build
 
@@ -476,6 +505,14 @@ abandon. Today they are not asked and cannot tell which happened.
 **Counters that mean one thing.** Scope page events to an attempt, not just a
 job, so a retry reports the current run rather than the sum of all runs.
 
+**An outcome that distinguishes complete from partial.** A crawl that hit the
+circuit breaker, or indexed materially fewer pages than it discovered, is not a
+success. It needs its own terminal state, surfaced with the reason and the
+counts, and the operator needs the choice to retry — ideally more slowly. A
+warning in a log file is not a report. The same applies to brand detection: if
+the root page was never read, say the logo could not be detected rather than
+quietly substituting a guess.
+
 **Live worker status.** Heartbeat, current phase, current URL, memory in use,
 and time since last progress — visible while it runs, not reconstructed from
 logs afterwards. `diagnose:worker` reports some of this from the command line
@@ -485,17 +522,64 @@ already; the dashboard should show it.
 limit. The worker should stream, cap what it holds, and refuse a job it cannot
 finish rather than dying halfway through one.
 
-### Open questions
+### Decisions
 
-- Where does the checkpoint live? Extra columns on `crawl_jobs`, or a separate
-  progress table keyed by run?
-- Should resume be automatic, or always the operator's choice? Automatic is
-  kinder; it also silently re-crawls pages that may have changed.
-- What is a safe memory ceiling on the smallest VPS worth supporting, and should
-  the worker measure it or be told?
-- Does data integrity need chunk-level checkpointing, or is page-level enough?
-  A page half-embedded is discardable; a page half-*extracted* is corrupt, and
-  currently nothing detects that.
+Taken 20 August, replacing the open questions that stood here.
+
+**The checkpoint is the data itself.** Not extra columns on `crawl_jobs`, not a
+progress table. Once pages are written as they finish, "what is done" is simply
+which URLs already have documents for this run — ask the `documents` table.
+A separate ledger can drift out of step with what was actually written, and it
+only drifts under crash conditions, which is exactly when it is trusted. The one
+addition needed is a **run id on `documents`**, so work from the current attempt
+is distinguishable from a previous crawl's surviving index. One column, not a
+subsystem.
+
+**A batch is a transaction, so there is no half-written page.** The concern that
+page 3,000 might be partly indexed, forcing a restart from 2,998 and a cleanup
+of whatever garbage was left, is the right worry about the wrong layer. Write
+each batch of pages — documents *and* their chunks together — inside one
+transaction. Postgres then guarantees the batch either landed whole or not at
+all. A crash mid-batch rolls back and those pages simply are not there, so the
+resume query skips nothing and rewrites them cleanly. No backing up by a page or
+two, no sweeping for partial rows, no heuristic about how far to rewind.
+
+This only holds if documents and their chunks share the transaction. Splitting
+them is what would create the orphan the worry describes.
+
+**Resume automatically, within a window; always offer "start over".** A
+multi-thousand-page crawl is hours of work, and a run that stops to ask a person
+who is not watching is indistinguishable from one that failed. Resume when the
+failed attempt is recent — 24 hours is a reasonable line — and start fresh
+beyond it, because by then the site has genuinely moved. Pages fetched hours
+apart within a single long crawl is already normal; resuming does not make the
+corpus meaningfully less coherent than it already is.
+
+**Bound memory by batch size, and treat a memory ceiling as a backstop.** Once
+writes are incremental, peak memory is a function of how many pages are held
+before flushing, not of how large the site is. `CRAWL_BATCH_PAGES` is the real
+control. A self-measuring worker sounds better than a configured limit but is
+not: Node reports its own JavaScript heap, while the memory that actually kills
+the process lives outside it — the ONNX embedding model, and Chromium when a
+page needs rendering. The worker would read a comfortable number and die anyway.
+
+**Checkpoint per page, and validate fetches separately.** A page that died
+partway through embedding is discarded and redone in seconds; chunk-level
+bookkeeping buys almost nothing for a great deal of machinery.
+
+The other half of the integrity worry is a different problem wearing the same
+clothes. A page that was *half extracted* — a truncated HTTP response indexed as
+though it were whole — is not a checkpointing failure, because nothing ever
+noticed anything was wrong. No checkpoint can catch it. The fix belongs at fetch
+time: compare `Content-Length` against the bytes actually received and reject a
+short read rather than extracting from it. Tracked here so it is not mistaken
+for something resumption solves.
+
+**The same applies to file jobs.** `processFileJob` has the identical shape —
+every record parsed and embedded in memory, one transaction at the end — so a
+large PDF or spreadsheet fails the same way for the same reason. Whatever
+batching, resumption and run-id scheme lands for crawls should be shared, not
+reimplemented.
 
 ### Not in scope
 
