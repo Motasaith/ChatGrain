@@ -18,7 +18,7 @@ import {
 } from "@/lib/voice/protocol";
 import { VoiceSession } from "@/lib/voice/session";
 import { sttEnabled } from "@/lib/voice/stt";
-import { ttsEnabled } from "@/lib/voice/tts";
+import { ttsEnabled, warmSpeech } from "@/lib/voice/tts";
 
 const startSchema = z.object({
   type: z.literal("start"),
@@ -188,6 +188,11 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage) {
     closeWith(socket, "CONVERSATION_NOT_FOUND", "Conversation not found.");
     return;
   }
+
+  // Starts the speech model loading now, while the caller is still asking
+  // their first question, rather than at the moment the first answer needs
+  // speaking.
+  warmSpeech();
 
   const session = new VoiceSession({
     agent,

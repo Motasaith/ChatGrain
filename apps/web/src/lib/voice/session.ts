@@ -36,6 +36,17 @@ export type VoiceSessionDeps = {
  * synthesis, and playback - which is what makes barge-in feel instant instead
  * of leaving a tail of stale audio queued on the client.
  */
+/**
+ * Whether speech onset from the caller should abandon the turn in flight.
+ *
+ * Only when the agent is audible. Barging in means talking over something you
+ * can hear; there is nothing to talk over while the agent is still working out
+ * what to say, and treating noise as an interruption there cancelled answers
+ * before they could be given.
+ */
+export function isBargeIn(state: VoiceState) {
+  return state === "speaking";
+}
 export class VoiceSession {
   private state: VoiceState = "listening";
   private nextTurnId = 1;
@@ -70,12 +81,23 @@ export class VoiceSession {
   /**
    * The client's VAD detected speech onset. If the agent is mid-sentence the
    * caller is talking over it, so the turn is abandoned immediately.
+   *
+   * Only while it is actually audible. "Thinking" used to cancel here too, and
+   * that is not a barge-in: the caller has heard nothing yet, so there is
+   * nothing for them to be interrupting. What it did instead was hand every
+   * cough, keyboard tap and passing car a veto over the answer - onset alone,
+   * no words required - and the call would drop straight back to listening a
+   * second after the question, having said nothing. The first turn of a call
+   * was the likeliest to lose, because that is when the speech model is still
+   * loading and the window is widest.
+   *
+   * A caller who genuinely asks something new during the wait is still obeyed:
+   * a completed utterance reaches `utteranceEnd`, and `runTurn` cancels
+   * whatever was in flight before starting the replacement.
    */
   speechStart() {
     if (this.closed) return;
-    if (this.state === "speaking" || this.state === "thinking") {
-      this.cancelActiveTurn();
-    }
+    if (isBargeIn(this.state)) this.cancelActiveTurn();
   }
 
   /** The client's VAD detected end of speech: transcribe and answer. */

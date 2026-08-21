@@ -424,21 +424,42 @@ knowable in advance, which is the whole argument for building the harness first.
 
 ## 11. Next release, 0.4.0 — a worker that survives its own job
 
-*Written 20 August 2026, after 0.3.0. Discussion and scope only; nothing here is
-built.*
+*Written 20 August 2026, after 0.3.0. Scope and discussion.*
+
+> **Status, 21 August 2026.** This section has been built and is under test.
+> What was actually implemented, what was measured, and what is still unproven
+> are recorded separately in [RELEASE-0.4.0.md](../RELEASE-0.4.0.md) — kept out
+> of this document because it is not a stable release and should not be read as
+> one. The corrections marked below are the assumptions here that the build
+> disproved.
 
 0.3.0 made answers correct. It did nothing for the process that produces them.
 The crawler works on a developer machine and fails on a small VPS, and the way
 it fails is the problem: silently, from the beginning, and with counters that
 disagree with reality.
 
-### The four faults, as observed
+> **Corrected 21 August.** "Works on a developer machine" was survivorship bias.
+> It fails there too — see fault 5 — and it had been failing there for as long as
+> the VPS had. It looked like a VPS problem because that is where someone was
+> watching a crawl they had not just interrupted themselves.
+
+### The faults, as observed
+
+*Four were written down on 20 August. A fifth, found on 21 August while fixing
+them, turned out to be the one doing most of the damage.*
 
 **1. Peak memory scales with the site.** `processCrawlJob` holds every crawled
 page in `result.pages` and every embedding in `prepared`, and writes nothing
 until a single transaction at the very end. On a few thousand pages the vectors
 alone are hundreds of megabytes before any text is counted. This is why crawls
 die on a constrained host and not locally.
+
+> **Corrected 21 August.** The last sentence was wrong, and the measurements
+> under *Decisions* below already say so: the page buffer is noise next to the
+> 2.8 GB the local embedding model costs before a single page is fetched. Worse,
+> the premise that this is a VPS-only problem did not survive either — see
+> fault 5. Crawls were dying on the developer machine too, for a reason that has
+> nothing to do with memory.
 
 **2. A retry double-counts itself.** Page events are cleared with
 `ne(crawlPages.jobId, jobId)`, and a retry reuses the same job row, so the
@@ -447,10 +468,24 @@ previous attempt's rows survive. The dashboard sums them. A reporter watched
 each time. Both numbers were honest reports of a broken model: the progress bar
 reads the current attempt, the totals read every attempt at once.
 
-**3. There is no checkpoint.** A crawl that dies at 92% — the embedding ceiling,
-which is also peak memory — is requeued by stale-job recovery fifteen minutes
-later and starts again at the first URL. Nothing it did survives, because
-nothing is durable until the end.
+**3. There is no checkpoint.** A crawl that dies at 92% — the embedding ceiling
+— is requeued by stale-job recovery fifteen minutes later and starts again at
+the first URL. Nothing it did survives, because nothing is durable until the
+end.
+
+> **Corrected 21 August.** "The embedding ceiling, which is also peak memory"
+> was a guess, and it was wrong. 92% is simply the last progress value written
+> before the closing transaction, so *any* death in that window freezes the bar
+> there — which is why the number looked so suspiciously repeatable. Measured
+> during a real stall, the worker was holding 588 MB. Nothing was near an OOM.
+>
+> The rest of this fault is fixed, and the fix needs stating precisely because
+> half of it looks like the bug: a resumed run **does** start again at the first
+> URL, because no raw HTML is kept. What survives is the embedding, which is the
+> expensive part. Fetching a page is a sub-second request; embedding it is a
+> model call per chunk. A resume re-reads everything and re-embeds only what
+> changed. The dashboard now says so, because a page counter restarting at 1
+> otherwise reads as all the work being lost.
 
 **4. A crawl that gave up reports success.** After twenty consecutive fetch
 failures the circuit breaker sets `stoppedEarly` and breaks out of the loop.
@@ -481,9 +516,32 @@ requests to look like exactly what the protection is for. But an operator has no
 way to learn any of that from the dashboard, which is the fault worth fixing
 here.
 
-Those four compound: the run dies because of (1), restarts from nothing because
-of (3), reports nonsense because of (2), and when it gives up it says it
-succeeded because of (4). To an operator it looks like one mysterious failure.
+**5. A restart is charged as a failure.** *Added 21 August, after 0.4.0 was
+built — this fault was not in the original four and is the one that actually
+buried the crawl.*
+
+`claimJob` incremented `attempt` every time a job was picked up, and nothing
+ever checked it against `maxAttempts` on the claim path. So each worker restart
+— a deploy, a `pm2 restart`, a file save under `tsx watch` — spent one of the
+job's three retries without anything having gone wrong. A job observed on
+21 August sat at attempt 3 of 3 having never once thrown.
+
+It compounds with a second fault in the same area. The `SIGTERM` handler set a
+flag that was only read *between* jobs, so a worker in the middle of a crawl
+ignored it entirely and was eventually force-killed — which leaves no
+opportunity to put the job back. The job stayed `running`, locked by a process
+that no longer existed, until stale recovery noticed fifteen minutes later.
+
+The loop this produces: restart, hard kill, fifteen minutes of a frozen progress
+bar, re-crawl from URL 1, restart again. On a machine where `npm run dev` runs
+the worker under `tsx watch`, every file save entered it. That is why a crawl
+that "always dies at 92%" was never a memory problem — it died wherever it
+happened to be when something touched a file.
+
+Those five compound: the run dies because of (1) or (5), restarts from nothing
+because of (3), reports nonsense because of (2), spends a retry it did not owe
+because of (5), and when it gives up it says it succeeded because of (4). To an
+operator it looks like one mysterious failure.
 
 ### What to build
 
@@ -555,13 +613,37 @@ beyond it, because by then the site has genuinely moved. Pages fetched hours
 apart within a single long crawl is already normal; resuming does not make the
 corpus meaningfully less coherent than it already is.
 
-**Bound memory by batch size, and treat a memory ceiling as a backstop.** Once
-writes are incremental, peak memory is a function of how many pages are held
-before flushing, not of how large the site is. `CRAWL_BATCH_PAGES` is the real
-control. A self-measuring worker sounds better than a configured limit but is
-not: Node reports its own JavaScript heap, while the memory that actually kills
-the process lives outside it — the ONNX embedding model, and Chromium when a
-page needs rendering. The worker would read a comfortable number and die anyway.
+**Bound memory by batch size — but that is the smaller half.** Measured
+20 August, and the result was not what this section assumed:
+
+| | RSS |
+|---|---|
+| Node, nothing loaded | 70 MB |
+| Qwen3-Embedding-0.6B loaded, one embedding | 1,047 MB |
+| after the first batch of 16 | 2,749 MB |
+| after four more batches of 16 | 2,783 MB — flat |
+| after a forced GC | 2,782 MB |
+
+Two things follow. The local embedding model costs roughly **2.8 GB before a
+single page is crawled**, and it does not leak: memory is flat once the ONNX
+arena is warm. A 12-page crawl and a 3,400-page crawl both pay that floor.
+
+Batching was verified not to move it. The same 12-page crawl peaked at 2,578 MB
+with `CRAWL_BATCH_PAGES=25` and 2,830 MB at `CRAWL_BATCH_PAGES=2` — the page
+buffer is noise against the model.
+
+So batching is worth having for durability and resume, and it removes the
+variable growth that pushed a large crawl over the edge, but **it is not the fix
+for a small VPS**. Nothing that keeps the model in the worker will be. The fix
+is to stop loading it there: `EMBEDDING_PROVIDER=cloudflare` serves the same
+Qwen3-Embedding-0.6B over HTTP and takes the worker's floor back to tens of
+megabytes. Local embedding should be understood as a development convenience
+and a large-machine option, not something a 2 GB host can run.
+
+A self-measuring worker sounds better than a configured limit but is not: Node
+reports its own JavaScript heap, while the memory that actually kills the
+process lives outside it — the ONNX arena above is invisible to `heapUsed`, and
+so is Chromium when a page needs rendering.
 
 **Checkpoint per page, and validate fetches separately.** A page that died
 partway through embedding is discarded and redone in seconds; chunk-level

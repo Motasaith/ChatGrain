@@ -22,6 +22,20 @@ const GENERIC_STOP_WORDS = new Set([
   "more", "information", "info", "because", "working", "similar", "related",
   "enlist", "list", "titles", "urls", "article", "articles", "website",
   "site", "know", "looking",
+  // Words a visitor uses to mean "the thing I am talking to", exactly as they
+  // use "website". Leaving them out was a real refusal: "what does this website
+  // offer" reduced to ["offers"] and answered at confidence 0.376, while "what
+  // does this company offer" kept ["company", "offers"], matched the handful of
+  // blog posts that happen to contain the word, and died at 0.276 against a 0.3
+  // gate. Same question, opposite outcome, decided entirely by which synonym the
+  // visitor reached for.
+  //
+  // These stay generic rather than site-specific: none of them names a topic
+  // when someone is asking what they are looking at. Dropping one is also safe
+  // when it is all there is, because a filter that empties the query is not
+  // applied at all - see `base` below.
+  "company", "companies", "business", "businesses", "brand", "brands",
+  "organisation", "organization", "org", "firm", "shop", "store",
 ]);
 
 /** Beyond this a query is a paste, not a question. */

@@ -43,6 +43,12 @@ export type CrawlPageOutcome =
   | "duplicate"
   /** Too little text to be worth indexing. */
   | "thin"
+  /**
+   * Sent us to another URL. Recorded so the totals reconcile: outcomes are
+   * keyed by the final URL, so without this a redirected URL is tried but
+   * never accounted for.
+   */
+  | "redirected"
   /** Fetch, render, or extraction failed. */
   | "failed"
   /**
@@ -64,6 +70,16 @@ export type CrawlResult = {
   brand: SiteBrand;
   pages: ExtractedPage[];
   failures: Array<{ url: string; reason: string }>;
+  /**
+   * URLs found and tried. Distinct from `pages.length`, which counts only what
+   * was kept: duplicates, thin pages and redirects are all discovered without
+   * becoming a page.
+   */
+  discovered: number;
+  /** The circuit breaker ended the run, rather than the queue emptying. */
+  stoppedEarly: boolean;
+  /** A page was read well enough to identify the site, rather than guessed. */
+  brandDetected: boolean;
 };
 
 /**
@@ -533,6 +549,18 @@ export async function crawlWebsite({
         }
         const { page, brand: pageBrand } = result.value;
         brand ??= pageBrand;
+        // Outcomes below are recorded against the page's final URL, so a URL
+        // that redirected would otherwise leave no trace and the totals would
+        // not add up to the number of URLs tried. Recording the redirect makes
+        // every processed URL account for itself.
+        if (page.url !== batch[index]) {
+          onPage?.({
+            url: batch[index],
+            outcome: "redirected",
+            title: page.title,
+            reason: `Redirected to ${page.url}`,
+          });
+        }
         if (page.text.length < 120) {
           onPage?.({
             url: page.url,
@@ -612,6 +640,15 @@ export async function crawlWebsite({
 
     return {
       rootUrl: root.href,
+      discovered: queued.size,
+      /**
+       * True when the circuit breaker ended the run rather than the queue
+       * emptying. The caller needs it: this used to be a log line only, so a
+       * crawl that gave up reported a clean success over a partial site.
+       */
+      stoppedEarly,
+      /** Whether any page was read well enough to identify the site. */
+      brandDetected: Boolean(brand),
       brand: brand ?? {
         name: root.hostname.replace(/^www\./, ""),
         iconUrl: new URL("/favicon.ico", root).href,

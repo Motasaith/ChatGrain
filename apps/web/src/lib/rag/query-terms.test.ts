@@ -90,3 +90,32 @@ describe("siteStopWords", () => {
     expect(() => siteStopWords(["not a url", "", "https://a.io"])).not.toThrow();
   });
 });
+
+describe("retrievalQueryTerms - words meaning 'this site'", () => {
+  // Measured against the Sudo Scout corpus before the fix: "website" scored
+  // 0.376 and answered, "company" scored 0.276 and was refused at the 0.3 gate.
+  // Same question, opposite outcome, decided by the visitor's choice of synonym.
+  it("treats company like website", () => {
+    expect(retrievalQueryTerms("what does this company offers")).toEqual(
+      retrievalQueryTerms("what does this website offers"),
+    );
+  });
+
+  it("drops the other ways a visitor names the site", () => {
+    for (const word of ["company", "business", "brand", "organisation", "firm"]) {
+      expect(retrievalQueryTerms(`what does this ${word} offer`), word).toEqual([
+        "offer",
+      ]);
+    }
+  });
+
+  it("keeps the discriminating term alongside them", () => {
+    expect(retrievalQueryTerms("give me your company name")).toEqual(["name"]);
+  });
+
+  // The guard that makes this safe: a filter which empties the query is not
+  // applied, so even an all-stopword question keeps something to match on.
+  it("still never strips a query to nothing", () => {
+    expect(retrievalQueryTerms("what does this business do")).not.toHaveLength(0);
+  });
+});

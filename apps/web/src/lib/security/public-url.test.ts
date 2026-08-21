@@ -158,3 +158,65 @@ describe("safeFetch", () => {
     expect(cookies).toEqual([null, "crawl_session=ready"]);
   });
 });
+
+describe("truncated responses", () => {
+  it("refuses a body shorter than the length it promised", async () => {
+    // The dangerous failure, because nothing downstream can detect it:
+    // extraction happily produces text from half a page and indexes it as
+    // though it were whole. No checkpoint or retry ever notices.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response("only-part", {
+          status: 200,
+          headers: { "content-type": "text/html", "content-length": "5000" },
+        }),
+      ),
+    );
+
+    await expect(safeFetch(new URL("https://example.com/page"))).rejects.toThrow(
+      /incomplete/i,
+    );
+  });
+
+  it("accepts a complete body", async () => {
+    const body = "<html><body>complete</body></html>";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(body, {
+          status: 200,
+          headers: {
+            "content-type": "text/html",
+            "content-length": String(body.length),
+          },
+        }),
+      ),
+    );
+
+    const { response } = await safeFetch(new URL("https://example.com/page"));
+    expect(await response.text()).toBe(body);
+  });
+
+  it("ignores the comparison when the body is compressed", async () => {
+    // With compression the header describes the compressed size while the
+    // bytes read are decompressed, so the two are not comparable and a
+    // mismatch means nothing.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response("decompressed content is longer than the header claims", {
+          status: 200,
+          headers: {
+            "content-type": "text/html",
+            "content-length": "9",
+            "content-encoding": "gzip",
+          },
+        }),
+      ),
+    );
+
+    const { response } = await safeFetch(new URL("https://example.com/page"));
+    expect(await response.text()).toContain("decompressed");
+  });
+});

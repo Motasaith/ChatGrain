@@ -59,6 +59,16 @@ export const jobStatus = pgEnum("job_status", [
   "queued",
   "running",
   "succeeded",
+  /**
+   * Finished, but not with everything it set out to index.
+   *
+   * A crawl that trips the circuit breaker used to log a warning and return
+   * normally, so the dashboard showed a clean 100% over a site that was
+   * missing pages - and, when the root page was among the refused ones, missing
+   * its logo and favicon too. "Some of it" is a different outcome from "all of
+   * it" and the operator is the one who needs to decide what to do about it.
+   */
+  "partial",
   "failed",
   "cancelled",
 ]);
@@ -275,6 +285,21 @@ export const documents = pgTable(
     contentHash: text("content_hash").notNull(),
     mimeType: text("mime_type").default("text/html").notNull(),
     characterCount: integer("character_count").default(0).notNull(),
+    /**
+     * The job that last produced or confirmed this document.
+     *
+     * This is the checkpoint. A crawl writes pages as it finishes them rather
+     * than holding the whole site until one closing transaction, so "what has
+     * this run already done" has to be answerable from the data itself: it is
+     * the set of rows carrying the current job id. A separate progress ledger
+     * would be consulted only under crash conditions, which is exactly when a
+     * value that drifted from what was really written does the most harm.
+     *
+     * Stable across retries because a retried job reuses its row, so a resumed
+     * attempt recognises its own earlier work. Rows left over from a previous
+     * run keep the old id and are swept once the new one completes.
+     */
+    runId: uuid("run_id"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
     fetchedAt: timestamp("fetched_at", { withTimezone: true })
       .defaultNow()
@@ -283,6 +308,7 @@ export const documents = pgTable(
   },
   (table) => [
     index("documents_source_idx").on(table.sourceId),
+    index("documents_run_idx").on(table.sourceId, table.runId),
     uniqueIndex("documents_source_url_unique")
       .on(table.sourceId, table.canonicalUrl)
       .where(sql`${table.canonicalUrl} is not null`),
@@ -610,8 +636,20 @@ export const crawlJobs = pgTable(
      * halt; the worker reads this at each safe point and unwinds itself.
      */
     cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+    /** Genuine failures. Incremented when a job throws, never when a worker dies. */
     attempt: integer("attempt").default(0).notNull(),
     maxAttempts: integer("max_attempts").default(3).notNull(),
+    /**
+     * Times this job was handed back because the worker holding it stopped -
+     * a deploy, a restart, a crash - rather than because the job failed.
+     *
+     * Kept apart from `attempt` because the two need opposite treatment. A
+     * restart is not the job's fault and must not spend its retries; a job that
+     * kills every worker that touches it is nobody's idea of healthy either, so
+     * this gets its own, looser ceiling instead of no ceiling at all.
+     */
+    recoveries: integer("recoveries").default(0).notNull(),
+    maxRecoveries: integer("max_recoveries").default(10).notNull(),
     priority: integer("priority").default(0).notNull(),
     progress: integer("progress").default(0).notNull(),
     phase: jobPhase("phase").default("queued").notNull(),
@@ -686,6 +724,17 @@ export const crawlPages = pgTable(
     index("crawl_pages_job_sequence_idx").on(table.jobId, table.sequence),
     index("crawl_pages_job_outcome_idx").on(table.jobId, table.outcome),
     index("crawl_pages_source_idx").on(table.sourceId),
+    /**
+     * One row per URL per job, enforced rather than hoped for.
+     *
+     * A retried job reuses its row, so a second attempt used to append a whole
+     * second set of events and the dashboard summed them: a reporter watched
+     * 3,400 indexed pages become 6,800, then keep climbing, while the progress
+     * bar restarted at zero. Both numbers were honest readings of a broken
+     * model. Writing through this constraint makes re-recording a URL replace
+     * its earlier row instead of adding to it.
+     */
+    uniqueIndex("crawl_pages_job_url_unique").on(table.jobId, table.url),
   ],
 );
 

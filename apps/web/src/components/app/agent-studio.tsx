@@ -128,10 +128,24 @@ type CrawlPageRow = {
   outcome: string;
 };
 
+type WorkerStatus = {
+  id: string | null;
+  memoryMb: number | null;
+  secondsSinceHeartbeat: number | null;
+  /** False means the job's holder is gone and it is waiting to be recovered. */
+  holdsThisJob: boolean;
+  /** Seconds until another worker may take an abandoned job over. */
+  reclaimInSeconds: number | null;
+};
+
 type JobDetail = {
   outcomes: Partial<Record<string, number>>;
   problemPages: CrawlPageRow[];
   recentPages: CrawlPageRow[];
+  worker?: WorkerStatus;
+  /** Pages already committed for this run; a resume will not repeat them. */
+  durablePages?: number;
+  secondsSinceProgress?: number;
 };
 
 /** What each phase is actually doing, so a stall points somewhere specific. */
@@ -236,6 +250,9 @@ export function AgentStudio({
         outcomes: payload.data.outcomes ?? {},
         problemPages: payload.data.problemPages ?? [],
         recentPages: payload.data.recentPages ?? [],
+        worker: payload.data.worker,
+        durablePages: payload.data.durablePages,
+        secondsSinceProgress: payload.data.secondsSinceProgress,
       });
     })();
     return () => {
@@ -353,6 +370,9 @@ export function AgentStudio({
         outcomes: payload.data.outcomes ?? {},
         problemPages: payload.data.problemPages ?? [],
         recentPages: payload.data.recentPages ?? [],
+        worker: payload.data.worker,
+        durablePages: payload.data.durablePages,
+        secondsSinceProgress: payload.data.secondsSinceProgress,
       });
       setWorkerHealthy(payload.data.workerHealthy);
       setSources((current) => current.map((source) =>
@@ -709,6 +729,19 @@ export function AgentStudio({
         )
       : (job?.progress ?? 0);
 
+  // Why a resumed run re-reads pages it has already read.
+  //
+  // Fetching and embedding cost wildly different amounts. Fetching a page is
+  // a sub-second HTTP request; embedding it is a model call per chunk and is
+  // where nearly all the wall-clock time goes. A resumed run keeps no store of
+  // raw HTML, so it does read every page again - but it compares each one
+  // against what is saved and re-embeds only what actually changed. Without
+  // saying so, the page counter restarting at 1 reads as all the work lost.
+  const savedPages = jobDetail?.durablePages ?? 0;
+  const reuseNote = savedPages
+    ? `${savedPages.toLocaleString()} ${savedPages === 1 ? "page is" : "pages are"} already embedded and saved. Reading pages again is the fast part - embedding is the slow part, and anything unchanged is reused rather than embedded twice.`
+    : "Pages are saved as they finish, so stopping keeps whatever is already done.";
+
   return (
     <>
       <div className="studio-heading">
@@ -910,7 +943,9 @@ export function AgentStudio({
             </b>
             <small>
               {job.status === "queued" && workerHealthy === false
-                ? "Start the worker to begin discovering pages."
+                ? savedPages
+                  ? `No worker is running, so this is paused, not lost. ${reuseNote}`
+                  : "Start the worker to begin discovering pages."
                 : job.phase === "embedding"
                   ? uploadJob
                     ? `${job.pagesEmbedded.toLocaleString()} of ${job.pagesDiscovered.toLocaleString()} ${uploadUnit} embedded${job.pagesSkipped ? ` · ${job.pagesSkipped.toLocaleString()} duplicate` : ""}`
@@ -922,7 +957,7 @@ export function AgentStudio({
                         ? `Reading ${uploadUnit} ${job.pagesProcessed.toLocaleString()} of ${job.pagesDiscovered.toLocaleString()}`
                         : "Opening the file"
                       : job.pagesDiscovered
-                        ? `${processedTowardTarget} of ${crawlTarget} selected pages processed · ${job.pagesDiscovered.toLocaleString()} URLs discovered`
+                        ? `${processedTowardTarget} of ${crawlTarget} pages ${savedPages ? "read again" : "read"} · ${job.pagesDiscovered.toLocaleString()} URLs discovered`
                         : "Preparing page discovery"}
             </small>
           </div>
@@ -961,11 +996,55 @@ export function AgentStudio({
               );
             })}
           </div>
+          {jobDetail.worker && ["queued", "running"].includes(job.status) ? (
+            <div
+              className={`worker-status ${
+                jobDetail.worker.holdsThisJob ? "is-working" : "is-orphaned"
+              }`}
+            >
+              <b>
+                {jobDetail.worker.holdsThisJob
+                  ? "Worker is on this job"
+                  : jobDetail.worker.secondsSinceHeartbeat === null
+                    ? "No worker is running"
+                    : jobDetail.worker.reclaimInSeconds
+                      ? `Handing this over in ${jobDetail.worker.reclaimInSeconds}s`
+                      : "Waiting to be picked up again"}
+              </b>
+              <span>
+                {jobDetail.worker.id ? (
+                  <i>{jobDetail.worker.id}</i>
+                ) : null}
+                {jobDetail.worker.secondsSinceHeartbeat !== null ? (
+                  <em>
+                    heartbeat {jobDetail.worker.secondsSinceHeartbeat}s ago
+                  </em>
+                ) : null}
+                {jobDetail.worker.memoryMb ? (
+                  <em>{jobDetail.worker.memoryMb} MB in use</em>
+                ) : null}
+                {jobDetail.secondsSinceProgress !== undefined ? (
+                  <em>moved {jobDetail.secondsSinceProgress}s ago</em>
+                ) : null}
+              </span>
+              <small>
+                {jobDetail.worker.holdsThisJob
+                  ? reuseNote
+                  : /* The holder died. The job survives; recovery reclaims it. */
+                    `The worker running this stopped, so nothing is moving right now. ${
+                      jobDetail.worker.reclaimInSeconds
+                        ? `Another takes it over in about ${jobDetail.worker.reclaimInSeconds} seconds.`
+                        : "Another is taking it over now."
+                    } ${reuseNote}`}
+              </small>
+            </div>
+          ) : null}
           <div className="crawl-counts">
             {[
               ["Indexed", jobDetail.outcomes.indexed ?? 0],
               ["Unchanged", jobDetail.outcomes.unchanged ?? 0],
               ["Duplicate", jobDetail.outcomes.duplicate ?? 0],
+              ["Redirected", jobDetail.outcomes.redirected ?? 0],
               ["Too thin", jobDetail.outcomes.thin ?? 0],
               ["Failed", jobDetail.outcomes.failed ?? 0],
             ].map(([label, value]) => (
@@ -975,6 +1054,39 @@ export function AgentStudio({
               </span>
             ))}
           </div>
+          {(() => {
+            // Reconciliation. The counters and the outcome table measure
+            // different things - URLs tried versus distinct pages that
+            // resulted - and showing them side by side without saying so is
+            // what makes a healthy crawl look like it lost pages.
+            const accounted = Object.values(jobDetail.outcomes).reduce(
+              (total: number, value) => total + (value ?? 0),
+              0,
+            );
+            const found = job.pagesDiscovered;
+            if (!found) return null;
+            const pending = found - accounted;
+            return (
+              <p className="crawl-reconcile">
+                <b>{found.toLocaleString()}</b> URLs found ·{" "}
+                <b>{accounted.toLocaleString()}</b> accounted for
+                {pending > 0 ? (
+                  <>
+                    {" "}·{" "}
+                    <em>
+                      {pending.toLocaleString()}{" "}
+                      {["queued", "running"].includes(job.status)
+                        ? "still being read"
+                        : "not reached"}
+                    </em>
+                  </>
+                ) : null}
+                {job.chunksIndexed ? (
+                  <> · <b>{job.chunksIndexed.toLocaleString()}</b> searchable passages</>
+                ) : null}
+              </p>
+            );
+          })()}
           {jobDetail.problemPages.length ? (
             <details className="crawl-problems">
               <summary>
@@ -1023,6 +1135,33 @@ export function AgentStudio({
           ) : null}
         </div>
       ) : null}
+      {job?.status === "partial" && (
+        // Distinct from failure. Something was indexed; not everything was, and
+        // the operator is the one who decides whether that is good enough.
+        <div className="training-banner training-partial">
+          <AlertTriangle size={18} />
+          <div>
+            <b>
+              Trained on part of this source
+              {job.pagesProcessed
+                ? ` — ${job.pagesProcessed.toLocaleString()} page${job.pagesProcessed === 1 ? "" : "s"} indexed`
+                : ""}
+            </b>
+            <small>
+              {job.errorMessage ||
+                "The site stopped responding before every page was reached."}
+            </small>
+          </div>
+          <button
+            className="app-secondary-button"
+            disabled={saving}
+            onClick={() => void syncSource(job.sourceId)}
+            type="button"
+          >
+            <RefreshCw size={13} /> Retry
+          </button>
+        </div>
+      )}
       {job?.status === "failed" && (
         <div className="training-banner training-error">
           <AlertTriangle size={18} />

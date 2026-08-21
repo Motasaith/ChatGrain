@@ -219,6 +219,9 @@ const GREETING_WORDS = new Set([
   "salam", "salaam", "assalam", "assalamu", "assalamualaikum", "alaikum",
   "alaykum", "aoa", "adaab", "namaste", "hola", "bonjour", "ciao", "ola",
   "walaikum", "walaikumassalam", "walekum",
+  // Texting shorthand, which the fuzzy pass below cannot reach: "gm" is two
+  // letters and "gud" is two edits from "good", not one.
+  "gm", "gn", "gud",
 ]);
 const THANKS_WORDS = new Set([
   "thanks", "thank", "thankyou", "thx", "tysm", "ty", "shukriya", "shukria",
@@ -240,6 +243,79 @@ const SOCIAL_FILLER = new Set([
   // Connectors inside transliterated greetings: "assalam o alaikum".
   "o", "wa",
 ]);
+
+/**
+ * Words close enough to a greeting to be mistaken for one, that are not.
+ *
+ * Every one of these is within a single edit of a social word and is a plausible
+ * one-word message on a real site: "buy" of "bye", "try" of "ty", "his" of "hi",
+ * "key" of "hey". Without this the fuzzy pass below would answer a shopping
+ * question with "Hi! How can I help?".
+ */
+const NEVER_SOCIAL = new Set([
+  "buy", "try", "his", "him", "her", "hit", "key", "old", "new", "sale",
+  "size", "tips", "cost", "free", "that", "this", "why", "who", "how",
+  "hire", "host", "html", "sale", "sell", "type", "top", "tag", "tab",
+]);
+
+/**
+ * Edit distance, capped: anything past the cap is reported as over it.
+ *
+ * Only ever called with a cap of one, so the early exit does nearly all the
+ * work and the full matrix is rarely built.
+ */
+function withinOneEdit(a: string, b: string) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < short.length && j < long.length) {
+    if (short[i] === long[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    if (edits) return false;
+    edits = 1;
+    if (short.length === long.length) i += 1;
+    j += 1;
+  }
+  return true;
+}
+
+/**
+ * Recognises a social word that was typed slightly wrong.
+ *
+ * "hlo" was met with "I couldn't find a reliable answer in the connected
+ * sources" while "hi" was greeted, which is a bad first impression to hand
+ * someone over one dropped letter. Adding "hlo" to the list would have fixed
+ * "hlo" and nothing else; the next visitor types "helllo" or "thnx".
+ *
+ * Deliberately narrow, because a false positive answers a real question with a
+ * greeting: one edit only, the first letter must survive, and the word must not
+ * be one of the ordinary query words above. A greeting is only ever produced
+ * when *every* word in the message clears this, so the blast radius is a
+ * message that was already nothing but social words.
+ */
+function fuzzySocialKind(word: string): SmallTalkKind | "filler" | null {
+  if (word.length < 3 || NEVER_SOCIAL.has(word)) return null;
+  const groups = [
+    [GREETING_WORDS, "greeting"],
+    [THANKS_WORDS, "thanks"],
+    [FAREWELL_WORDS, "farewell"],
+    [SOCIAL_FILLER, "filler"],
+  ] as const;
+  for (const [words, kind] of groups) {
+    for (const candidate of words) {
+      if (candidate.length < 3) continue;
+      if (candidate[0] !== word[0]) continue;
+      if (withinOneEdit(word, candidate)) return kind;
+    }
+  }
+  return null;
+}
 
 export type SmallTalkKind = "greeting" | "thanks" | "farewell";
 
@@ -269,9 +345,80 @@ export function smallTalkKind(question: string): SmallTalkKind | null {
     if (GREETING_WORDS.has(word)) kind = kind === null ? "greeting" : kind;
     else if (THANKS_WORDS.has(word)) kind = "thanks";
     else if (FAREWELL_WORDS.has(word)) kind = "farewell";
-    else if (!SOCIAL_FILLER.has(word)) return null;
+    else if (SOCIAL_FILLER.has(word)) continue;
+    else {
+      // Exact match failed. One misspelling should not turn a greeting into a
+      // refusal, so try again allowing a single edit.
+      const fuzzy = fuzzySocialKind(word);
+      if (fuzzy === null) return null;
+      if (fuzzy === "greeting") kind = kind === null ? "greeting" : kind;
+      else if (fuzzy === "thanks") kind = "thanks";
+      else if (fuzzy === "farewell") kind = "farewell";
+    }
   }
   return kind;
+}
+
+/**
+ * Attempts to extract or override the agent's instructions.
+ *
+ * Retrieval finds nothing for these, so they fell through to the ordinary
+ * "I couldn't find a reliable answer" fallback - which then offered the contact
+ * form. The prompt never leaked, so the outcome was safe, but inviting a human
+ * to follow up on an attempt to jailbreak the bot is the wrong reply to it, and
+ * it burns a real person's time on a probe.
+ *
+ * Matched on the two things every version of this has to contain: a verb asking
+ * to be shown or to discard, and a noun naming the instructions. Wording alone,
+ * with no model call, because this runs before retrieval on every message.
+ */
+export function asksToBreakCharacter(question: string) {
+  const text = question.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
+  // Phrases with no innocent reading. These stand alone - "enter developer
+  // mode" carries no request verb at all.
+  const attackPhrase =
+    /\b(?:system prompt|prompt injection|developer mode|jailbreak|dan mode)\b/.test(
+      text,
+    );
+  // A verb asking to discard, pointed at the instructions. An attempt on its
+  // own, whether or not it goes on to ask for anything.
+  const asksToDiscard =
+    /\b(?:forget|ignore|disregard|discard|override|bypass)\b[\s\S]{0,40}\b(?:everything|all|previous|prior|above|instructions?|rules?|prompts?)\b/.test(
+      text,
+    );
+  // Naming the instructions is only an attempt when paired with asking to see
+  // them. The qualifier matters more than it looks: "your" used to be in this
+  // list, which made "what are your rules about refunds" - an ordinary
+  // question about business policy - get refused as an attack.
+  const namesInstructions =
+    /\b(?:system|initial|original|previous|above)\s+(?:prompts?|instructions?|rules?|guidelines?|directives?|configuration|setup)\b/.test(
+      text,
+    ) ||
+    /\byour\s+(?:prompts?|instructions?|directives?)\b/.test(text);
+  const asksToReveal =
+    /\b(?:reveal|show|print|repeat|output|display|tell me|give me|what (?:is|are|was|were))\b/.test(
+      text,
+    );
+  return attackPhrase || asksToDiscard || (namesInstructions && asksToReveal);
+}
+
+/**
+ * Declines without breaking character and without offering a human.
+ *
+ * Marked grounded because it is a complete, correct reply. Marking it
+ * ungrounded would count it as a failure to answer, which is what produced the
+ * contact form in the first place.
+ */
+function characterDeclineAnswer(agent: Agent): AnswerResult {
+  return {
+    answer: `I can't share or change how I have been set up, but I am happy to help with anything about ${agent.name}. What would you like to know?`,
+    grounded: true,
+    confidence: 1,
+    citations: [],
+    followUps: agent.suggestedQuestions.length
+      ? agent.suggestedQuestions.slice(0, 4)
+      : undefined,
+  };
 }
 
 function smallTalkAnswer(
@@ -1040,6 +1187,12 @@ export async function answerQuestion(
   // classifying "hi", and before retrieval, which has nothing to find in it.
   const social = images.length ? null : smallTalkKind(question);
   if (social) return smallTalkAnswer(agent, social);
+
+  // Before retrieval, which has nothing to find in an instruction-extraction
+  // attempt, and before the handoff check, which would offer to fetch a person.
+  if (!images.length && asksToBreakCharacter(question)) {
+    return characterDeclineAnswer(agent);
+  }
 
   if (await shouldOfferHumanHandoff(agent, question, history)) {
     return humanSupportAnswer(agent);

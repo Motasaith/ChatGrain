@@ -163,6 +163,25 @@ async function fetchWithRedirects(
     }
     chunks.push(value);
   }
+  // A body that arrived short is the dangerous failure, because nothing
+  // downstream can tell. Extraction happily produces text from half a page and
+  // indexes it as though it were whole, so the corpus quietly holds a
+  // truncated version of a page that no checkpoint or retry will ever notice.
+  //
+  // Only checked for an unencoded body: with compression the header describes
+  // the compressed size while `received` counts the decompressed bytes, so the
+  // two are not comparable and a mismatch means nothing.
+  const encoding = (response.headers.get("content-encoding") ?? "").toLowerCase();
+  const unencoded = !encoding || encoding === "identity";
+  if (unencoded && declaredSize > 0 && received < declaredSize) {
+    throw new AppError(
+      "REMOTE_CONTENT_TRUNCATED",
+      `The remote server sent ${received} of the ${declaredSize} bytes it promised, ` +
+        "so the page arrived incomplete and was not indexed.",
+      502,
+    );
+  }
+
   const body = new Uint8Array(received);
   let offset = 0;
   for (const chunk of chunks) {

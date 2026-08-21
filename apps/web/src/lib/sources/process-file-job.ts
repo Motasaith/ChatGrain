@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -23,6 +23,9 @@ import { discardStagedUpload, readStagedUpload } from "./upload-store";
 
 const EMBEDDING_BATCH_SIZE = 16;
 const PAGE_EVENT_FLUSH_SIZE = 10;
+
+/** Records held before a batch is written. See `flushPending`. */
+const RECORD_BATCH_SIZE = 25;
 
 /** Progress is split by phase so a stall can be attributed to a stage. */
 const PARSE_PROGRESS_CEILING = 25;
@@ -127,7 +130,21 @@ export async function processFileJob(jobId: string, sourceId: string) {
     const batch = eventBuffer;
     eventBuffer = [];
     try {
-      await db.insert(crawlPages).values(batch);
+      // Upsert: one row per URL per job. A retry re-recording a URL replaces
+      // its earlier row rather than adding a second one to be summed.
+      await db
+        .insert(crawlPages)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: [crawlPages.jobId, crawlPages.url],
+          set: {
+            sequence: sql`excluded.sequence`,
+            outcome: sql`excluded.outcome`,
+            title: sql`excluded.title`,
+            reason: sql`excluded.reason`,
+            chunkCount: sql`excluded.chunk_count`,
+          },
+        });
     } catch (error) {
       // Reporting only. A missing migration should cost the detail view, not
       // the indexing run.
@@ -213,7 +230,7 @@ export async function processFileJob(jobId: string, sourceId: string) {
     .set({ phase: "embedding", updatedAt: new Date() })
     .where(eq(crawlJobs.id, jobId));
 
-  const prepared: Array<{
+  type PreparedRecord = {
     record: SourceRecord;
     contentHash: string;
     order: number;
@@ -223,11 +240,83 @@ export async function processFileJob(jobId: string, sourceId: string) {
       tokenCount: number;
       embedding: number[];
     }>;
-  }> = [];
+  };
+
+  /**
+   * Records held before a batch is written. Same reasoning as the crawler:
+   * accumulating every page of a large PDF and every vector it produces until
+   * one closing transaction makes peak memory a function of the file rather
+   * than of the batch, and a run that dies has nothing to show for itself.
+   */
+  let pending: PreparedRecord[] = [];
   let embedded = 0;
+  let indexedChunks = 0;
+
+  /** Commits one batch: documents and their chunks, in a single transaction. */
+  const flushPending = async () => {
+    if (!pending.length) return;
+    const batch = pending;
+    pending = [];
+    await db.transaction(async (tx) => {
+      for (const item of batch) {
+        const [document] = await tx
+          .insert(documents)
+          .values({
+            sourceId,
+            runId: jobId,
+            title: item.record.title,
+            canonicalUrl: item.record.canonicalUrl,
+            contentHash: item.contentHash,
+            mimeType: upload.mimeType,
+            characterCount: item.record.content.length,
+            metadata: { ...item.record.metadata, uploadOrder: item.order },
+          })
+          .returning();
+        if (item.chunks.length) {
+          await tx.insert(chunks).values(
+            item.chunks.map((chunk) => ({
+              documentId: document.id,
+              sourceId,
+              agentId: record.agent.id,
+              position: chunk.position,
+              content: chunk.content,
+              tokenCount: chunk.tokenCount,
+              embedding: chunk.embedding,
+              metadata: { title: item.record.title },
+            })),
+          );
+        }
+        indexedChunks += item.chunks.length;
+      }
+    });
+  };
+
+  // Records already written by an earlier attempt of this same job. Parsing is
+  // deterministic - the same file yields the same records in the same order -
+  // so the order recorded on each document identifies exactly what survived.
+  const doneOrders = new Set(
+    (
+      await db
+        .select({ metadata: documents.metadata })
+        .from(documents)
+        .where(
+          and(eq(documents.sourceId, sourceId), eq(documents.runId, jobId)),
+        )
+    )
+      .map((row) => Number(row.metadata?.uploadOrder))
+      .filter((order) => Number.isInteger(order)),
+  );
+  if (doneOrders.size) {
+    logger.info(
+      { jobId, sourceId, resumed: doneOrders.size },
+      "Resuming a file job that already indexed part of this file",
+    );
+    embedded = doneOrders.size;
+  }
 
   for (const [index, item] of records.entries()) {
     await assertNotCancelled(jobId);
+    if (doneOrders.has(index)) continue;
     const contentHash = createHash("sha256").update(item.content).digest("hex");
     if (existingHashes.has(contentHash)) {
       recordUnit({
@@ -251,7 +340,7 @@ export async function processFileJob(jobId: string, sourceId: string) {
       continue;
     }
 
-    const embeddedChunks: (typeof prepared)[number]["chunks"] = [];
+    const embeddedChunks: PreparedRecord["chunks"] = [];
     for (
       let offset = 0;
       offset < textChunks.length;
@@ -266,13 +355,14 @@ export async function processFileJob(jobId: string, sourceId: string) {
         })),
       );
     }
-    prepared.push({
+    pending.push({
       record: item,
       contentHash,
       order: index,
       chunks: embeddedChunks,
     });
     embedded += 1;
+    if (pending.length >= RECORD_BATCH_SIZE) await flushPending();
     recordUnit({
       label: item.title,
       outcome: "indexed",
@@ -303,10 +393,6 @@ export async function processFileJob(jobId: string, sourceId: string) {
   await flushEvents(true);
   await assertNotCancelled(jobId);
 
-  const indexedChunks = prepared.reduce(
-    (total, item) => total + item.chunks.length,
-    0,
-  );
   await db
     .update(crawlJobs)
     .set({
@@ -316,47 +402,37 @@ export async function processFileJob(jobId: string, sourceId: string) {
     })
     .where(eq(crawlJobs.id, jobId));
 
+  await flushPending();
+  // Counted rather than accumulated: a resumed run only adds the records it
+  // wrote this time, so a running total would report the tail of the work as
+  // though it were all of it.
+  const [chunkTotal] = await db
+    .select({ value: sql<number>`count(*)::int` })
+    .from(chunks)
+    .where(eq(chunks.sourceId, sourceId));
+  indexedChunks = chunkTotal?.value ?? indexedChunks;
+
   await db.transaction(async (tx) => {
-    // Re-uploading a file replaces what it indexed before. The old rows are
-    // only dropped here, once every new embedding exists, so a failure part
-    // way through leaves the previous version searchable.
+    // The sweep. New records were written in batches as they were embedded and
+    // carry this job's id; anything still holding an older one belongs to the
+    // previous version of this file. Deleting it here keeps the guarantee the
+    // single closing transaction used to provide - the old version stays
+    // searchable until the new one is complete - without holding the whole
+    // file in memory to get it.
     const stale = await tx
       .select({ id: documents.id })
       .from(documents)
-      .where(eq(documents.sourceId, sourceId));
+      .where(
+        and(
+          eq(documents.sourceId, sourceId),
+          or(isNull(documents.runId), ne(documents.runId, jobId)),
+        ),
+      );
     const staleIds = stale.map((row) => row.id);
     for (let offset = 0; offset < staleIds.length; offset += 500) {
       await tx
         .delete(documents)
         .where(inArray(documents.id, staleIds.slice(offset, offset + 500)));
-    }
-    for (const item of prepared) {
-      const [document] = await tx
-        .insert(documents)
-        .values({
-          sourceId,
-          title: item.record.title,
-          canonicalUrl: item.record.canonicalUrl,
-          contentHash: item.contentHash,
-          mimeType: upload.mimeType,
-          characterCount: item.record.content.length,
-          metadata: { ...item.record.metadata, uploadOrder: item.order },
-        })
-        .returning();
-      if (item.chunks.length) {
-        await tx.insert(chunks).values(
-          item.chunks.map((chunk) => ({
-            documentId: document.id,
-            sourceId,
-            agentId: record.agent.id,
-            position: chunk.position,
-            content: chunk.content,
-            tokenCount: chunk.tokenCount,
-            embedding: chunk.embedding,
-            metadata: { title: item.record.title },
-          })),
-        );
-      }
     }
     await tx
       .update(sources)
@@ -365,7 +441,7 @@ export async function processFileJob(jobId: string, sourceId: string) {
         lastSyncedAt: new Date(),
         metadata: {
           ...(record.source.metadata ?? {}),
-          records: prepared.length,
+          records: embedded,
           chunks: indexedChunks,
           duplicates: skipped,
         },
@@ -398,5 +474,5 @@ export async function processFileJob(jobId: string, sourceId: string) {
 
   // The staged copy exists only to hand bytes to the worker.
   await discardStagedUpload(upload.storageKey);
-  return { records: prepared.length, chunks: indexedChunks, skipped };
+  return { records: embedded, chunks: indexedChunks, skipped };
 }

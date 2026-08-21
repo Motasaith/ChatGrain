@@ -4,6 +4,12 @@
 **Released:** 2026-08-20
 **Status:** Stable. First release where the answer pipeline is verified end to end.
 
+> Work on `0.4.0` — the worker rewrite from PLAN.md §11 — is in the tree but is
+> **not released and not stable**. It is tested on one machine against one site
+> and has never run on the VPS. It is written up separately, in
+> [RELEASE-0.4.0.md](RELEASE-0.4.0.md), so that an untested build is not read as
+> a released one. `0.3.0` below is still the version to go back to.
+
 ---
 
 ## Restore point

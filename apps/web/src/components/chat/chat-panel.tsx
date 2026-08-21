@@ -6,6 +6,7 @@ import {
   ArrowUp,
   Bell,
   CheckCircle2,
+  ChevronLeft,
   ExternalLink,
   History,
   ImagePlus,
@@ -479,6 +480,20 @@ export function ChatPanel({
   const [helpCenterOpen, setHelpCenterOpen] = useState(false);
   const [supportForm, setSupportForm] = useState<SupportFormKind | null>(null);
   const [ticketFiled, setTicketFiled] = useState<string | null>(null);
+  /**
+   * The heading of whatever has replaced the four help-center choices, or null
+   * when the choices themselves are showing. Doubles as "is there anywhere to
+   * go back to", which is what decides whether the back button appears.
+   */
+  const helpSubview = supportForm
+    ? supportForm === "bug"
+      ? "Report a problem"
+      : supportForm === "live"
+        ? "Talk to a person"
+        : "Contact support"
+    : ticketFiled
+      ? "Request received"
+      : null;
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
@@ -1244,8 +1259,28 @@ export function ChatPanel({
         <section className="chat-help-panel">
           <div className="chat-help-heading">
             <span>
-              <LifeBuoy size={15} />
-              <b>Help center</b>
+              {/* Opening a form replaced the four choices with no way back to
+                  them. The form has its own Back button, but it sits under the
+                  fields - off screen, on the panel that could not scroll - so
+                  Close was the only visible exit and it dropped the visitor
+                  into the chat. */}
+              {helpSubview ? (
+                <button
+                  aria-label="Back to help center"
+                  className="chat-help-back"
+                  onClick={() => {
+                    setSupportForm(null);
+                    setTicketFiled(null);
+                  }}
+                  title="Back to help center"
+                  type="button"
+                >
+                  <ChevronLeft size={17} />
+                </button>
+              ) : (
+                <LifeBuoy size={15} />
+              )}
+              <b>{helpSubview ?? "Help center"}</b>
             </span>
             <button
               aria-label="Close help center"
@@ -1256,6 +1291,7 @@ export function ChatPanel({
               <X size={16} />
             </button>
           </div>
+          <div className="chat-help-body">
           <div className="chat-help-intro">
             <span><LifeBuoy size={19} /></span>
             <div>
@@ -1361,6 +1397,7 @@ export function ChatPanel({
                 No tickets yet. Contact support above when you need a person.
               </p>
             )}
+          </div>
           </div>
         </section>
       ) : null}

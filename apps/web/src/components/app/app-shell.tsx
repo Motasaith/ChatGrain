@@ -2,11 +2,12 @@
 
 import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
+import { CommandPalette } from "@/components/app/command-palette";
 import { DashboardTabs } from "@/components/app/dashboard-tabs";
+import { SystemStatus } from "@/components/app/system-status";
 import { OperatorPresence } from "@/components/app/operator-presence";
 import { usePathname } from "next/navigation";
 import {
-  Activity,
   BarChart3,
   Bell,
   Bot,
@@ -20,7 +21,6 @@ import {
   LayoutDashboard,
   Plus,
   Plug,
-  Search,
   Shield,
   TicketCheck,
 } from "lucide-react";
@@ -171,11 +171,7 @@ export function AppShell({
 
       <div className="app-main">
         <header className="app-header">
-          <div className="app-search">
-            <Search size={16} />
-            <span>Search agents, conversations, and sources</span>
-            <kbd>⌘ K</kbd>
-          </div>
+          <CommandPalette />
           <div className="app-header-actions">
             <Link
               className="header-notification"
@@ -190,9 +186,7 @@ export function AppShell({
             <Link href="/dashboard/docs" aria-label="Documentation">
               <CircleHelp size={18} />
             </Link>
-            <Link href="/api/health" aria-label="System status">
-              <Activity size={18} />
-            </Link>
+            <SystemStatus />
             <Link className="header-build-button" href="/dashboard/agents/new">
               <Plus size={15} />
               New agent

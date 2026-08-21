@@ -60,6 +60,26 @@ type SplitterStream = {
   close(): void;
 };
 
+/**
+ * Loads the speech model before anything needs it.
+ *
+ * Kokoro takes around twelve seconds to come up from cold, and it used to do
+ * that on the first sentence of the first answer - so the opening turn of every
+ * call sat silent for twelve seconds while the caller wondered whether it had
+ * heard them. Called when a call connects, which buys the whole time the caller
+ * spends asking their first question.
+ *
+ * Fire and forget: the load is memoised, so a turn that arrives early simply
+ * awaits the same promise, and a failure here is not worth interrupting the
+ * call for - the turn will surface it.
+ */
+export function warmSpeech() {
+  if (!ttsLocal() || !ttsEnabled()) return;
+  void loadKokoro().catch((error) =>
+    logger.warn({ error }, "Speech model could not be preloaded"),
+  );
+}
+
 let kokoroPromise: Promise<KokoroModel> | undefined;
 
 let splitterFactory: (() => SplitterStream) | undefined;
