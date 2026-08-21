@@ -9,6 +9,61 @@ five interface and voice fixes. Each is listed with its file below.
 
 ---
 
+## Restore point
+
+Everything in this document is one commit, sitting directly on the `v0.3.0`
+tag. That is the whole reason it is worth writing down: there is no history to
+untangle, and no cherry-picking to work out later.
+
+| | |
+|---|---|
+| **This release** | `d409840` — 41 files, +13,261 / −217 |
+| **Its parent** | `80a4962`, which is exactly what `v0.3.0` points at |
+| **Branch** | `main` |
+| **Committed** | 2026-08-21 |
+
+A follow-up commit updates `.env.example` for the Cloudflare embedding defaults
+and the new crawl batch setting; it touches no source.
+
+### If this becomes the stable release
+
+Tag it, so it gets a permanent name the way `0.3.0` has one. A tag never moves,
+unlike a branch:
+
+```bash
+git tag -a v0.4.0 d409840 -m "0.4.0 - a worker that survives its own job"
+git push origin v0.4.0
+```
+
+Then fold this file into `VERSION.md` and `CHANGELOG.md` and delete it — it only
+exists to keep an untested build from being read as a released one.
+
+### If it does not
+
+The parent is the 0.3.0 release, so going back is one command. Look around
+without moving your branch:
+
+```bash
+git checkout v0.3.0        # or: git checkout 80a4962
+git switch -               # return to where you were
+```
+
+To undo it on `main` while keeping the history visible:
+
+```bash
+git revert d409840
+```
+
+The two database columns this release adds are additive and have defaults, so
+`0.3.0` runs unchanged against a database that has them. **Reverting the code
+does not require reverting the schema**, and the migration should be left in
+place.
+
+To back out one fault's fix rather than the whole release, each is listed with
+its file and a one-line revert in the sections above.
+
+---
+
 ## Why this is a separate file
 
 `VERSION.md` describes `0.3.0`, which is stable and has a tag to go back to.
@@ -442,15 +497,3 @@ that has them. Rolling back the code does not require rolling back the schema.
 This project's migration journal is empty and `db:migrate` would replay from
 `0000`; use `db:push`, or apply the SQL directly.
 
----
-
-## Getting back to 0.3.0
-
-`0.3.0` is tagged, so it is a permanent name for that commit:
-
-```bash
-git checkout v0.3.0        # look around without moving your branch
-git switch -               # return
-```
-
-See `VERSION.md` for what that release contains.
