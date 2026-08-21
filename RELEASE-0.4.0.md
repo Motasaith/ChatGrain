@@ -17,13 +17,15 @@ untangle, and no cherry-picking to work out later.
 
 | | |
 |---|---|
-| **This release** | `d409840` — 41 files, +13,261 / −217 |
+| **All source changes** | `d409840` — 41 files, +13,261 / −217 |
 | **Its parent** | `80a4962`, which is exactly what `v0.3.0` points at |
+| **Since then** | documentation and `.env.example` only — no source |
 | **Branch** | `main` |
 | **Committed** | 2026-08-21 |
 
-A follow-up commit updates `.env.example` for the Cloudflare embedding defaults
-and the new crawl batch setting; it touches no source.
+`d409840` is where the code last changed. Everything after it touches only
+documentation and configuration, so comparing against `v0.3.0` and comparing
+against `d409840` give the same answer at the source level.
 
 ### If this becomes the stable release
 
@@ -31,7 +33,8 @@ Tag it, so it gets a permanent name the way `0.3.0` has one. A tag never moves,
 unlike a branch:
 
 ```bash
-git tag -a v0.4.0 d409840 -m "0.4.0 - a worker that survives its own job"
+# Tags the branch tip, so the documentation commits are included too.
+git tag -a v0.4.0 -m "0.4.0 - a worker that survives its own job"
 git push origin v0.4.0
 ```
 
@@ -48,7 +51,8 @@ git checkout v0.3.0        # or: git checkout 80a4962
 git switch -               # return to where you were
 ```
 
-To undo it on `main` while keeping the history visible:
+To undo it on `main` while keeping the history visible — `d409840` is the only
+commit carrying source, so it is the only one that has to be reverted:
 
 ```bash
 git revert d409840
