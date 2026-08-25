@@ -1,5 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAgent } from "@/lib/agents/access";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources } from "@/lib/db/schema";
@@ -48,6 +49,43 @@ export async function POST(_: Request, context: Context) {
       return tx.insert(crawlJobs).values({ sourceId }).returning();
     });
     return NextResponse.json({ data: job, requestId }, { status: 202 });
+  } catch (error) {
+    return errorResponse(error, requestId);
+  }
+}
+
+/**
+ * How often this source re-crawls itself, in hours. Null means never.
+ *
+ * The column and the scheduler that reads it have both existed since 0.2, but
+ * nothing in the interface ever set it: the value was fixed at creation and
+ * could not be changed afterwards, which made a weekly default a permanent
+ * one. `nextSyncAt` is recomputed here rather than left alone, because the
+ * scheduler reads that and not the interval - without it, switching from
+ * monthly to daily would still wait out the month.
+ */
+const settingsSchema = z.object({
+  refreshIntervalHours: z.number().int().min(1).max(8_760).nullable(),
+});
+
+export async function PATCH(request: Request, context: Context) {
+  const requestId = crypto.randomUUID();
+  try {
+    const { agentId, sourceId } = await context.params;
+    await requireSource(agentId, sourceId);
+    const input = settingsSchema.parse(await request.json());
+    const [updated] = await db
+      .update(sources)
+      .set({
+        refreshIntervalHours: input.refreshIntervalHours,
+        nextSyncAt: input.refreshIntervalHours
+          ? new Date(Date.now() + input.refreshIntervalHours * 60 * 60 * 1000)
+          : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(sources.id, sourceId))
+      .returning();
+    return NextResponse.json({ data: updated, requestId });
   } catch (error) {
     return errorResponse(error, requestId);
   }

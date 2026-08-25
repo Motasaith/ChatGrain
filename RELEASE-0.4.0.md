@@ -3,8 +3,9 @@
 **Version:** `0.4.0`
 **Status:** **Not a stable release.** Tested locally, on one site, on one
 machine. Not tested on the VPS. Not tested across multiple sites.
-**Covers:** the worker rewrite (PLAN.md §11), four answer-quality fixes, and
-five interface and voice fixes. Each is listed with its file below.
+**Covers:** the worker rewrite (PLAN.md §11), four answer-quality fixes, five
+interface and voice fixes, the page inventory, and two crawl-pace fixes. Each
+is listed with its file below.
 **Last verified:** 2026-08-21
 
 ---
@@ -410,6 +411,243 @@ which is not the same as seeing them render. A full voice call has not been
 placed end to end since the change.
 ---
 
+## The page inventory (25 August)
+
+A source now keeps a permanent list of every URL it has ever produced, the
+operator can act on it per page, and a re-crawl resumes from it instead of
+starting over. Four changes that only work together, so they are described as
+one.
+
+### 10. The page list is no longer deleted every run
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/db/schema.ts` — `crawlPages`; `apps/web/src/lib/crawl/process-job.ts` |
+| **Migration** | `apps/web/drizzle/0022_page_inventory.sql` |
+| **Revert** | Restore the `crawl_pages_job_url_unique` index and the `DELETE` at the top of `processCrawlJob`. The added columns are additive and can stay. |
+
+`crawl_pages` was keyed by job and wiped at the start of every crawl:
+
+```js
+await db.delete(crawlPages).where(and(eq(crawlPages.sourceId, sourceId), ne(crawlPages.jobId, jobId)));
+```
+
+The reasoning was that only the latest run is useful and keeping every run of a
+7,000-page site would grow without bound. The second half was right; the first
+was not. It is why you could not open a source a month later and see what it
+holds.
+
+It is now keyed by `(sourceId, url)` — one row per URL, updated in place. That
+is a **tighter** bound than before, not a looser one: the table is capped by the
+size of the site rather than the size of the site times the number of crawls.
+
+`jobId` became nullable with `ON DELETE SET NULL`, because an inventory that
+outlives its jobs must not be deleted along with them.
+
+### 11. Pages can be included, excluded, or removed
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/app/api/agents/[agentId]/sources/[sourceId]/pages/route.ts` *(new)*; `apps/web/src/lib/crawl/crawler.ts` |
+| **Revert** | Delete the route and drop `blockedUrls` from `CrawlOptions`. |
+
+`crawl_pages.selected` is the operator's decision, and the crawl **never writes
+to it** — the upsert deliberately omits it from the update list, so an exclusion
+survives every future run. That is the difference between this and a path
+pattern: patterns are right for "every `/tag/` archive", this is right for the
+one page that keeps coming back wrong.
+
+Excluding is not deleting. The row stays and stays readable, because it is a
+decision the operator may want to undo. Delete is separate, removes the document
+and its chunks as well, and does not stop the page being found again — the two
+mean different things and the endpoint keeps them apart.
+
+### 12. A restart no longer re-fetches what it already fetched
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/crawler.ts` — `buildCrawlQueue`, `seedUrls`, `skipUrls`, `blockedUrls` |
+| **Test** | `apps/web/src/lib/crawl/inventory.test.ts` |
+| **Revert** | Remove the three options from `CrawlOptions` and inline the original queue construction. |
+
+0.4.0 already resumed embeddings. It did not resume fetching: `alreadyThisRun`
+is checked inside the embedding loop, which the crawl only reaches after
+re-fetching the whole site. A crawl killed at page 9,000 of 10,000 still paid
+for 9,000 requests again.
+
+The saved inventory is last run's frontier, so it is now fed back as `seedUrls`
+and the queue starts from it. URLs an earlier attempt of the same job already
+finished arrive as `skipUrls` and are never requested. Rows from *previous* runs
+are deliberately not skipped — their content may have changed since.
+
+Queue construction moved into `buildCrawlQueue`, a pure function, because this
+is where resume and exclusion actually happen and both should be provable
+without a network. Extracting it immediately exposed a real bug: the first
+version filtered duplicates out of the queue array but only added skipped and
+blocked URLs to the `queued` set *afterwards*, so a seed that was also skipped
+stayed in the array and got fetched anyway. There is a regression test for it.
+
+### 13. The recrawl schedule is finally reachable
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/app/api/agents/[agentId]/sources/[sourceId]/route.ts` — `PATCH`; `apps/web/src/components/app/source-pages.tsx` |
+| **Revert** | Remove the `PATCH` handler and the dropdown. |
+
+`sources.refreshIntervalHours` and the scheduler that reads it have existed
+since 0.2, but **nothing in the interface ever set it**. The value was fixed at
+creation, which made a weekly default a permanent one. There is now a
+Never / Daily / Weekly / Monthly control.
+
+`nextSyncAt` is recomputed when it changes, because the scheduler reads that and
+not the interval — without it, switching from monthly to daily would still wait
+out the month.
+
+### The interface
+
+`apps/web/src/components/app/source-pages.tsx` *(new)*, opened from a list icon
+on any website source. Filter by URL or title, sort by crawl order, URL, title,
+first seen or last seen, filter by outcome with live counts, and page through
+50 at a time. Filtering, sorting and counting all happen in the database — "show
+me the twenty that failed" should not transfer the other nine thousand.
+
+### Verification
+
+387 tests passing, 1 skipped. Typecheck and lint clean.
+
+Proven end to end against the real database: two consecutive crawls of a live
+site with an exclusion applied between them.
+
+```
+run 1: 7 pages in the inventory
+excluded 2
+run 2: 14 pages in the inventory
+  every page from run 1 still listed ...... PASS
+  exclusions survived the re-crawl ........ PASS
+  excluded URLs were not re-fetched ....... PASS
+  firstSeenAt still means "first seen" .... PASS
+```
+
+Run 2 reaching 14 pages from a 6-page limit is the seeding working: run 1's
+inventory extended run 2's starting frontier.
+
+**Not verified:** the panel has not been opened in a browser. The API is
+exercised, the crawler behaviour is unit tested and the round trip is proven
+against live data, but the React component itself has only been typechecked.
+
+### Applying the migration
+
+`0022_page_inventory.sql` must be run with `psql` rather than through
+`db:push`. Push generates the schema changes but not the de-duplication, and
+creating the new unique index on a database that still holds one row per URL
+*per job* will fail. On this machine's database the dedupe removed 0 rows; a
+database with more crawl history will have some.
+---
+
+## Crawl pace and traps (25 August)
+
+Both faults were found while diagnosing a single crawl: 17,447 URLs, still
+running after 48 hours, at roughly 3.6 pages a minute. It had been attributed to
+memory for a week. It was neither of the things anyone guessed.
+
+### 14. The crawler slowed down and never sped back up
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/crawler.ts` — `recoveredGap`, `narrowRequestGap`, `requestGapFloorMs` |
+| **Test** | `apps/web/src/lib/crawl/backpressure.test.ts` |
+| **Revert** | Delete `narrowRequestGap` and its call site in `fetchHtml`. |
+
+The gap between requests to one host doubles whenever the site pushes back with
+a 429 or 503, up to a thirty-second ceiling. The comment above it stated the
+fault plainly, and had done for months:
+
+```js
+/** Widen the gap when a host pushes back; it never narrows within a crawl. */
+```
+
+So one bad minute early in a run set the pace for everything after it. Six
+pushbacks in the first hundred pages and the crawl spent the remaining
+seventeen thousand at two requests per minute. `CRAWL_CONCURRENCY` cannot
+rescue it either: the turnstile is a single module-level `nextRequestAt`, so six
+workers waiting on one sixteen-second gap go exactly as fast as one.
+
+A clean fetch now pays the backoff down. Twenty consecutive successes halve the
+gap, repeatedly, until it reaches the floor.
+
+The asymmetry is deliberate — instant to widen, twenty successes to halve.
+Backing off fast and returning slowly is the safe direction to be wrong in:
+guessing high costs time, guessing low costs the crawl.
+
+The floor is the larger of our own one-second politeness minimum and whatever
+`Crawl-delay` the site published in `robots.txt`. Recovery stops there. A site's
+declared delay is not something to back away from because it has been quiet for
+a while, and there is a test asserting exactly that.
+
+### 15. Cloudflare's decoy pages were being indexed as content
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/crawler.ts` — `INFRASTRUCTURE_PATHS`, `isInfrastructureUrl`, `isInfrastructureHref` |
+| **Test** | `apps/web/src/lib/crawl/infrastructure.test.ts` |
+| **Revert** | Remove the three `isInfrastructureUrl` guards and the constant. |
+
+Observed in the live crawl, in the "now fetching" list:
+
+```
+https://pic-microcontroller.com/cdn-cgi/content?id=ivNwqxMreiPVh2sLULd7Mdpb...
+"Unraveling the Mysteries of Meiosis Research"
+```
+
+`/cdn-cgi/` is Cloudflare's own namespace, and its content endpoint **mints a
+fresh random id on every render**. Two consequences, both bad:
+
+- Every response is a URL never seen before, so it always passes the
+  "have I queued this already" check. It is an unlimited queue feeder, and a
+  crawl of any Cloudflare-fronted site can never converge.
+- The text it serves is decoy content written to catch bots. It was being
+  indexed as real pages, which is how a knowledge base about PIC
+  microcontrollers acquired an article on meiosis.
+
+The crawler now refuses `/cdn-cgi/`, along with the WordPress machinery that is
+linked from ordinary pages and is never prose: `/wp-json/`, `/wp-admin/`,
+`/wp-login.php`, `/xmlrpc.php`.
+
+Checked in three places, because a URL can arrive from three directions: the
+fetch guard, the link-following guard, and `buildCrawlQueue` — the last of which
+matters because an inventory saved before this rule existed still holds these
+URLs, and without filtering the seeds the trap would survive its own fix.
+
+Matched on the path only, so a page that mentions one of these strings in a
+query parameter is unaffected, and there is a test for that. Over-blocking is
+the worse failure here: a silently dropped real page leaves nothing in the
+dashboard to explain itself.
+
+### Verification
+
+401 tests passing, 1 skipped. Typecheck and lint clean.
+
+Run against the live site that produced the fault:
+
+```
+outcomes: {"indexed":12}
+/cdn-cgi/ URLs recorded : 0
+wp machinery recorded   : 0
+
+sample of what it did index:
+   PIC Microcontroller Projects, Tutorials, PDFs & Tools Proteus
+   Wireless Home Appliance Controller Project
+   RFID Car immobiliser with PIC12629
+```
+
+Real PIC content, no decoys.
+
+**Not verified:** the recovery curve is proven as arithmetic, not observed on a
+site that is actively rate limiting. Whether twenty successes is the right
+number for a real host is a judgement, and the first long crawl after this
+lands is the thing that will say.
+---
+
 ## What was measured
 
 | | |
@@ -421,7 +659,7 @@ placed end to end since the change.
 | Full crawl of sudoscout.dev | 305 URLs, completed 100% |
 | "what does this company offers" | refused at 0.276 -> answered at 0.376 |
 | Cold text-to-speech, first audio | 12.7 s — now warmed when a call connects |
-| Tests | 379 passing, 1 skipped. Typecheck and lint clean. |
+| Tests | 401 passing, 1 skipped. Typecheck and lint clean. |
 
 The memory column is the one worth reading twice. A crawl that "always dies at
 92%" was diagnosed as a memory problem for a week. It was not. Peak was 588 MB,
@@ -454,7 +692,14 @@ Read this before trusting the build.
   something else was restarting it there. Check `pm2 describe` for the restart
   count and whether `max_memory_restart` is set.
 - **File jobs share the machinery but were not re-tested** after these changes.
-- **None of the interface fixes have been opened in a browser.** The widget
+- **The request-gap recovery curve is arithmetic, not observation.** It is
+  unit tested, but has not been watched against a host that is actively rate
+  limiting. Whether twenty clean fetches is the right number to buy a halving
+  is a judgement the first long crawl after this will settle.
+- **The page inventory panel has not been opened in a browser.** Its API is
+  exercised and the crawl round trip is proven against live data, but the
+  React component has only been typechecked.
+- **None of the earlier interface fixes have been opened in a browser.** The widget
   overflow rules, the help-center back button, the command palette and the
   status popover typecheck, lint and pass their tests, which is not the same as
   seeing them render.
@@ -488,7 +733,7 @@ npm run worker      # another; no watcher, no restarts
 
 ## Database change
 
-One migration, `0021_graceful_scalphunter.sql`:
+Two migrations. `0021_graceful_scalphunter.sql`:
 
 ```sql
 ALTER TABLE "crawl_jobs" ADD COLUMN "recoveries" integer DEFAULT 0 NOT NULL;
@@ -498,6 +743,11 @@ ALTER TABLE "crawl_jobs" ADD COLUMN "max_recoveries" integer DEFAULT 10 NOT NULL
 Both are additive with defaults, so `0.3.0` runs unchanged against a database
 that has them. Rolling back the code does not require rolling back the schema.
 
+And `0022_page_inventory.sql`, which re-keys `crawl_pages` from the job to the
+URL. **Run this one with psql, not `db:push`** - push generates the schema
+change but not the de-duplication it needs first, and creating the new unique
+index on a database still holding one row per URL per job will fail.
+
 This project's migration journal is empty and `db:migrate` would replay from
-`0000`; use `db:push`, or apply the SQL directly.
+`0000`; use `db:push` for 0021, and apply 0022's SQL directly.
 

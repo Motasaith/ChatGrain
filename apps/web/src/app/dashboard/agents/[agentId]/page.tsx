@@ -43,6 +43,7 @@ export default async function AgentPage({
       rootUrl: sources.rootUrl,
       status: sources.status,
       pageLimit: sources.pageLimit,
+      refreshIntervalHours: sources.refreshIntervalHours,
       errorMessage: sources.errorMessage,
       lastSyncedAt: sources.lastSyncedAt,
       documentCount: count(documents.id),

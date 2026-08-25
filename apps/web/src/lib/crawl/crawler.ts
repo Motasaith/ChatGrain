@@ -24,6 +24,26 @@ export type CrawlOptions = {
   includePaths?: string[];
   excludePaths?: string[];
   trustedInternal?: boolean;
+  /**
+   * URLs already known for this source, used to seed the queue.
+   *
+   * A crawl that has been interrupted otherwise has to rediscover the whole
+   * site by walking links from the root before it reaches the part it had not
+   * finished. The saved inventory is last run's frontier, so handing it back
+   * turns that walk into a starting position.
+   */
+  seedUrls?: string[];
+  /**
+   * URLs an earlier attempt of the same job already fetched. Not requested
+   * again, and not counted against the page limit, because they are already
+   * indexed.
+   */
+  skipUrls?: Set<string>;
+  /**
+   * URLs the operator has excluded. Never fetched, and never followed - a page
+   * turned off should not keep feeding the queue through its own links.
+   */
+  blockedUrls?: Set<string>;
   onProgress?: (progress: {
     discovered: number;
     processed: number;
@@ -128,6 +148,53 @@ const CIRCUIT_BREAKER_FAILURES = 20;
 const DEFAULT_MIN_REQUEST_GAP_MS = 1_000;
 
 /**
+ * Paths that belong to the software running a site, never to the site itself.
+ *
+ * /cdn-cgi/ is the one that forced this list. It is Cloudflare's own namespace,
+ * and its content endpoint mints a fresh random id on every render - so each
+ * response is a URL never seen before, carrying decoy text written to catch
+ * bots. A crawl of a Cloudflare-fronted site therefore finds an unlimited
+ * supply of unique pages that are not the site, indexes them as real content,
+ * and never converges. Observed on pic-microcontroller.com, where a knowledge
+ * base about PIC microcontrollers acquired an article on meiosis.
+ *
+ * The rest are the WordPress machinery: an API, an RPC endpoint and a login
+ * form. None of them is prose, and all of them are linked from ordinary pages.
+ *
+ * Matched on the path only, so a page that merely mentions one of these strings
+ * in a query parameter is unaffected.
+ */
+const INFRASTRUCTURE_PATHS = [
+  "/cdn-cgi/",
+  "/wp-json/",
+  "/wp-admin/",
+  "/wp-login.php",
+  "/xmlrpc.php",
+];
+
+/**
+ * Whether a URL is site infrastructure rather than site content.
+ *
+ * Separate from the operator's exclude patterns on purpose: those express a
+ * judgement about one site, and this is true of every site.
+ */
+export function isInfrastructureUrl(url: URL) {
+  const path = url.pathname.toLowerCase();
+  return INFRASTRUCTURE_PATHS.some((segment) => path.includes(segment));
+}
+
+/** The same test for a URL that has not been parsed yet. */
+export function isInfrastructureHref(href: string) {
+  try {
+    return isInfrastructureUrl(new URL(href));
+  } catch {
+    // Unparseable is not infrastructure; it fails later, where the error is
+    // reported against the page rather than silently dropped here.
+    return false;
+  }
+}
+
+/**
  * Shared pause across the whole batch.
  *
  * Every page in a batch is fetched concurrently, so one worker backing off
@@ -177,14 +244,70 @@ async function waitOutBackpressure() {
  */
 let nextRequestAt = 0;
 let requestGapMs = DEFAULT_MIN_REQUEST_GAP_MS;
+/**
+ * The politeness floor for this crawl. Recovery stops here rather than at zero,
+ * because it is the larger of our own floor and whatever `Crawl-delay` the site
+ * published - and a site's declared delay is not something to back away from
+ * just because it has been quiet for a while.
+ */
+let requestGapFloorMs = DEFAULT_MIN_REQUEST_GAP_MS;
+/** Consecutive fetches since the last time the host pushed back. */
+let cleanRequests = 0;
+
+/**
+ * How many uninterrupted successes buy one halving of the gap.
+ *
+ * Deliberately asymmetric with widening, which happens on a single 429. Backing
+ * off fast and returning slowly is the safe direction to be wrong in: guessing
+ * high costs time, guessing low costs the crawl.
+ */
+export const GAP_RECOVERY_SUCCESSES = 20;
+
+/**
+ * The gap and the clean-run counter after one more successful fetch.
+ *
+ * Pure, so the recovery curve can be pinned down without a network or a clock.
+ * Halving rather than stepping back to the floor: the host objected once, and
+ * returning immediately to the pace that caused it would just earn another 429.
+ */
+export function recoveredGap(
+  current: number,
+  floor: number,
+  cleanRun: number,
+): { gap: number; cleanRun: number } {
+  if (current <= floor) return { gap: current, cleanRun: 0 };
+  const next = cleanRun + 1;
+  if (next < GAP_RECOVERY_SUCCESSES) return { gap: current, cleanRun: next };
+  return { gap: Math.max(floor, Math.round(current / 2)), cleanRun: 0 };
+}
 
 export function setRequestGap(ms: number) {
   requestGapMs = Math.max(0, ms);
+  requestGapFloorMs = requestGapMs;
+  cleanRequests = 0;
 }
 
-/** Widen the gap when a host pushes back; it never narrows within a crawl. */
+/** Widen the gap when a host pushes back. */
 function widenRequestGap() {
   requestGapMs = Math.min(requestGapMs * 2, 30_000);
+  cleanRequests = 0;
+}
+
+/**
+ * Narrow the gap back toward the floor after a sustained clean run.
+ *
+ * This used to not exist, and the comment where it should have been said so:
+ * "it never narrows within a crawl". The effect was that one bad minute early
+ * on set the pace for everything after it. A crawl that met a brief rate limit
+ * in its first hundred pages doubled its way to the thirty-second ceiling and
+ * stayed there - two requests a minute - for the rest of the run. A 17,000-URL
+ * site was observed still crawling after 48 hours for exactly this reason,
+ * diagnosed for a week as a memory problem it was not.
+ */
+function narrowRequestGap() {
+  const next = recoveredGap(requestGapMs, requestGapFloorMs, cleanRequests);
+  requestGapMs = next.gap;
+  cleanRequests = next.cleanRun;
 }
 
 async function takeRequestSlot() {
@@ -203,6 +326,8 @@ export function resetBackpressure() {
   backpressureUntil = 0;
   nextRequestAt = 0;
   requestGapMs = DEFAULT_MIN_REQUEST_GAP_MS;
+  requestGapFloorMs = DEFAULT_MIN_REQUEST_GAP_MS;
+  cleanRequests = 0;
 }
 
 function crawlConcurrency() {
@@ -392,6 +517,9 @@ async function fetchHtml(
           415,
         );
       }
+      // A clean fetch is the evidence that the host is no longer objecting, so
+      // it is what pays down the backoff.
+      narrowRequestGap();
       return { html: await response.text(), finalUrl };
     } catch (error) {
       lastError = error;
@@ -405,12 +533,57 @@ async function fetchHtml(
   throw lastError;
 }
 
+/**
+ * The starting queue, and the set of URLs that must never enter it.
+ *
+ * Pure, and separate from the crawl, because this is where resume and
+ * exclusion actually happen and both need to be provable without a network.
+ *
+ * Order is root, then sitemap, then the saved inventory: a crawl with no
+ * inventory behaves exactly as it always did, and seeds only ever add reach
+ * rather than displacing the site's own structure.
+ *
+ * Skipped and blocked URLs are put into `queued` before anything else is
+ * considered. That set does double duty - it is also what stops a URL being
+ * enqueued twice - so seeding it first means an excluded URL is refused
+ * whether it arrives from the sitemap, from the inventory, or from a link on
+ * a page crawled later.
+ */
+export function buildCrawlQueue({
+  rootHref,
+  sitemapUrls = [],
+  seedUrls = [],
+  skipUrls = new Set<string>(),
+  blockedUrls = new Set<string>(),
+}: {
+  rootHref: string;
+  sitemapUrls?: string[];
+  seedUrls?: string[];
+  skipUrls?: Set<string>;
+  blockedUrls?: Set<string>;
+}) {
+  const queue: string[] = [];
+  const queued = new Set<string>([...skipUrls, ...blockedUrls]);
+  for (const href of [rootHref, ...sitemapUrls, ...seedUrls]) {
+    if (queued.has(href)) continue;
+    // Infrastructure can reach the queue from a sitemap or from an inventory
+    // saved before this rule existed, not only from a link on a page.
+    if (href !== rootHref && isInfrastructureHref(href)) continue;
+    queued.add(href);
+    queue.push(href);
+  }
+  return { queue, queued };
+}
+
 export async function crawlWebsite({
   url: input,
   pageLimit,
   includePaths = [],
   excludePaths = [],
   trustedInternal = false,
+  seedUrls = [],
+  skipUrls = new Set<string>(),
+  blockedUrls = new Set<string>(),
   onProgress,
   onPage,
 }: CrawlOptions): Promise<CrawlResult> {
@@ -443,11 +616,13 @@ export async function crawlWebsite({
     fetchPublic,
     limit * 8,
   );
-  const queue = [
-    root.href,
-    ...sitemapUrls.filter((item) => item !== root.href),
-  ];
-  const queued = new Set(queue);
+  const { queue, queued } = buildCrawlQueue({
+    rootHref: root.href,
+    sitemapUrls,
+    seedUrls,
+    skipUrls,
+    blockedUrls,
+  });
   const pages: ExtractedPage[] = [];
   const failures: Array<{ url: string; reason: string }> = [];
   const contentHashes = new Set<string>();
@@ -470,6 +645,8 @@ export async function crawlWebsite({
           const requestedUrl = new URL(value);
           if (
             requestedUrl.origin !== root.origin ||
+            blockedUrls.has(requestedUrl.href) ||
+            isInfrastructureUrl(requestedUrl) ||
             !allowedByRobots(requestedUrl) ||
             !matchesPath(requestedUrl, includePaths, excludePaths)
           ) {
@@ -586,6 +763,8 @@ export async function crawlWebsite({
           if (
             next.origin === root.origin &&
             !queued.has(next.href) &&
+            !blockedUrls.has(next.href) &&
+            !isInfrastructureUrl(next) &&
             allowedByRobots(next) &&
             matchesPath(next, includePaths, excludePaths)
           ) {

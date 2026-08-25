@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { crawlWebsite, type CrawlPageEvent } from "@/lib/crawl/crawler";
 import { db } from "@/lib/db/client";
 import {
@@ -82,22 +82,58 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     .set({ status: "training", updatedAt: new Date() })
     .where(eq(agents.id, record.agent.id));
 
-  // Only the current run is useful, and retaining every run of a large site
-  // would grow without bound.
-  try {
-    await db
-      .delete(crawlPages)
-      .where(and(eq(crawlPages.sourceId, sourceId), ne(crawlPages.jobId, jobId)));
-    // Rows from this job's own earlier attempts are deliberately kept: with
-    // resume they describe pages that are still indexed, and the unique index
-    // stops a re-crawled URL being counted twice.
-  } catch (error) {
-    logger.warn({ error, sourceId }, "Previous crawl page events not cleared");
-  }
+  // The page list is no longer cleared here. It is an inventory of the URLs
+  // this source holds, keyed by URL, and a crawl updates it in place - so an
+  // operator can open a source a month later and see what is in it, and a
+  // decision to exclude a page survives the next run. The old code deleted
+  // every row from previous jobs, which is why neither was possible.
   await db
     .update(crawlJobs)
     .set({ phase: "crawling", updatedAt: new Date() })
     .where(eq(crawlJobs.id, jobId));
+
+  // The inventory as it stood before this run, which is three things at once:
+  // the operator's exclusions, the URLs this run has already finished (so a
+  // resumed job does not fetch them twice), and last run's discovered frontier
+  // to seed the queue with.
+  const inventory = await db
+    .select({
+      url: crawlPages.url,
+      selected: crawlPages.selected,
+      jobId: crawlPages.jobId,
+      outcome: crawlPages.outcome,
+    })
+    .from(crawlPages)
+    .where(eq(crawlPages.sourceId, sourceId));
+  const blockedUrls = new Set(
+    inventory.filter((row) => !row.selected).map((row) => row.url),
+  );
+  // Fetched by an earlier attempt of *this* job. Skipping these is what makes a
+  // restart resume rather than begin again; rows from previous runs are not
+  // included, because their content may have changed since.
+  const fetchedThisRun = new Set(
+    inventory
+      .filter((row) => row.jobId === jobId && row.outcome !== "failed")
+      .map((row) => row.url),
+  );
+  // Everything known, minus what the operator excluded. Feeding these back in
+  // means a resumed crawl does not have to rediscover the site by following
+  // links from the root all over again.
+  const seedUrls = inventory
+    .filter((row) => row.selected && !fetchedThisRun.has(row.url))
+    .map((row) => row.url);
+  if (fetchedThisRun.size || blockedUrls.size) {
+    logger.info(
+      {
+        jobId,
+        sourceId,
+        alreadyFetched: fetchedThisRun.size,
+        excluded: blockedUrls.size,
+        seeded: seedUrls.length,
+      },
+      "Resuming crawl from the saved page inventory",
+    );
+  }
 
   // Buffered so a 7,000-page crawl does not pay a round trip per URL.
   let pageEventBuffer: Array<typeof crawlPages.$inferInsert> = [];
@@ -109,19 +145,26 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     const batch = pageEventBuffer;
     pageEventBuffer = [];
     try {
-      // Upsert: one row per URL per job. A retry re-recording a URL replaces
-      // its earlier row rather than adding a second one to be summed.
+      // Upsert on the URL. One row per URL per source, so a re-crawl updates
+      // the row it already has rather than appending a second one to be summed.
+      //
+      // `selected` is deliberately absent from the update list: it belongs to
+      // the operator, not to the crawl, and a re-crawl must not undo an
+      // exclusion. `firstSeenAt` is likewise left alone so it keeps meaning
+      // "first seen", not "seen most recently".
       await db
         .insert(crawlPages)
         .values(batch)
         .onConflictDoUpdate({
-          target: [crawlPages.jobId, crawlPages.url],
+          target: [crawlPages.sourceId, crawlPages.url],
           set: {
+            jobId: sql`excluded.job_id`,
             sequence: sql`excluded.sequence`,
             outcome: sql`excluded.outcome`,
             title: sql`excluded.title`,
             reason: sql`excluded.reason`,
             chunkCount: sql`excluded.chunk_count`,
+            lastSeenAt: sql`excluded.last_seen_at`,
           },
         });
     } catch (error) {
@@ -145,6 +188,7 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
       outcome: event.outcome,
       title: event.title?.slice(0, 300) ?? null,
       reason: event.reason?.slice(0, 500) ?? null,
+      lastSeenAt: new Date(),
     });
   };
 
@@ -158,6 +202,9 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
       process.env.NODE_ENV !== "production" &&
       record.source.metadata?.managedBy === "docent-homepage" &&
       record.source.metadata?.trustedInternal === true,
+    seedUrls,
+    skipUrls: fetchedThisRun,
+    blockedUrls,
     onPage: recordPage,
     onProgress: async ({ discovered, processed }) => {
       // Throwing here unwinds out of the crawler, which is the earliest a stop

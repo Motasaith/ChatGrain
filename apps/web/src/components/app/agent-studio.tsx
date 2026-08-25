@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { SourcePages } from "@/components/app/source-pages";
 import {
   AlertTriangle,
   BookOpen,
@@ -15,6 +16,7 @@ import {
   ExternalLink,
   FileText,
   Globe2,
+  ListTree,
   LoaderCircle,
   MessageSquare,
   Palette,
@@ -71,6 +73,8 @@ type Source = {
   rootUrl: string | null;
   status: string;
   pageLimit: number;
+  /** Hours between automatic re-crawls; null means never. */
+  refreshIntervalHours: number | null;
   errorMessage: string | null;
   lastSyncedAt: Date | string | null;
   documentCount: number;
@@ -214,6 +218,8 @@ export function AgentStudio({
   );
   const [saving, setSaving] = useState(false);
   const [removingSourceId, setRemovingSourceId] = useState("");
+  /** The source whose page inventory is open, or null. */
+  const [pagesFor, setPagesFor] = useState<Source | null>(null);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -1285,6 +1291,16 @@ export function AgentStudio({
                   <span className="source-actions">
                     {source.rootUrl ? (
                       <button
+                        aria-label={`View the pages in ${source.name}`}
+                        onClick={() => setPagesFor(source)}
+                        title="See every page this source holds, and choose which ones to crawl"
+                        type="button"
+                      >
+                        <ListTree size={14} />
+                      </button>
+                    ) : null}
+                    {source.rootUrl ? (
+                      <button
                         aria-label={`Recrawl ${source.name} and retrain`}
                         onClick={() => syncSource(source.id)}
                         title="Recrawl this website and retrain the agent on anything that changed"
@@ -1622,6 +1638,13 @@ export function AgentStudio({
           </aside>
         </div>
       )}
+      {pagesFor ? (
+        <SourcePages
+          agentId={agent.id}
+          onClose={() => setPagesFor(null)}
+          source={pagesFor}
+        />
+      ) : null}
     </>
   );
 }

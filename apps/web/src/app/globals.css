@@ -11080,3 +11080,334 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   color: var(--muted);
   font-size: 11px;
 }
+
+/* Source page inventory ---------------------------------------------------
+   The list behind "8,797 pages indexed": what was fetched, what was skipped
+   and why, and which URLs the operator wants left alone next time. */
+
+.source-pages-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 4vh 16px;
+  background: rgb(16 35 28 / 34%);
+  backdrop-filter: blur(2px);
+}
+
+.source-pages {
+  display: grid;
+  width: min(960px, 100%);
+  height: min(760px, 92vh);
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 30px 80px -30px rgb(16 35 28 / 55%);
+}
+
+.source-pages > header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 16px;
+}
+
+.source-pages > header > div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.source-pages > header b {
+  overflow: hidden;
+  font-size: 14.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-pages > header small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.source-pages > header > button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  background: #fff;
+  cursor: pointer;
+}
+
+.source-pages-schedule {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.source-pages-controls {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid var(--line);
+  padding: 11px 16px;
+}
+
+.source-pages-search {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: #fff;
+}
+
+.source-pages-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: none;
+  padding: 8px 0;
+  color: var(--ink);
+  background: none;
+  font: inherit;
+  font-size: 13px;
+}
+
+.source-pages-controls select,
+.source-pages-schedule select {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 7px 9px;
+  color: var(--ink);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.source-pages-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 16px;
+}
+
+.source-pages-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 11px;
+  color: var(--ink);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.source-pages-tabs > button.is-active {
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+
+.source-pages-tabs > button i {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.source-pages-bulk {
+  display: inline-flex;
+  margin-left: auto;
+  gap: 6px;
+}
+
+.source-pages-bulk > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.source-pages-bulk > button:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.source-pages-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.source-pages-list > article {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 16px;
+}
+
+.source-pages-list > article:hover {
+  background: var(--paper);
+}
+
+/* An excluded page stays visible and stays readable - it is a decision the
+   operator may want to undo, not a deletion. */
+.source-pages-list > article.is-excluded {
+  opacity: 0.55;
+}
+
+.source-pages-list > article > div {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.source-pages-list b {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-pages-list a {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-pages-list a:hover {
+  color: var(--green);
+  text-decoration: underline;
+}
+
+.source-pages-list em {
+  color: #b4762a;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.source-pages-list > article > small {
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.page-outcome {
+  border-radius: 999px;
+  padding: 3px 9px;
+  color: var(--muted);
+  background: var(--paper);
+  font-size: 11px;
+  font-style: normal;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.page-outcome.is-indexed { color: #17603f; background: #e4f4ea; }
+.page-outcome.is-unchanged { color: #4a5a52; background: #eef2ef; }
+.page-outcome.is-duplicate { color: #715b1f; background: #f6efd8; }
+.page-outcome.is-redirected { color: #4b3d8f; background: #ecebfa; }
+.page-outcome.is-thin { color: #8a5a20; background: #f8eddd; }
+.page-outcome.is-failed,
+.page-outcome.is-blocked { color: #92312a; background: #fbe6e3; }
+
+.source-pages-row-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.source-pages-row-actions > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+}
+
+.source-pages-row-actions > button:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.source-pages-row-actions > .source-pages-delete:hover:not(:disabled) {
+  border-color: #e7b7b1;
+  color: #92312a;
+  background: #fbe6e3;
+}
+
+.source-pages-empty {
+  padding: 40px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.source-pages > footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding: 11px 16px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.source-pages > footer button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  cursor: pointer;
+}
+
+.source-pages > footer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}

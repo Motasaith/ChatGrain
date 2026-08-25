@@ -687,20 +687,33 @@ export const crawlJobs = pgTable(
 );
 
 /**
- * One row per URL touched by a crawl, so an operator can see exactly which
- * pages were indexed, reused, or failed, and why.
+ * The page inventory: one row per URL this source has ever produced.
  *
- * Rows are replaced on each run of a source rather than accumulated: keeping
- * the history for a 7,000-page site would grow without bound while only the
- * latest run is ever useful.
+ * Keyed by URL rather than by run. It used to be keyed by job and wiped at the
+ * start of every crawl, on the reasoning that only the latest run is useful and
+ * keeping every run of a 7,000-page site would grow without bound. The first
+ * half of that was wrong. An operator wants to open a source a month later and
+ * see what it actually holds, decide that forty tag archives are not worth
+ * indexing, and have that decision survive the next crawl. None of that is
+ * possible if the list is deleted and rebuilt each time.
+ *
+ * The bound still holds, and more tightly than before: one row per URL means
+ * the table is capped by the size of the site, not by the size of the site
+ * times the number of times it has been crawled.
  */
 export const crawlPages = pgTable(
   "crawl_pages",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    jobId: uuid("job_id")
-      .notNull()
-      .references(() => crawlJobs.id, { onDelete: "cascade" }),
+    /**
+     * The run that last touched this URL, for "what did the current crawl do
+     * with this page". Nullable and cleared rather than cascaded on purpose:
+     * the inventory outlives any individual job, so pruning old jobs must not
+     * take the page list with it.
+     */
+    jobId: uuid("job_id").references(() => crawlJobs.id, {
+      onDelete: "set null",
+    }),
     sourceId: uuid("source_id")
       .notNull()
       .references(() => sources.id, { onDelete: "cascade" }),
@@ -711,30 +724,47 @@ export const crawlPages = pgTable(
      * "most recent pages" view would be arbitrary without this.
      */
     sequence: integer("sequence").default(0).notNull(),
-    /** indexed | unchanged | duplicate | thin | failed */
+    /** indexed | unchanged | duplicate | thin | failed | blocked | redirected */
     outcome: text("outcome").notNull(),
     title: text("title"),
     reason: text("reason"),
     chunkCount: integer("chunk_count").default(0).notNull(),
+    /**
+     * The operator's decision about this URL, which the crawler honours and a
+     * re-crawl does not reset. Excluding a page here is the per-URL counterpart
+     * to the path patterns on the source: patterns are the right tool for
+     * "every /tag/ archive", this is the right tool for the one page that keeps
+     * coming back wrong.
+     */
+    selected: boolean("selected").default(true).notNull(),
+    /** First run that ever saw this URL. Never updated after insert. */
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    /** Most recent run that saw it, so a vanished page is visible as stale. */
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
   (table) => [
     index("crawl_pages_job_sequence_idx").on(table.jobId, table.sequence),
-    index("crawl_pages_job_outcome_idx").on(table.jobId, table.outcome),
+    index("crawl_pages_source_sequence_idx").on(table.sourceId, table.sequence),
+    index("crawl_pages_source_outcome_idx").on(table.sourceId, table.outcome),
     index("crawl_pages_source_idx").on(table.sourceId),
     /**
-     * One row per URL per job, enforced rather than hoped for.
+     * One row per URL per source, enforced rather than hoped for.
      *
-     * A retried job reuses its row, so a second attempt used to append a whole
-     * second set of events and the dashboard summed them: a reporter watched
-     * 3,400 indexed pages become 6,800, then keep climbing, while the progress
-     * bar restarted at zero. Both numbers were honest readings of a broken
-     * model. Writing through this constraint makes re-recording a URL replace
-     * its earlier row instead of adding to it.
+     * This was (jobId, url), which fixed the fault it was written for - a
+     * retried job appended a second set of events and the dashboard summed
+     * them, so a reporter watched 3,400 indexed pages become 6,800 and keep
+     * climbing. Widening it to the source fixes the same class of problem
+     * across runs rather than within one, and is what lets a crawl upsert into
+     * a list that already exists instead of replacing it.
      */
-    uniqueIndex("crawl_pages_job_url_unique").on(table.jobId, table.url),
+    uniqueIndex("crawl_pages_source_url_unique").on(table.sourceId, table.url),
   ],
 );
 
