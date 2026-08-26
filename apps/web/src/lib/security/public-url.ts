@@ -1,3 +1,4 @@
+import { CRAWLER_USER_AGENT } from "@/lib/crawl/user-agent";
 import { lookup } from "node:dns/promises";
 import { normalizeUrlInput } from "./normalize-url";
 import { isIP } from "node:net";
@@ -99,7 +100,7 @@ async function fetchWithRedirects(
   } = init;
   const url = await validatePublicUrl(String(input), { allowPrivate });
   const headers = new Headers({
-    "user-agent": "ChatGrainBot/0.2 (+https://chatgrain.com/bot)",
+    "user-agent": CRAWLER_USER_AGENT,
     accept:
       "text/html,application/xhtml+xml,application/xml,text/plain;q=0.9,*/*;q=0.1",
   });

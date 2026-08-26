@@ -75,6 +75,10 @@ type Source = {
   pageLimit: number;
   /** Hours between automatic re-crawls; null means never. */
   refreshIntervalHours: number | null;
+  /** A sitemap the operator supplied, tried before anything is guessed. */
+  sitemapUrl: string | null;
+  renderJs: string;
+  metadata: Record<string, unknown> | null;
   errorMessage: string | null;
   lastSyncedAt: Date | string | null;
   documentCount: number;
@@ -84,7 +88,14 @@ type Job = {
   id: string;
   sourceId: string;
   status: string;
-  phase: "queued" | "crawling" | "parsing" | "embedding" | "indexing" | "done";
+  phase:
+    | "queued"
+    | "discovering"
+    | "crawling"
+    | "parsing"
+    | "embedding"
+    | "indexing"
+    | "done";
   progress: number;
   pagesDiscovered: number;
   pagesProcessed: number;
@@ -155,6 +166,7 @@ type JobDetail = {
 /** What each phase is actually doing, so a stall points somewhere specific. */
 const PHASE_LABEL: Record<Job["phase"], string> = {
   queued: "Waiting for the worker",
+  discovering: "Finding pages",
   crawling: "Fetching pages",
   parsing: "Reading the file",
   embedding: "Generating embeddings",
@@ -207,6 +219,29 @@ export function AgentStudio({
   const [agent, setAgent] = useState(initialAgent);
   const [sources, setSources] = useState(initialSources);
   const [job, setJob] = useState(initialJob);
+  /**
+   * Adopts a different job when the server reports one.
+   *
+   * `useState(initialJob)` reads its argument on the first render and ignores
+   * it ever after, so `router.refresh()` - which this component calls from
+   * seven places - re-ran the server query and then threw the result away.
+   * After approving a review that was the whole bug: the server knew the job
+   * had moved to "queued", the client still believed "awaiting_review", and the
+   * progress poll only runs for a job that is queued or running. So the crawl
+   * ran with nothing on screen, and the button looked broken.
+   *
+   * Compared by id, not by value. While a job is live the poll is the fresher
+   * source and must win; a *different* id means the server is talking about a
+   * job this component has never seen, which is exactly when to take it.
+   *
+   * Adjusting state during render rather than in an effect is React's own
+   * prescription for this, and it re-renders before anything is painted.
+   */
+  const [trackedJobId, setTrackedJobId] = useState(initialJob?.id);
+  if (initialJob?.id !== trackedJobId) {
+    setTrackedJobId(initialJob?.id);
+    setJob(initialJob);
+  }
   const [jobDetail, setJobDetail] = useState<JobDetail>();
   const [pinned, setPinned] = useState(initialPinned);
   const [tab, setTab] = useState<(typeof tabs)[number][0]>(
@@ -938,6 +973,32 @@ export function AgentStudio({
           </div>
         </div>
       ) : null}
+      {job?.status === "awaiting_review" ? (
+        <div className="training-banner training-review">
+          <span><ListTree size={17} /></span>
+          <div>
+            <b>
+              {job.pagesDiscovered.toLocaleString()} pages found. Waiting for
+              you.
+            </b>
+            <small>
+              Nothing has been fetched or indexed yet. Review the list, remove
+              anything you do not want, add pages discovery could not find, then
+              start indexing.
+            </small>
+          </div>
+          <button
+            className="app-primary-button"
+            onClick={() => {
+              const match = sources.find((item) => item.id === job.sourceId);
+              if (match) setPagesFor(match);
+            }}
+            type="button"
+          >
+            Review pages
+          </button>
+        </div>
+      ) : null}
       {job && ["queued", "running"].includes(job.status) && (
         <div className="training-banner has-stop">
           <span><LoaderCircle className="spin" size={17} /></span>
@@ -1641,6 +1702,17 @@ export function AgentStudio({
       {pagesFor ? (
         <SourcePages
           agentId={agent.id}
+          awaitingReview={
+            job?.status === "awaiting_review" && job.sourceId === pagesFor.id
+          }
+          onApproved={(started) => {
+            // Same as syncSource: adopt the new job locally so the progress
+            // banner follows it immediately, rather than waiting for a server
+            // round trip that would still be reading the old one.
+            if (started) setJob(started as Job);
+            setAgent((current) => ({ ...current, status: "training" }));
+            router.refresh();
+          }}
           onClose={() => setPagesFor(null)}
           source={pagesFor}
         />

@@ -4,8 +4,9 @@
 **Status:** **Not a stable release.** Tested locally, on one site, on one
 machine. Not tested on the VPS. Not tested across multiple sites.
 **Covers:** the worker rewrite (PLAN.md §11), four answer-quality fixes, five
-interface and voice fixes, the page inventory, and two crawl-pace fixes. Each
-is listed with its file below.
+interface and voice fixes, the page inventory, two crawl-pace fixes, the
+reviewed crawl, sitemap transparency, JavaScript rendering, and a contextual
+decline. Each is listed with its file below.
 **Last verified:** 2026-08-21
 
 ---
@@ -648,6 +649,593 @@ number for a real host is a judgement, and the first long crawl after this
 lands is the thing that will say.
 ---
 
+## The reviewed crawl (25 August)
+
+A crawl now happens in two halves with a person in between. It finds the URLs,
+stops, and shows them. Nothing is fetched or indexed until someone says which
+pages they want.
+
+### 16. Discovery is its own phase, and it stops
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/crawler.ts` — `discoverSiteUrls`; `apps/web/src/lib/crawl/process-job.ts`; `apps/web/src/lib/db/schema.ts` |
+| **Migration** | `apps/web/drizzle/0023_reviewed_crawl.sql` |
+| **Revert** | Remove the discovery block from `processCrawlJob`. The enum values and columns are additive and can stay. |
+
+Sitemaps do the work, and they are dramatically better than link-walking at it.
+Measured:
+
+| site | URLs | time | source |
+|---|---|---|---|
+| dharmabridge.net | 15 | 1.9 s | sitemap |
+| kellyblaser.com | 48 | 6.5 s | sitemap |
+| **pic-microcontroller.com** | **6,428** | **22.4 s** | sitemap |
+
+That last row is the argument for the whole feature. The same site had been
+link-walked for 48 hours, had reached 17,447 "discovered" URLs, and was still
+climbing - because tag archives and Cloudflare decoys link to each other
+without end. Its own sitemap says it has 6,428 pages, and says so in 22 seconds.
+
+Link-walking remains the fallback for sites with no sitemap. It costs a fetch
+per page, which is the price of the guarantee, and it is still far cheaper than
+indexing: fetching is a sub-second request, embedding is a model call per chunk.
+
+A job with no `discoveredAt` runs discovery, writes every URL into the page
+inventory as `discovered`, and then - unless it is a scheduled run - sets itself
+to `awaiting_review` and releases its lock. It is a deliberate stop, not a
+fault, and it has its own status so nothing mistakes it for one.
+
+### 17. The crawl no longer discovers while it runs
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/crawler.ts` — `followLinks`, `newUrls` |
+| **Test** | `apps/web/src/lib/crawl/inventory.test.ts` |
+| **Revert** | Drop `followLinks` from `CrawlOptions`; it defaults to the old behaviour. |
+
+Once a list is approved, that list is the job. Links found while indexing are
+collected and returned as `newUrls`, recorded in the inventory, and **not
+crawled**. Two reasons, and the second is the one that was asked for:
+
+- Crawling them would mean indexing pages nobody approved.
+- The total stops moving. Watching "discovered" climb from 50 to 73 while a
+  crawl runs is confusing precisely because the number was supposed to be
+  settled.
+
+Nothing is lost: those URLs appear at the next review, which is where a decision
+about them can actually be made.
+
+### 18. Pages can be added by hand
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/pasted-urls.ts` *(new)*; `apps/web/src/app/api/agents/[agentId]/sources/[sourceId]/pages/approve/route.ts` *(new)* |
+| **Test** | `apps/web/src/lib/crawl/pasted-urls.test.ts` |
+| **Revert** | Delete both files and the Add pages control in the panel. |
+
+A page that nothing links to and no sitemap lists cannot be discovered - there
+is nothing to discover it by. The review panel takes a paste, one URL per line.
+
+Bare paths work, because that is what people paste when every URL shares a host.
+Fragments are stripped, since `#section-2` is a position on a page rather than a
+different page and would otherwise be fetched and embedded twice. Off-site lines
+are skipped and counted rather than failing the submission: a paste from a
+spreadsheet routinely carries a stray row, and losing the good 400 lines over
+one bad one is the worse answer.
+
+### 19. Scheduled re-crawls approve themselves
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/worker.ts` — `scheduleRefreshes`; `apps/web/src/lib/agents/homepage-agent.ts` |
+| **Revert** | Remove `autoApprove: true` from both job inserts. |
+
+A crawl that waits for a person is right when a person started it and wrong at
+three in the morning. Scheduled re-crawls set `autoApprove`, skip the review,
+and index whatever the last review selected - so the operator reviews once and
+the schedule honours it from then on. Without this the Daily/Weekly/Monthly
+setting would have silently stopped working the moment review landed.
+
+### The bug the end-to-end test caught
+
+Worth recording, because it was invisible to types, lint and every unit test.
+
+Discovery stamps each URL it finds with the job id that found it. The resume
+logic - added a few hours earlier - treated *any* inventory row carrying the
+current job id as a page this job had already fetched. So on approval, every
+page on the list looked like one already done, the crawl fetched nothing, and it
+failed with `No useful public text could be extracted from this website`.
+
+The distinction is between a URL that is *known* and one that has been *read*.
+It now lives in `wasFetched`, in `apps/web/src/lib/crawl/outcomes.ts`, with a
+regression test.
+
+### Verification
+
+414 tests passing, 1 skipped. Typecheck and lint clean.
+
+Proven end to end against the real database and a live site:
+
+```
+DISCOVERY
+   job status ......... awaiting_review
+   URLs listed ........ 15
+   documents indexed .. 0
+
+APPROVAL: keeping 3 of 15
+
+INDEXING
+   job status ......... succeeded
+   documents indexed .. 3
+   URLs still listed .. 16
+
+  discovery stopped for review ......... PASS
+  found the site's pages .............. PASS
+  indexed nothing before approval ..... PASS
+  indexed only the approved pages ..... PASS
+```
+
+The 16th URL is the mechanism from item 17 working: a link found while indexing,
+recorded for the next review rather than crawled.
+
+**Not verified:** the review banner and the Add pages box have not been opened
+in a browser. The flow behind them is proven; the markup is only typechecked.
+
+### Applying the migration
+
+`0023_reviewed_crawl.sql` adds two enum values, and Postgres will not add an
+enum value and use it in the same transaction. Run it with psql, not `db:push`.
+---
+
+## Suggestions and sitemap transparency (25 August)
+
+### 20. Incidental links are a separate list, and inert
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/process-job.ts`; `apps/web/src/app/api/agents/[agentId]/sources/[sourceId]/pages/route.ts`; `apps/web/src/components/app/source-pages.tsx` |
+| **Migration** | none |
+| **Revert** | Write `outcome: "discovered"` and drop `selected: false` when recording `newUrls`. |
+
+Item 17 recorded links found during indexing so they could be offered at the
+next review. Putting them in the same list was wrong: a list someone has
+reviewed stops meaning anything the moment it starts filling with pages they
+never chose.
+
+They are now `outcome: "suggested"`, **excluded from the main list entirely**
+(the API adds `ne(outcome, 'suggested')` unless that list is what you asked
+for), and **`selected: false`** so nothing indexes them.
+
+Shown under a separate dashed tab, "Found by us", with the point stated
+plainly rather than implied:
+
+> **These are guesses, not your pages.** While indexing, the crawler noticed
+> these links on your site. Nobody has reviewed them, and some will be junk —
+> pagination, tag archives, or pages you have no interest in. **You can ignore
+> this list entirely.** Nothing here is indexed and none of it affects your
+> chatbot's answers unless you turn it on.
+
+Accepting one promotes it to `discovered`, so it joins the reviewed list and
+stops being offered. Ignoring the list has no effect on anything.
+
+### 21. Sitemap discovery says what it did
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/crawler.ts` — `parseRobots`, `SITEMAP_GUESSES`, `discoverSitemap`, `SitemapMethod`; `apps/web/src/lib/db/schema.ts` — `sources.sitemapUrl` |
+| **Migration** | `apps/web/drizzle/0024_sitemap_url.sql` (additive, safe through `db:push`) |
+| **Revert** | Drop the `candidates` argument to `discoverSitemap` and the report block in the panel. |
+
+The old strategy was two guessed paths. It worked more often than expected —
+the safe fetcher follows redirects, so `/sitemap.xml → /sitemap_index.xml`
+resolved on its own — but it never asked the site where its sitemap was, and it
+never said which way it had got there.
+
+Four strategies now, in descending order of how much the site is telling us and
+ascending order of how much we are guessing:
+
+| method | what it means |
+|---|---|
+| `provided` | a sitemap the operator typed in |
+| `declared` | `Sitemap:` in `robots.txt` — the authoritative answer |
+| `guessed` | one of six conventional paths, including `/wp-sitemap.xml` |
+| `links` | no sitemap could be read; walked links instead |
+
+`Sitemap:` lines are read regardless of which user-agent group they sit in,
+because they are not scoped to one. Measured across the test sites, every one
+of them declares a sitemap, and all now report `declared`.
+
+The result is stored on the source and shown at the top of the page list. The
+distinction that matters is the fourth row: **a silent fallback to link-walking
+looks exactly like success** until the page count turns out wrong. It now says
+so, and says what to do:
+
+> **No sitemap could be read.** We followed links from your homepage instead.
+> That works, but it is slower and it finds pages a sitemap would not list as
+> real ones — tag archives, pagination, search results.
+
+with two fixes offered in order of what they cost the operator — paste the
+address, or allow `ChatGrainBot` through the firewall for the few seconds
+discovery takes — and then, explicitly:
+
+> **You do not have to do either.** Following links works and needs nothing
+> from you. It is just slower and less precise.
+
+A supplied sitemap is validated when it is typed, not at crawl time, so a typo
+is reported while the person who made it is still looking at the field. It must
+be on the same origin as the source.
+
+### Verification
+
+414 tests passing, 1 skipped. Typecheck and lint clean.
+
+The strategy chain, against live sites:
+
+```
+dharmabridge.net          15 URLs   method=declared   4.5s
+pic-microcontroller.com  6428 URLs  method=declared  41.8s
+kellyblaser.com (given)    48 URLs  method=provided   8.6s
+```
+
+And the suggestions promise, end to end against the real database:
+
+```
+DISCOVERY REPORT stored on the source:
+   method .......... declared
+   sitemap ......... https://dharmabridge.net/sitemap.xml
+   pages listed .... 15
+
+AFTER INDEXING
+   reviewed list ... 15 URLs
+   suggestions ..... 1 URLs
+   documents ....... 3 (approved 3)
+
+  discovery method recorded ........... PASS
+  suggestions are all off by default .. PASS
+  suggestions reached the index ....... no (PASS)
+```
+
+**Not verified:** neither the suggestions tab nor the discovery report has been
+opened in a browser.
+---
+
+## JavaScript sites, and a decline that reads the question (25 August)
+
+### 22. Client-side sites: wider detection, and a manual override
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/browser-renderer.ts`; `apps/web/src/lib/crawl/user-agent.ts` *(new)*; `apps/web/src/lib/db/schema.ts` — `sources.renderJs` |
+| **Migration** | `apps/web/drizzle/0025_render_js.sql` (additive, safe through `db:push`) |
+| **Test** | `apps/web/src/lib/crawl/render-detect.test.ts` |
+| **Revert** | Restore the two-pattern check in `needsBrowserRendering` and drop the `renderJs` argument. |
+
+Rendering already existed and already ran automatically: a page that arrives
+with almost no text and carries a framework fingerprint is re-fetched in
+headless Chromium. Three things were wrong with it.
+
+**It only knew three frameworks.** Next.js, React and Angular. Nuxt, Gatsby,
+SvelteKit, Remix and Vue all fell through and were indexed as whatever text
+their loading shell happened to contain. All nine are now recognised.
+
+**It had no manual override.** A hand-rolled client-side site leaves no
+fingerprint at all — there is nothing in the markup to infer from, so no
+heuristic can ever catch it. That is a setting, not a cleverer guess:
+`sources.renderJs` is `auto` (detect), `always`, or `never`, exposed in the
+page panel as **Detect / Always render / Never render**.
+
+**Chromium announced itself as a desktop browser.** The plain fetcher sent
+`ChatGrainBot`; the browser sent a default Chrome string, because no user agent
+was set on the context. That is not only dishonest, it is worse in practice:
+kellyblaser.com's host allows declared bots and **403s anything claiming to be
+Chrome** — measured, in this session. On that site the fetched half of a crawl
+would have succeeded while the rendered half was refused. Both now send the same
+string, from one constant.
+
+Detection stays conservative in the direction that matters. A page that already
+has text is never re-fetched, whatever it is built with; missing a framework is
+the expensive mistake, since the page is then indexed as its loading shell and
+the site looks empty.
+
+### 23. The fallback answers the person, not every person
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/llm/client.ts` — `writeDecline`; `apps/web/src/lib/chat/answer.ts` — `unsupportedAnswer` |
+| **Test** | `apps/web/src/lib/llm/decline.test.ts` |
+| **Revert** | Drop the `writeDecline` call in `unsupportedAnswer`; it already falls back to `agent.fallbackMessage`. |
+
+*"I couldn't find a reliable answer in the connected sources"* is true of every
+question anyone has ever asked, which is exactly what makes it feel like a wall.
+The visitor asking about the weather and the visitor asking about a product the
+site does not sell got the same sentence, and neither learned anything.
+
+The decline is now written for the question that was asked. Measured against the
+real model, roughly 800 ms:
+
+| asked | answered |
+|---|---|
+| how is the weather today | I can't provide information about the weather today. I can help with Sudo Scout tech news, CasaOS, Penpot, or Llamafile. |
+| how to make coffee | I can't help with how to make coffee. I can help with Sudo Scout tech news, CasaOS, Penpot, or Llamafile. |
+| do you sell insurance | I can't help with insurance. I can help with tech news, open source and free tools for developers, CasaOS, Penpot, or Llamafile. |
+
+**The danger this prompt is mostly about** is that a model asked to write a
+refusal will cheerfully answer the question while refusing it — *"I can't help
+with coffee, though generally you want about 18g of grounds"* — which would undo
+the entire point of a grounded assistant. So the rules forbid facts, advice and
+partial answers, and restrict "what I can help with" to page titles from this
+site so no capability is invented. Checked: asked `what is 15 times 4`, it
+declines without saying 60.
+
+Failure is the important path, and it is the one with unit tests. `writeDecline`
+returns null on an empty question, a refusing provider, an empty completion, or
+a thrown request, and the caller falls back to the operator's own message. **A
+slow or missing provider costs the phrasing, never the reply.**
+
+### 24. Two places built a URL by gluing strings together
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/pasted-urls.ts` — `pasteOrigin`; `apps/web/src/lib/http/public-origin.ts` *(new)*; `apps/web/src/app/dashboard/api/page.tsx` |
+| **Tests** | `pasted-urls.test.ts`, `public-origin.test.ts` |
+| **Revert** | Inline the concatenations again. |
+
+The Add pages box explained itself with an example it assembled by hand:
+
+> One per line. Paths work too, so /pricing is the same as
+> https://fileviewerhub.com**//pricing**
+
+A root URL stored with a trailing slash produced a double slash - an address
+that does not resolve, printed as an example of correct usage. The parser was
+never wrong; only the sentence describing it was, which is its own lesson about
+writing a second implementation to explain the first. The label now calls
+`pasteOrigin`, the same function the parser resolves against, and there is a
+test asserting the two agree.
+
+Looking for the same mistake elsewhere found it twice more, in worse places:
+the developer page builds a `curl` command and an `<script src>` tag **for
+people to copy and run**, both by appending a path to `NEXT_PUBLIC_APP_URL`.
+`NEXT_PUBLIC_APP_URL=https://example.com/` is an entirely reasonable thing to
+write in a `.env` file, and it produced `https://example.com//embed.js` inside
+a script tag. The runtime path was already safe - `embed.js` normalises through
+its own `validOrigin` - so this was only ever the printed instructions, which
+is exactly where nobody would look for it.
+
+Both now use `publicOrigin()`, which also skips a malformed setting rather than
+giving up on the ones after it, and refuses a non-http protocol.
+
+### 25. Approving twice started two crawls
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/app/api/agents/[agentId]/sources/[sourceId]/pages/approve/route.ts`; `apps/web/src/components/app/source-pages.tsx`; `apps/web/src/components/app/agent-studio.tsx` |
+| **Revert** | Remove the `inFlight` guard and pass no argument to `onApproved`. |
+
+Reported as "I clicked Approve twice, it said Starting, closed the list, and
+never started fetching." It had started. Twice.
+
+Two faults, and the first caused the second.
+
+**The dashboard kept watching the old job.** Approving only called
+`router.refresh()`, and the page had been loaded with `?job=<the job that was
+awaiting review>`. That job goes queued, running, succeeded - in a source of
+52 already-indexed pages, quickly. Meanwhile the progress poll only runs for a
+job that is `queued` or `running`, so by the time anything looked, there was
+nothing to show. `syncSource` had solved this two years earlier by calling
+`setJob` with the job it started; the approve path simply did not.
+
+**So the button looked broken, and it was pressed again.** The second call found
+nothing awaiting review - the first had consumed it - and took the branch meant
+for re-indexing after a change of selections, which queues a fresh job. The
+result was a completed crawl on screen and a second one running invisibly
+behind it. Confirmed in the database afterwards: two jobs, both succeeded, the
+same 52 pages fetched twice.
+
+**The reason the client kept watching the old job was worse than a missing
+call.** `agent-studio` seeds four pieces of state with `useState(initialAgent)`,
+`useState(initialSources)`, `useState(initialJob)`, `useState(initialPinned)`.
+`useState` reads its argument on the first render and ignores it ever after, so
+every one of the seven `router.refresh()` calls in that component re-ran the
+server query and then discarded the answer. After an approval the server knew
+the job had moved to `queued`; the client still believed `awaiting_review`; and
+the progress poll only runs for a job that is queued or running. So the crawl
+ran with nothing on screen at all.
+
+The job is now adopted when the server reports a *different* id - compared by
+id rather than value, because while a job is live the poll is the fresher source
+and has to win, whereas a new id means the server is describing a job this
+component has never seen. Adjusting state during render rather than in an effect
+is React's own prescription for this.
+
+The same latent fault sits behind the file-upload path, which calls
+`router.refresh()` expecting a newly created source to appear in the list;
+`sources` is seeded the same way. Not fixed here, because that state is edited
+locally while a crawl runs and a blind sync would fight it - recorded as
+something to do deliberately rather than in passing.
+
+Approve now refuses to start anything while a crawl is `queued` or `running`
+for that source, returns the job already in flight, and the panel says so
+instead of closing on a no-op. Checked across every job state:
+
+| source state | starts a crawl? | |
+|---|---|---|
+| no jobs | yes | a first crawl |
+| awaiting review | yes | the approval itself |
+| queued | **no** | returns the job in flight |
+| running | **no** | returns the job in flight |
+| succeeded | yes | re-indexing is allowed again |
+
+And the dashboard now adopts whichever job came back, so the progress banner
+follows it immediately rather than after a round trip that would still be
+reading the old one.
+
+The general shape is worth naming: **silence made a destructive retry the
+reasonable thing to do.** Pressing a button again because nothing appeared to
+happen is the most ordinary behaviour there is, and the fix is in both
+directions - do not perform the action twice, and do not be silent.
+
+### 26. It stated a total it had not counted
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/llm/client.ts` — `NON_NEGOTIABLE_RULES` |
+| **Revert** | Remove the three counting rules. |
+
+Reported against fileviewerhub.com: asked how many viewers there are, the agent
+answered **21** and then listed nine categories whose counts sum to **23**. The
+site has 23. It contradicted its own list in the same message.
+
+Checked against the corpus first, because "the site says 21 somewhere" was the
+obvious explanation and it was wrong:
+
+| | |
+|---|---|
+| chunks containing "21" | **0** |
+| chunks containing "23" | **0** |
+| viewer tool pages indexed | **23** |
+| category pages indexed | 9 - matching its nine-item list |
+
+So the per-category breakdown was grounded and correct. The total was invented.
+The existing rule said never invent a number, but a total is not *in* the
+evidence to begin with - it has to be derived, and nothing said that a derived
+number must actually be computed.
+
+**Asking the model to sum more carefully did not work.** Told to make its total
+match its list, it answered 20 over a list summing to 22. That was two rounds of
+prompt wording spent on the wrong goal: a language model cannot be instructed
+into reliable arithmetic, and it should not have to be. There is also a deeper
+problem underneath the arithmetic - retrieval returns a sample of the site, so
+even a perfectly summed total would be the total of what was retrieved rather
+than what exists.
+
+So it no longer produces one. The rules now say a total may only be used when
+the evidence states it, that per-group counts must be reported as they are and
+never added up, and - after a round where "do not produce a total" was read as
+"cannot answer" - that having no total is never a reason to decline.
+
+Before:
+
+> Based on the available categories, there are **21** viewers in total.
+> Maps & GPS: 4, Finance & Accounting: 4, Data File Viewers: 3, ...
+
+After:
+
+> The provided pages do not state a total number of viewers, but they list the
+> following counts by category: Email File Viewers: 3, Database File Viewers: 3,
+> Data File Viewers: 3, Developer & Diagnostics: 2, Contact File Viewers: 1
+
+Every number in the second answer can be pointed at on a page, and the reader
+can add them up correctly, which the model could not.
+
+**Still true, and not fixed here:** the breakdown covers whichever category
+pages retrieval returned, which is five to eight of the nine. The answer is
+honest about having no total but does not say the list itself may be partial.
+Counting across a corpus is not something retrieval can do; it would need the
+question routed to a query over the index rather than to the model.
+
+### 27. Sources were attached to answers that did not use them
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/chat/answer.ts` — `citedEvidence` |
+| **Test** | `apps/web/src/lib/chat/cited-evidence.test.ts` |
+| **Revert** | Restore the `hits.slice(0, 2)` fallback. |
+
+Reported from a real conversation. Told it had miscounted, the agent replied
+"I apologize for the error... it does indeed result in 23 viewers" - a sentence
+resting on no page whatsoever - and the widget captioned it **"2 sources used"**
+with a Maps & GPS page beneath it.
+
+The model is instructed to mark each claim with `[1]`, `[2]`, and
+`citedEvidence` reads those markers. But when it found none it did this:
+
+```js
+const selected = indices.length ? indices.map(...) : hits.slice(0, 2);
+```
+
+Two arbitrary retrieved pages, presented as the answer's sources. **"2 sources
+used" is that line's signature** - not a coincidence, a constant.
+
+An answer that cites nothing now gets nothing. Showing sources under an answer
+that does not rest on them is a false claim of grounding, and a reader who opens
+one and finds nothing relevant has learned not to trust the next one either.
+
+**A correction to my own diagnosis while testing this.** A live check appeared
+to show four citations on an answer containing no markers, which would have
+meant the fix had missed a path. It had not: `cleanGeneratedAnswer` strips the
+markers before display, so the string being inspected was the wrong one -
+`citedEvidence` reads the raw model output, where they are intact. Those four
+citations were earned.
+
+The cost of removing the fallback is that a genuinely grounded answer whose
+model forgot its markers now shows nothing. Measured against the live model
+before accepting that trade:
+
+| question | sources |
+|---|---|
+| what does the CSV viewer do | 1 |
+| can I open MSG files without Outlook | 1 |
+| is my data uploaded anywhere | 2 |
+| how do I view a HEIC file | 1 |
+| what file types can I open | 1 |
+
+Five of five. Marker discipline is good enough that the fallback was not
+holding anything up - it was only ever manufacturing attribution for answers
+that had none.
+
+### Verification
+
+442 tests passing, 1 skipped. Typecheck and lint clean.
+
+Tested against live sites, and the testing found a bug.
+
+google.org was offered as a likely client-rendered candidate and turned out
+not to be one: 121 KB of HTML, but the same 1,507 characters of text with and
+without a browser. It ships its content, and auto-detect was right to skip it.
+That run did prove the browser path itself - Chromium launched, rendered in
+4.4 s, and extracted the page and its 27 links.
+
+todomvc.com's React example is genuinely client-rendered, and **it was not
+detected**. Its markup is:
+
+```html
+<section class="todoapp" id="root"></section>
+```
+
+The generic mount-point pattern was hardcoded to `<div>`. So a page with
+literally zero characters of text was read as an ordinary page and indexed as
+nothing at all - silently, with no failure anywhere to notice. Frameworks
+mount on whatever element the author picked; the element name was never
+something to assume. Fixed, with a regression test naming the site.
+
+| todomvc.com/examples/react | before | after |
+|---|---|---|
+| static text | 0 chars | 0 chars |
+| auto-detect | **false** | **true** |
+| after rendering | never ran | 23 chars, the app's real UI text |
+
+Twenty-three characters is all that page has with an empty todo list, so that
+is the whole of its content rather than a partial recovery.
+
+The undetectable case - no content, no fingerprint at all - was proven
+separately against a page written for it, since by definition no real site can
+be found that a heuristic would catch:
+
+| | without a browser | with "Always render" |
+|---|---|---|
+| text extracted | **0 characters** | **999 characters** |
+| links found | 0 | 1 |
+| auto-detect | `false` - nothing to detect | - |
+
+Which is the argument for the setting existing. No heuristic can read that
+page, and one dropdown can.
+
+**Not verified:** Gmail was also suggested and is not testable - it redirects
+to a sign-in page, so a crawler sees the login shell and never the inbox. The
+decline was run against the live model, but not through the widget.
+---
+
 ## What was measured
 
 | | |
@@ -659,7 +1247,9 @@ lands is the thing that will say.
 | Full crawl of sudoscout.dev | 305 URLs, completed 100% |
 | "what does this company offers" | refused at 0.276 -> answered at 0.376 |
 | Cold text-to-speech, first audio | 12.7 s — now warmed when a call connects |
-| Tests | 401 passing, 1 skipped. Typecheck and lint clean. |
+| Full site URL list from a sitemap | 6,428 URLs in 22 s (was 48 h and climbing) |
+| Contextual decline, live model | ~800 ms, never answers the question |
+| Tests | 425 passing, 1 skipped. Typecheck and lint clean. |
 
 The memory column is the one worth reading twice. A crawl that "always dies at
 92%" was diagnosed as a memory problem for a week. It was not. Peak was 588 MB,
@@ -692,6 +1282,18 @@ Read this before trusting the build.
   something else was restarting it there. Check `pm2 describe` for the restart
   count and whether `max_memory_restart` is set.
 - **File jobs share the machinery but were not re-tested** after these changes.
+- **`sources`, `agent` and `pinned` still ignore `router.refresh()`.** Only
+  `job` was fixed. A newly uploaded source may not appear in the list until the
+  page is reloaded.
+- **Client-side rendering is now proven on a real site** (todomvc.com), and
+  testing it found a detection bug that is fixed. What remains untested is a
+  large content-bearing SPA: the real site proven here is a demo app with very
+  little text in it.
+- **The suggestions tab and the discovery report have not been opened in a
+  browser** either. Same caveat: proven behind the glass, unseen through it.
+- **The review banner and Add pages box have not been opened in a browser.**
+  The flow behind them is proven end to end against live data; the markup is
+  only typechecked.
 - **The request-gap recovery curve is arithmetic, not observation.** It is
   unit tested, but has not been watched against a host that is actively rate
   limiting. Whether twenty clean fetches is the right number to buy a halving
@@ -742,6 +1344,12 @@ ALTER TABLE "crawl_jobs" ADD COLUMN "max_recoveries" integer DEFAULT 10 NOT NULL
 
 Both are additive with defaults, so `0.3.0` runs unchanged against a database
 that has them. Rolling back the code does not require rolling back the schema.
+
+`0023_reviewed_crawl.sql` adds two enum values, and Postgres will not add an
+enum value and use it in the same transaction - **psql, not `db:push`**.
+
+`0024_sitemap_url.sql` and `0025_render_js.sql` each add one column and are
+safe through `db:push`.
 
 And `0022_page_inventory.sql`, which re-keys `crawl_pages` from the job to the
 URL. **Run this one with psql, not `db:push`** - push generates the schema

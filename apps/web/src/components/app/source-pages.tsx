@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { pasteOrigin } from "@/lib/crawl/pasted-urls";
 import {
   ChevronLeft,
   ChevronRight,
   Eye,
   EyeOff,
   LoaderCircle,
+  Plus,
   Search,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -31,6 +34,8 @@ type Payload = {
   pageSize: number;
   pageCount: number;
   outcomes: Record<string, number>;
+  /** URLs the crawler noticed in passing that nobody has reviewed. */
+  suggested: number;
 };
 
 /**
@@ -75,6 +80,8 @@ function when(value: string) {
 export function SourcePages({
   agentId,
   source,
+  awaitingReview = false,
+  onApproved,
   onClose,
 }: {
   agentId: string;
@@ -83,7 +90,14 @@ export function SourcePages({
     name: string;
     rootUrl: string | null;
     refreshIntervalHours: number | null;
+    sitemapUrl: string | null;
+    renderJs: string;
+    metadata: Record<string, unknown> | null;
   };
+  /** True when a crawl has discovered its URLs and is waiting to be approved. */
+  awaitingReview?: boolean;
+  /** Handed the job that is now running, so the dashboard can follow it. */
+  onApproved?: (job: unknown) => void;
   onClose: () => void;
 }) {
   const [data, setData] = useState<Payload | null>(null);
@@ -99,6 +113,72 @@ export function SourcePages({
   const [schedule, setSchedule] = useState(source.refreshIntervalHours);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addUrls, setAddUrls] = useState("");
+  const [approving, setApproving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [sitemapUrl, setSitemapUrl] = useState(source.sitemapUrl);
+  const [savingSitemap, setSavingSitemap] = useState(false);
+  const [renderJs, setRenderJs] = useState(source.renderJs ?? "auto");
+
+  /**
+   * Some sites build their pages in the visitor's browser rather than sending
+   * them ready-made. We detect the common frameworks and run those pages in a
+   * real browser automatically - but a hand-rolled one leaves no fingerprint to
+   * detect, and arrives looking like an empty page with no content.
+   */
+  const saveRenderJs = async (value: string) => {
+    setRenderJs(value);
+    setNotice(null);
+    try {
+      await fetch(`/api/agents/${agentId}/sources/${source.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ renderJs: value }),
+      });
+      setNotice("Saved. It takes effect on the next crawl.");
+    } catch {
+      setNotice("Could not save that.");
+    }
+  };
+
+  const discovery =
+    (source.metadata?.discovery as {
+      method?: string;
+      sitemapUrl?: string | null;
+      declaredSitemaps?: string[];
+      urls?: number;
+      truncated?: boolean;
+    } | null) ?? null;
+
+  const saveSitemap = async (value: string) => {
+    setSavingSitemap(true);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/agents/${agentId}/sources/${source.id}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sitemapUrl: value }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? "Could not save that.");
+      }
+      setSitemapUrl(payload.data?.sitemapUrl ?? null);
+      setNotice(
+        value.trim()
+          ? "Saved. The next crawl will use it."
+          : "Cleared. The next crawl will look for one itself.",
+      );
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : "Could not save that.");
+    } finally {
+      setSavingSitemap(false);
+    }
+  };
 
   const base = `/api/agents/${agentId}/sources/${source.id}/pages`;
 
@@ -204,6 +284,49 @@ export function SourcePages({
     }
   };
 
+  /**
+   * Sends the approved list to the crawler, together with anything pasted.
+   *
+   * One button for both, because they are one decision: this is the set of
+   * pages I want indexed. Splitting "save my additions" from "start indexing"
+   * would let someone paste a list, walk away, and find nothing had happened.
+   */
+  const approve = async () => {
+    setApproving(true);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/agents/${agentId}/sources/${source.id}/pages/approve`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ addUrls }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error?.message ?? "Could not start indexing.");
+      }
+      // Hand back the job so the dashboard switches to watching it. Closing
+      // without this left the page showing whichever job it had loaded with,
+      // which after an approval is the one that just finished.
+      onApproved?.(payload.data?.job);
+      if (payload.data?.alreadyRunning) {
+        // Say so rather than closing on a no-op. Silence here is what made
+        // pressing the button twice feel reasonable in the first place.
+        setNotice("A crawl is already running for this source.");
+        return;
+      }
+      onClose();
+    } catch (cause) {
+      setNotice(
+        cause instanceof Error ? cause.message : "Could not start indexing.",
+      );
+    } finally {
+      setApproving(false);
+    }
+  };
+
   const saveSchedule = async (hours: number | null) => {
     setSchedule(hours);
     setSavingSchedule(true);
@@ -219,6 +342,8 @@ export function SourcePages({
   };
 
   const outcomes = data?.outcomes ?? {};
+  const suggestedCount = data?.suggested ?? 0;
+  const onSuggestions = outcome === "suggested";
   const tabs = [
     ["all", "All", Object.values(outcomes).reduce((a, b) => a + b, 0)],
     ...Object.entries(outcomes)
@@ -246,6 +371,19 @@ export function SourcePages({
                 : "Loading pages…"}
             </small>
           </div>
+          <label className="source-pages-schedule">
+            <span title="Run pages in a real browser before reading them. Use Always if your site builds its pages with JavaScript and we are finding them empty.">
+              JavaScript
+            </span>
+            <select
+              onChange={(event) => void saveRenderJs(event.target.value)}
+              value={renderJs}
+            >
+              <option value="auto">Detect</option>
+              <option value="always">Always render</option>
+              <option value="never">Never render</option>
+            </select>
+          </label>
           <label className="source-pages-schedule">
             <span>Recrawl</span>
             <select
@@ -325,7 +463,27 @@ export function SourcePages({
               {label} <i>{count.toLocaleString()}</i>
             </button>
           ))}
+          {suggestedCount || onSuggestions ? (
+            <button
+              className={`source-pages-suggested-tab ${onSuggestions ? "is-active" : ""}`}
+              onClick={() => {
+                setOutcome(onSuggestions ? "all" : "suggested");
+                setPage(1);
+              }}
+              type="button"
+            >
+              <Sparkles size={12} /> Found by us <i>{suggestedCount.toLocaleString()}</i>
+            </button>
+          ) : null}
           <span className="source-pages-bulk">
+            <button
+              className={addOpen ? "is-active" : ""}
+              onClick={() => setAddOpen((current) => !current)}
+              title="Add pages that discovery could not find"
+              type="button"
+            >
+              <Plus size={13} /> Add pages
+            </button>
             <button
               disabled={working === "bulk"}
               onClick={() => void setAllMatching(false)}
@@ -343,6 +501,43 @@ export function SourcePages({
             </button>
           </span>
         </div>
+
+        <DiscoveryReport
+          discovery={discovery}
+          onSave={(value) => void saveSitemap(value)}
+          saving={savingSitemap}
+          sitemapUrl={sitemapUrl}
+        />
+        {onSuggestions ? (
+          <p className="source-pages-explainer">
+            <b>These are guesses, not your pages.</b> While indexing, the
+            crawler noticed these links on your site. Nobody has reviewed them,
+            and some will be junk - pagination, tag archives, or pages you have
+            no interest in. <b>You can ignore this list entirely.</b> Nothing
+            here is indexed and none of it affects your chatbot&apos;s answers
+            unless you turn it on.
+          </p>
+        ) : null}
+        {addOpen ? (
+          <div className="source-pages-add">
+            <label>
+              <b>Add pages by URL</b>
+              <small>
+                One per line. Paths work too, so <code>/pricing</code> means{" "}
+                <code>{`${pasteOrigin(source.rootUrl) ?? ""}/pricing`}</code>.
+                Use this for pages
+                nothing links to and no sitemap lists - discovery cannot find
+                those, because there is nothing to find them by.
+              </small>
+              <textarea
+                onChange={(event) => setAddUrls(event.target.value)}
+                placeholder={"/hidden-landing-page\n/2026/announcement\nhttps://example.com/deep/page"}
+                rows={5}
+                value={addUrls}
+              />
+            </label>
+          </div>
+        ) : null}
 
         <div className="source-pages-list">
           {error ? (
@@ -404,6 +599,29 @@ export function SourcePages({
           )}
         </div>
 
+        {notice ? <p className="source-pages-notice">{notice}</p> : null}
+
+        <div className="source-pages-approve">
+          <span>
+            {awaitingReview
+              ? "This crawl is waiting for you. Nothing is fetched or indexed until you approve."
+              : "Approving re-indexes the selected pages."}
+          </span>
+          <button
+            className="app-primary-button"
+            disabled={approving}
+            onClick={() => void approve()}
+            type="button"
+          >
+            {approving ? <LoaderCircle className="spin" size={14} /> : null}
+            {approving
+              ? "Starting…"
+              : addUrls.trim()
+                ? "Add pages and index"
+                : "Approve and index"}
+          </button>
+        </div>
+
         <footer>
           <button
             disabled={page <= 1 || busy}
@@ -424,6 +642,136 @@ export function SourcePages({
           </button>
         </footer>
       </div>
+    </div>
+  );
+}
+/**
+ * What discovery did, in the operator's words rather than the crawler's.
+ *
+ * The point of showing this is that only two of the four outcomes are good, and
+ * the two that are not have a fix the operator can apply in thirty seconds -
+ * but only if they know which one happened. A silent fallback to link-walking
+ * looks identical to success right up until the page count is wrong.
+ */
+function DiscoveryReport({
+  discovery,
+  sitemapUrl,
+  saving,
+  onSave,
+}: {
+  discovery: {
+    method?: string;
+    sitemapUrl?: string | null;
+    declaredSitemaps?: string[];
+    urls?: number;
+    truncated?: boolean;
+  } | null;
+  sitemapUrl: string | null;
+  saving: boolean;
+  onSave: (value: string) => void;
+}) {
+  const [value, setValue] = useState(sitemapUrl ?? "");
+  const [open, setOpen] = useState(false);
+  const method = discovery?.method;
+  const walked = method === "links";
+
+  const headline =
+    method === "provided"
+      ? "Using the sitemap you gave us"
+      : method === "declared"
+        ? "Using the sitemap your site publishes"
+        : method === "guessed"
+          ? "Found a sitemap at the usual address"
+          : walked
+            ? "No sitemap could be read"
+            : "Not checked yet";
+
+  return (
+    <div className={`source-pages-discovery ${walked ? "is-warning" : ""}`}>
+      <div>
+        <b>{headline}</b>
+        {discovery?.sitemapUrl ? (
+          <small>
+            <code>{discovery.sitemapUrl}</code>
+            {discovery.urls ? ` · ${discovery.urls.toLocaleString()} pages listed` : null}
+          </small>
+        ) : walked ? (
+          <small>
+            We followed links from your homepage instead. That works, but it is
+            slower and it finds pages a sitemap would not list as real ones -
+            tag archives, pagination, search results. Your page list may be
+            longer and noisier than your site actually is.
+          </small>
+        ) : (
+          <small>Run a crawl and this will say how the page list was found.</small>
+        )}
+      </div>
+      <button onClick={() => setOpen((current) => !current)} type="button">
+        {sitemapUrl ? "Change sitemap" : "Set a sitemap"}
+      </button>
+
+      {open ? (
+        <div className="source-pages-discovery-form">
+          <label>
+            <b>Sitemap address</b>
+            <small>
+              If you know where your sitemap is, paste it here and we will use
+              it instead of searching. It has to be on the same domain.
+            </small>
+            <span>
+              <input
+                onChange={(event) => setValue(event.target.value)}
+                placeholder="https://example.com/sitemap_index.xml"
+                value={value}
+              />
+              <button
+                className="app-primary-button"
+                disabled={saving}
+                onClick={() => onSave(value)}
+                type="button"
+              >
+                Save
+              </button>
+            </span>
+          </label>
+
+          {discovery?.declaredSitemaps?.length ? (
+            <p>
+              Your <code>robots.txt</code> says the sitemap is at{" "}
+              <code>{discovery.declaredSitemaps[0]}</code>
+              {walked ? " — but we could not read it." : "."}
+            </p>
+          ) : null}
+
+          {walked ? (
+            <div className="source-pages-discovery-help">
+              <b>If a sitemap exists but we cannot reach it</b>
+              <p>
+                This is almost always a firewall or a security plugin blocking
+                automated requests. Two things usually fix it, in order of how
+                little they cost you:
+              </p>
+              <ol>
+                <li>
+                  <b>Paste the address above.</b> Some setups block our guesses
+                  at common paths but serve the real one fine.
+                </li>
+                <li>
+                  <b>Allow us through for a few minutes.</b> Add{" "}
+                  <code>ChatGrainBot</code> to your firewall or security
+                  plugin&apos;s allowed list, run the crawl, then put it back if
+                  you prefer. Discovery takes seconds, not hours.
+                </li>
+              </ol>
+              <p>
+                <b>You do not have to do either.</b> Following links works and
+                needs nothing from you. It is just slower and less precise, and
+                you may want to remove more pages by hand afterwards.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

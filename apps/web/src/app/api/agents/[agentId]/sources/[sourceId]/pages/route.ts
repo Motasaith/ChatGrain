@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ilike, ne, or, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAgent } from "@/lib/agents/access";
@@ -75,6 +75,11 @@ export async function GET(request: Request, context: Context) {
     }
     if (outcome && outcome !== "all") {
       filters.push(eq(crawlPages.outcome, outcome));
+    } else {
+      // Suggestions are a separate list, not part of "all". They are URLs the
+      // crawler noticed in passing that nobody has reviewed, and folding them
+      // into the page list would undo the point of having reviewed it.
+      filters.push(ne(crawlPages.outcome, "suggested"));
     }
     if (selection === "included") filters.push(eq(crawlPages.selected, true));
     if (selection === "excluded") filters.push(eq(crawlPages.selected, false));
@@ -116,6 +121,13 @@ export async function GET(request: Request, context: Context) {
     ]);
 
     const total = totals[0]?.value ?? 0;
+    const outcomeCounts = Object.fromEntries(
+      byOutcome.map((row) => [row.outcome, row.count]),
+    );
+    // Reported on its own so the interface can offer it as a separate list
+    // rather than a filter over the reviewed one.
+    const suggested = outcomeCounts.suggested ?? 0;
+    delete outcomeCounts.suggested;
     return NextResponse.json({
       data: {
         pages: rows,
@@ -123,9 +135,8 @@ export async function GET(request: Request, context: Context) {
         page,
         pageSize,
         pageCount: Math.max(1, Math.ceil(total / pageSize)),
-        outcomes: Object.fromEntries(
-          byOutcome.map((row) => [row.outcome, row.count]),
-        ),
+        outcomes: outcomeCounts,
+        suggested,
       },
       requestId,
     });
@@ -178,7 +189,16 @@ export async function PATCH(request: Request, context: Context) {
 
     const updated = await db
       .update(crawlPages)
-      .set({ selected: input.selected })
+      .set({
+        selected: input.selected,
+        // Accepting a suggestion promotes it out of the suggestions list. It
+        // has been looked at now, which is the only thing that separated the
+        // two lists in the first place; leaving it behind would mean the
+        // operator keeps being shown a decision they have already made.
+        outcome: input.selected
+          ? sql`case when ${crawlPages.outcome} = 'suggested' then 'discovered' else ${crawlPages.outcome} end`
+          : sql`${crawlPages.outcome}`,
+      })
       .where(and(...filters))
       .returning({ url: crawlPages.url });
 

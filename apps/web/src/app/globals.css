@@ -11097,10 +11097,14 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 .source-pages {
-  display: grid;
+  /* Flex rather than grid. Three of the rows in here are conditional - the add
+     box, the error notice, the approve bar - and a fixed grid template has to
+     be recounted every time one is added. A column with one growing child does
+     not. */
+  display: flex;
   width: min(960px, 100%);
   height: min(760px, 92vh);
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 15px;
@@ -11111,6 +11115,7 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 .source-pages > header {
   display: flex;
   align-items: center;
+  flex: none;
   gap: 14px;
   border-bottom: 1px solid var(--line);
   padding: 14px 16px;
@@ -11266,6 +11271,11 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 
 .source-pages-list {
   display: flex;
+  /* min-height: 0 is what actually lets this scroll. A flex item refuses to
+     shrink below its content without it, so the list would push the approve bar
+     off the bottom of the panel instead of scrolling. */
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
@@ -11410,4 +11420,240 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 .source-pages > footer button:disabled {
   cursor: not-allowed;
   opacity: 0.4;
+}
+
+/* Reviewed crawl ----------------------------------------------------------
+   A job that has found its URLs and stopped to ask. Amber rather than green:
+   it is not progress, it is a request. */
+
+.training-banner.training-review {
+  border-color: #e8d5a8;
+  background: linear-gradient(180deg, #fdf8ec, #fff);
+}
+
+.training-banner.training-review > span {
+  color: #a9762a;
+  background: #f7ecd4;
+}
+
+.source-pages-add {
+  border-bottom: 1px solid var(--line);
+  padding: 13px 16px;
+  background: var(--paper);
+}
+
+.source-pages-add label {
+  display: grid;
+  gap: 4px;
+}
+
+.source-pages-add b {
+  font-size: 13px;
+}
+
+.source-pages-add small {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.source-pages-add textarea {
+  margin-top: 5px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 11px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.source-pages-bulk > button.is-active {
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+
+.source-pages-approve {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding: 12px 16px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.source-pages-approve button {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 7px;
+}
+
+.source-pages-notice {
+  margin: 0;
+  border-top: 1px solid #f0d8d3;
+  padding: 10px 16px;
+  color: #92312a;
+  background: #fbe6e3;
+  font-size: 12.5px;
+}
+
+/* Suggestions, and the discovery report -----------------------------------
+   Two things the operator needs told rather than left to infer: which URLs
+   nobody has reviewed, and how the page list was arrived at. */
+
+.source-pages-suggested-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  border: 1px dashed #cdd8d1;
+  border-radius: 999px;
+  padding: 5px 11px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.source-pages-suggested-tab.is-active {
+  border-style: solid;
+  border-color: #c9b8e6;
+  color: #4b3d8f;
+  background: #f1eefb;
+}
+
+.source-pages-suggested-tab i {
+  font-size: 11px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.source-pages-explainer {
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
+  color: #4b3d8f;
+  background: #f6f3fd;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.source-pages-discovery {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
+  background: var(--paper);
+}
+
+.source-pages-discovery.is-warning {
+  border-bottom-color: #e8d5a8;
+  background: #fdf8ec;
+}
+
+.source-pages-discovery > div {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.source-pages-discovery b {
+  font-size: 13px;
+}
+
+.source-pages-discovery small {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.source-pages-discovery code {
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: #eef2ef;
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.source-pages-discovery > button {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 11px;
+  color: var(--ink);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.source-pages-discovery-form {
+  flex-basis: 100%;
+  border-top: 1px dashed #dce4de;
+  padding-top: 12px;
+}
+
+.source-pages-discovery-form label {
+  display: grid;
+  gap: 3px;
+}
+
+.source-pages-discovery-form label > span {
+  display: flex;
+  margin-top: 6px;
+  gap: 7px;
+}
+
+.source-pages-discovery-form input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.source-pages-discovery-form > p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.source-pages-discovery-help {
+  margin-top: 11px;
+  border: 1px solid #e8d5a8;
+  border-radius: 10px;
+  padding: 11px 13px;
+  background: #fff;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.source-pages-discovery-help p,
+.source-pages-discovery-help ol {
+  margin: 7px 0 0;
+  color: var(--muted);
+}
+
+.source-pages-discovery-help ol {
+  padding-left: 18px;
+}
+
+.source-pages-discovery-help li + li {
+  margin-top: 5px;
 }

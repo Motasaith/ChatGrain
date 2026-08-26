@@ -92,12 +92,18 @@ async function scheduleRefreshes() {
       .where(
         and(
           eq(crawlJobs.sourceId, source.id),
-          sql`${crawlJobs.status} in ('queued', 'running')`,
+          sql`${crawlJobs.status} in ('queued', 'awaiting_review', 'running')`,
         ),
       )
       .limit(1);
     if (!active) {
-      await db.insert(crawlJobs).values({ sourceId: source.id });
+      // Scheduled re-crawls skip the review step. They run with nobody awake to
+      // approve anything, and the operator's last review already said which
+      // pages belong - stopping to ask again would just mean the schedule
+      // silently stopped working.
+      await db
+        .insert(crawlJobs)
+        .values({ sourceId: source.id, autoApprove: true });
     }
   }
 }

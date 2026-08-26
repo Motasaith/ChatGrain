@@ -1,3 +1,4 @@
+import { CRAWLER_USER_AGENT } from "@/lib/crawl/user-agent";
 import { existsSync } from "node:fs";
 import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import { AppError } from "@/lib/http/errors";
@@ -61,14 +62,50 @@ function browserCandidates() {
   );
 }
 
-export function needsBrowserRendering(html: string, text: string) {
+/**
+ * Markers left in the HTML by a framework that renders on the client.
+ *
+ * Only consulted when the page arrived nearly empty, so a false positive costs
+ * one wasted render rather than a wrong answer. Missing a framework is the
+ * expensive direction: the page is indexed as the handful of words in its
+ * loading shell, and the site looks like it has no content.
+ */
+const CLIENT_RENDERED_MARKERS = [
+  /self\.__next_f\.push|__NEXT_DATA__/i, // Next.js
+  /data-reactroot|__REACT_DEVTOOLS/i, // React
+  /ng-version|<app-root/i, // Angular
+  /__NUXT__|__nuxt/i, // Nuxt
+  /___gatsby/i, // Gatsby
+  /data-svelte-h|__sveltekit_/i, // SvelteKit
+  /__remixContext/i, // Remix
+  /data-v-app|__VUE__/i, // Vue
+  // A mount point on any element, not just a div.
+  //
+  // This pattern was hardcoded to <div>, and TodoMVC's React example mounts
+  // on <section class="todoapp" id="root">. The result was the worst kind of
+  // miss: a page with literally zero text read as an ordinary page and
+  // indexed as nothing at all. Frameworks mount on whatever element the
+  // author picked, so the element name is not something to assume.
+  /<[a-z][a-z0-9-]*[^>]*\sid=["'](?:root|app|__next|__nuxt|svelte|mount)["']/i,
+];
+
+/**
+ * Whether a page has to be run in a browser to have any content at all.
+ *
+ * `force` is the operator's override, for the case this heuristic cannot cover:
+ * a hand-rolled client-side site with no framework fingerprint, which arrives
+ * as a blank shell and matches nothing. There is no way to infer that from the
+ * markup, so it is a setting rather than a guess.
+ */
+export function needsBrowserRendering(
+  html: string,
+  text: string,
+  force: "auto" | "always" | "never" = "auto",
+) {
+  if (force === "never") return false;
+  if (force === "always") return true;
   if (text.trim().length >= minimumUsefulText) return false;
-  return (
-    /self\.__next_f\.push|__NEXT_DATA__|data-reactroot|ng-version/i.test(
-      html,
-    ) ||
-    /<div[^>]+id=["'](?:root|app|__next)["']/i.test(html)
-  );
+  return CLIENT_RENDERED_MARKERS.some((marker) => marker.test(html));
 }
 
 export type BrowserRenderer = {
@@ -132,6 +169,13 @@ export function createBrowserRenderer({
         const browser = await browserPromise;
         const context = await browser.newContext({
           serviceWorkers: "block",
+          // The same agent string the plain fetcher sends. Chromium otherwise
+          // announces itself as a desktop browser, which is both dishonest and
+          // in practice worse: hosts exist that allow declared bots and block
+          // anything claiming to be Chrome from a datacenter address, so the
+          // rendered half of a crawl could be refused while the fetched half
+          // succeeded - on the same site, in the same run.
+          userAgent: CRAWLER_USER_AGENT,
         });
         await context.route("**/*", async (route) => {
           const request = route.request();

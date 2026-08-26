@@ -8,6 +8,7 @@ import {
   describeImagesForSearch,
   generateGroundedAnswer,
   rewriteSearchQuery,
+  writeDecline,
   streamGroundedAnswer,
 } from "@/lib/llm/client";
 import { suggestFollowUps } from "@/lib/chat/follow-ups";
@@ -1025,7 +1026,22 @@ function coherentEvidence(hits: RetrievalHit[], question: string) {
   return hits.slice(0, 5);
 }
 
-function citedEvidence(answer: string, hits: RetrievalHit[]) {
+/**
+ * The evidence an answer actually leaned on, by the markers it wrote.
+ *
+ * An answer that cites nothing gets no sources. It used to get the first two
+ * hits instead, which produced the failure this guards against: asked to check
+ * its own arithmetic, the agent replied "you are right, it is 23" - a sentence
+ * resting on no page at all - and the widget captioned it "2 sources used" with
+ * two unrelated pages beneath. Showing sources under an answer that does not
+ * rest on them is a false claim of grounding, and a reader who opens one and
+ * finds nothing relevant has learned not to trust the next one either.
+ *
+ * The cost is real and worth paying: a genuinely grounded answer whose model
+ * forgot its markers now shows nothing. Silence is recoverable, a wrong
+ * attribution is not.
+ */
+export function citedEvidence(answer: string, hits: RetrievalHit[]) {
   const indices = [
     ...new Set(
       [...answer.matchAll(/\[([\d,\s]{1,30})\]/g)]
@@ -1034,9 +1050,8 @@ function citedEvidence(answer: string, hits: RetrievalHit[]) {
         .filter((index) => index >= 0 && index < hits.length),
     ),
   ];
-  const selected = indices.length
-    ? indices.map((index) => hits[index])
-    : hits.slice(0, 2);
+  if (!indices.length) return [];
+  const selected = indices.map((index) => hits[index]);
   const seen = new Set<string>();
   return selected
     .filter((hit) => {
@@ -1157,19 +1172,35 @@ function alternativePages(hits: RetrievalHit[], limit = 5) {
  * confident-looking non-answer to a question whose true answer is "no". Saying
  * so and listing what does exist is both honest and more useful.
  */
-function unsupportedAnswer(
+async function unsupportedAnswer(
   agent: Agent,
+  question: string,
   hits: RetrievalHit[],
   confidence: number,
-): AnswerResult {
+): Promise<AnswerResult> {
   const pages = alternativePages(hits);
   const list = pages
     .map((hit) => `- [${hit.title}](${hit.url})`)
     .join("\n");
+  // A decline that repeats what was asked reads as an answer to that person;
+  // one fixed sentence reads as a wall, because it is the same sentence every
+  // visitor has ever received. Falls back to the operator's own message when
+  // the model is slow or unreachable, so this costs phrasing, never the reply.
+  const written = await writeDecline({
+    question,
+    agentName: agent.name,
+    topics: pages.map((hit) => hit.title),
+    providers: providersForAgent({
+      llmBaseUrl: agent.llmBaseUrl,
+      llmApiKey: decryptSecret(agent.llmApiKeyEncrypted),
+      modelName: agent.modelName,
+    }),
+  });
+  const opening = written ?? agent.fallbackMessage;
   return {
     answer: pages.length
-      ? `${agent.fallbackMessage}\n\nHere is what this website does cover:\n${list}`
-      : agent.fallbackMessage,
+      ? `${opening}\n\nHere is what this website does cover:\n${list}`
+      : opening,
     grounded: false,
     confidence,
     citations: [],
@@ -1379,7 +1410,7 @@ export async function answerQuestion(
   // Only the extractive path could contradict that, and it does so by pasting
   // the very text the model just rejected.
   if (generated.status === "declined") {
-    return unsupportedAnswer(agent, evidenceHits, confidence);
+    return unsupportedAnswer(agent, question, evidenceHits, confidence);
   }
 
   const answered = generated.status === "answered" ? generated.text : null;

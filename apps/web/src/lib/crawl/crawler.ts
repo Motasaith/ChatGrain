@@ -44,6 +44,18 @@ export type CrawlOptions = {
    * turned off should not keep feeding the queue through its own links.
    */
   blockedUrls?: Set<string>;
+  /**
+   * Whether links found on a page may be added to the queue.
+   *
+   * False once a list of URLs has been approved. The approved list is the job;
+   * discovering more mid-run would mean crawling pages nobody agreed to, and
+   * would make the total climb while someone is watching it - which is the
+   * thing the review step exists to stop. Links are still collected and
+   * returned as `newUrls`, so the next review can offer them.
+   */
+  followLinks?: boolean;
+  /** Browser rendering policy: detect, force, or never. */
+  renderJs?: "auto" | "always" | "never";
   onProgress?: (progress: {
     discovered: number;
     processed: number;
@@ -100,6 +112,16 @@ export type CrawlResult = {
   stoppedEarly: boolean;
   /** A page was read well enough to identify the site, rather than guessed. */
   brandDetected: boolean;
+  /** Every in-scope URL this run queued, for the review list. */
+  discoveredUrls: string[];
+  /**
+   * In-scope URLs seen on crawled pages that were not part of this run.
+   *
+   * Only populated when `followLinks` is false, where they are the pages the
+   * site has grown since the list was approved. Recorded rather than crawled,
+   * so they can be offered at the next review instead of silently appearing.
+   */
+  newUrls: string[];
 };
 
 /**
@@ -343,6 +365,7 @@ const ignoredRoute =
 
 export function parseRobots(content: string) {
   const disallowed: string[] = [];
+  const sitemaps: string[] = [];
   let applies = false;
   let crawlDelayMs: number | undefined;
   for (const rawLine of content.split(/\r?\n/)) {
@@ -352,6 +375,14 @@ export function parseRobots(content: string) {
     if (separator === -1) continue;
     const key = line.slice(0, separator).trim().toLowerCase();
     const value = line.slice(separator + 1).trim();
+    // Sitemap lines are global: they are not scoped to a user-agent group, so
+    // they are read whether or not the current group applies to us. This is the
+    // site telling us where its own index of itself lives, which beats guessing
+    // at conventional paths.
+    if (key === "sitemap") {
+      if (value) sitemaps.push(value);
+      continue;
+    }
     if (key === "user-agent") {
       // Must match the name we actually send in `public-url.ts`. This read
       // `docentbot` long after the agent string became ChatGrainBot, so any
@@ -371,10 +402,15 @@ export function parseRobots(content: string) {
   const allow = (url: URL) =>
     !disallowed.some((path) => url.pathname.startsWith(path));
   allow.crawlDelayMs = crawlDelayMs;
+  allow.sitemaps = sitemaps;
   return allow;
 }
 
-type RobotsRules = ((url: URL) => boolean) & { crawlDelayMs?: number };
+type RobotsRules = ((url: URL) => boolean) & {
+  crawlDelayMs?: number;
+  /** Sitemaps the site declared. The authoritative answer, when it exists. */
+  sitemaps?: string[];
+};
 
 async function loadRobots(
   origin: string,
@@ -394,17 +430,41 @@ async function loadRobots(
   }
 }
 
+/**
+ * Paths worth guessing when a site does not say where its sitemap is.
+ *
+ * Guessing is the last resort and these are ordered by how often they are
+ * right. /sitemap.xml is the convention; /wp-sitemap.xml is what WordPress 5.5
+ * and later generate by default, which covers a large share of the web on its
+ * own; the rest are what the common SEO plugins produce.
+ */
+const SITEMAP_GUESSES = [
+  "/sitemap.xml",
+  "/sitemap_index.xml",
+  "/wp-sitemap.xml",
+  "/sitemap-index.xml",
+  "/sitemap/sitemap.xml",
+  "/sitemap1.xml",
+];
+
 async function discoverSitemap(
   root: URL,
   fetchPublic: SafeFetcher,
   maximumUrls: number,
+  candidates: string[] = [],
 ) {
-  const queue = [
-    new URL("/sitemap.xml", root),
-    new URL("/sitemap_index.xml", root),
-  ];
+  const queue: URL[] = [];
+  for (const href of candidates) {
+    try {
+      queue.push(new URL(href, root));
+    } catch {
+      // A malformed Sitemap: line is the site's problem, not a reason to stop.
+    }
+  }
+  for (const path of SITEMAP_GUESSES) queue.push(new URL(path, root));
   const visited = new Set<string>();
   const urls = new Set<string>();
+  let foundAt: string | null = null;
   while (
     queue.length &&
     visited.size < 100 &&
@@ -421,6 +481,11 @@ async function discoverSitemap(
       });
       if (!response.ok) continue;
       const xml = await response.text();
+      // The first candidate that answers with a real sitemap is the one worth
+      // telling the operator about; the rest were guesses that missed.
+      if (!foundAt && /<(?:urlset|sitemapindex)(?:\s|>)/i.test(xml)) {
+        foundAt = candidate.href;
+      }
       const sitemapIndex = /<sitemapindex(?:\s|>)/i.test(xml);
       for (const match of xml.matchAll(/<loc>\s*([^<]+?)\s*<\/loc>/gi)) {
         const value = match[1]
@@ -447,7 +512,7 @@ async function discoverSitemap(
       continue;
     }
   }
-  return [...urls];
+  return { urls: [...urls], foundAt };
 }
 
 function matchesPath(
@@ -584,6 +649,8 @@ export async function crawlWebsite({
   seedUrls = [],
   skipUrls = new Set<string>(),
   blockedUrls = new Set<string>(),
+  followLinks = true,
+  renderJs = "auto",
   onProgress,
   onPage,
 }: CrawlOptions): Promise<CrawlResult> {
@@ -611,11 +678,13 @@ export async function crawlWebsite({
     Math.max(DEFAULT_MIN_REQUEST_GAP_MS, allowedByRobots.crawlDelayMs ?? 0),
   );
 
-  const sitemapUrls = await discoverSitemap(
+  const sitemap = await discoverSitemap(
     root,
     fetchPublic,
     limit * 8,
+    allowedByRobots.sitemaps ?? [],
   );
+  const sitemapUrls = sitemap.urls;
   const { queue, queued } = buildCrawlQueue({
     rootHref: root.href,
     sitemapUrls,
@@ -626,6 +695,8 @@ export async function crawlWebsite({
   const pages: ExtractedPage[] = [];
   const failures: Array<{ url: string; reason: string }> = [];
   const contentHashes = new Set<string>();
+  /** In-scope links seen but deliberately not crawled. See `followLinks`. */
+  const newUrls = new Set<string>();
   let brand: SiteBrand | undefined;
   let processed = 0;
   /** Reset by any success; only an unbroken run of failures trips the breaker. */
@@ -679,7 +750,7 @@ export async function crawlWebsite({
             );
           }
           let page = extractPage(html, finalUrl);
-          if (needsBrowserRendering(html, page.text)) {
+          if (needsBrowserRendering(html, page.text, renderJs)) {
             const rendered = await browserRenderer.render(finalUrl);
             html = rendered.html;
             finalUrl = rendered.finalUrl;
@@ -761,16 +832,24 @@ export async function crawlWebsite({
           if (queued.size >= limit * 8) break;
           const next = new URL(link);
           if (
-            next.origin === root.origin &&
-            !queued.has(next.href) &&
-            !blockedUrls.has(next.href) &&
-            !isInfrastructureUrl(next) &&
-            allowedByRobots(next) &&
-            matchesPath(next, includePaths, excludePaths)
+            next.origin !== root.origin ||
+            queued.has(next.href) ||
+            blockedUrls.has(next.href) ||
+            isInfrastructureUrl(next) ||
+            !allowedByRobots(next) ||
+            !matchesPath(next, includePaths, excludePaths)
           ) {
-            queued.add(next.href);
-            queue.push(next.href);
+            continue;
           }
+          if (!followLinks) {
+            // Noted for the next review, not crawled now. Capped so a site that
+            // links to thousands of unseen pages cannot grow this without
+            // bound between one review and the next.
+            if (newUrls.size < 10_000) newUrls.add(next.href);
+            continue;
+          }
+          queued.add(next.href);
+          queue.push(next.href);
         }
         // Links have served their purpose once the queue is extended, and
         // indexing never reads them. Holding tens of thousands of URL strings
@@ -828,6 +907,8 @@ export async function crawlWebsite({
       stoppedEarly,
       /** Whether any page was read well enough to identify the site. */
       brandDetected: Boolean(brand),
+      discoveredUrls: [...queued],
+      newUrls: [...newUrls],
       brand: brand ?? {
         name: root.hostname.replace(/^www\./, ""),
         iconUrl: new URL("/favicon.ico", root).href,
@@ -839,4 +920,160 @@ export async function crawlWebsite({
   } finally {
     await browserRenderer.close();
   }
+}
+/**
+ * Everything the site says it has, without indexing any of it.
+ *
+ * The first half of a reviewed crawl: find the URLs, show them to whoever asked
+ * for the crawl, and index only what they approve. Splitting it this way is
+ * what stops the page count climbing while someone watches it, and it is the
+ * only point at which excluding a page is cheap - after indexing, the work is
+ * already paid for.
+ *
+ * Sitemaps first, and usually last. A site that publishes one is telling us
+ * exactly which pages it considers real, which is both faster and better than
+ * anything link-walking infers: pic-microcontroller.com lists 6,428 pages
+ * across a ten-part sitemap index and answers in under a minute, while walking
+ * its links for 48 hours had reached 17,447 URLs and was still climbing,
+ * because tag archives and Cloudflare decoys link to each other endlessly.
+ *
+ * Link-walking is the fallback for sites with no sitemap, and it costs a fetch
+ * per page. That is the price of the guarantee, and it is still far cheaper
+ * than embedding: fetching is a sub-second request, embedding is a model call
+ * per chunk.
+ */
+/**
+ * How the URL list was obtained, in descending order of how much the site told
+ * us and ascending order of how much we guessed.
+ *
+ * Surfaced to the operator rather than kept internal. "We found 6,428 pages"
+ * and "we found 12 pages by following links because your sitemap is behind a
+ * firewall" call for completely different reactions, and only one of them is
+ * visible without being told.
+ */
+export type SitemapMethod = "provided" | "declared" | "guessed" | "links";
+
+export async function discoverSiteUrls({
+  url: input,
+  pageLimit,
+  includePaths = [],
+  excludePaths = [],
+  trustedInternal = false,
+  sitemapUrl,
+  onProgress,
+}: {
+  url: string;
+  pageLimit: number;
+  includePaths?: string[];
+  excludePaths?: string[];
+  trustedInternal?: boolean;
+  /** A sitemap the operator supplied, tried before anything is guessed. */
+  sitemapUrl?: string | null;
+  onProgress?: (progress: {
+    discovered: number;
+    processed: number;
+  }) => Promise<void> | void;
+}): Promise<{
+  rootUrl: string;
+  urls: string[];
+  /** Whether the list came from the site's own sitemap or from walking links. */
+  fromSitemap: boolean;
+  /** Which of the strategies produced the list. */
+  method: SitemapMethod;
+  /** The sitemap that answered, if one did. */
+  sitemapUrl: string | null;
+  /** Sitemaps robots.txt named, whether or not they could be read. */
+  declaredSitemaps: string[];
+  /** The list hit `pageLimit` and is not the whole site. */
+  truncated: boolean;
+}> {
+  const root = await validatePublicUrl(input, { allowPrivate: trustedInternal });
+  const limit = Math.max(1, Math.min(systemCrawlPageLimit(), pageLimit));
+  const fetchPublic = createSafeFetcher({ allowPrivate: trustedInternal });
+
+  const allowedByRobots = await loadRobots(root.origin, fetchPublic);
+  const allowed = (candidate: URL) =>
+    candidate.origin === root.origin &&
+    !isInfrastructureUrl(candidate) &&
+    allowedByRobots(candidate) &&
+    matchesPath(candidate, includePaths, excludePaths);
+
+  // Ordered by how much the site is telling us versus how much we are guessing:
+  // a sitemap the operator supplied, then one the site declared in robots.txt,
+  // then the conventional paths. Asked for one over the limit, so "there is
+  // more than you asked for" can be reported rather than inferred from an
+  // exactly-full list.
+  const declared = allowedByRobots.sitemaps ?? [];
+  const candidates = [
+    ...(sitemapUrl ? [sitemapUrl] : []),
+    ...declared,
+  ];
+  const sitemap = await discoverSitemap(
+    root,
+    fetchPublic,
+    limit + 1,
+    candidates,
+  );
+  const sitemapUrls = sitemap.urls.filter((href) => {
+    try {
+      return allowed(new URL(href));
+    } catch {
+      return false;
+    }
+  });
+  await onProgress?.({ discovered: sitemapUrls.length, processed: 0 });
+
+  const method: SitemapMethod =
+    sitemap.foundAt && sitemapUrl && sitemap.foundAt === new URL(sitemapUrl, root).href
+      ? "provided"
+      : sitemap.foundAt && declared.some((href) => {
+            try {
+              return new URL(href, root).href === sitemap.foundAt;
+            } catch {
+              return false;
+            }
+          })
+        ? "declared"
+        : "guessed";
+
+  if (sitemapUrls.length > 1) {
+    const urls = [root.href, ...sitemapUrls.filter((href) => href !== root.href)];
+    return {
+      rootUrl: root.href,
+      urls: urls.slice(0, limit),
+      fromSitemap: true,
+      method,
+      sitemapUrl: sitemap.foundAt,
+      declaredSitemaps: declared,
+      truncated: urls.length > limit,
+    };
+  }
+
+  // No usable sitemap. Walk the links, which means fetching pages - but nothing
+  // is extracted for keeps and nothing is embedded, so this is the cheap half
+  // of a crawl rather than a whole one.
+  const walked = await crawlWebsite({
+    url: input,
+    pageLimit: limit,
+    includePaths,
+    excludePaths,
+    trustedInternal,
+    onProgress,
+  });
+  const urls = walked.discoveredUrls.filter((href) => {
+    try {
+      return allowed(new URL(href));
+    } catch {
+      return false;
+    }
+  });
+  return {
+    rootUrl: root.href,
+    urls: urls.slice(0, limit),
+    fromSitemap: false,
+    method: "links",
+    sitemapUrl: null,
+    declaredSitemaps: declared,
+    truncated: urls.length > limit || walked.stoppedEarly,
+  };
 }

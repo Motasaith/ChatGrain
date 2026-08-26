@@ -47,6 +47,8 @@ export const sourceStatus = pgEnum("source_status", [
  */
 export const jobPhase = pgEnum("job_phase", [
   "queued",
+  /** Finding out what the site has, without indexing any of it. */
+  "discovering",
   "crawling",
   /** Reading an upload into text: PDF pages, workbook sheets, CSV rows. */
   "parsing",
@@ -57,6 +59,15 @@ export const jobPhase = pgEnum("job_phase", [
 
 export const jobStatus = pgEnum("job_status", [
   "queued",
+  /**
+   * Discovery is finished and the job is waiting for a person to say which of
+   * the URLs it found should be indexed.
+   *
+   * A deliberate stop, not a fault. It is the only moment at which excluding a
+   * page is free - afterwards the fetching and embedding are already paid for -
+   * and it is what keeps the page count still while someone is reading it.
+   */
+  "awaiting_review",
   "running",
   "succeeded",
   /**
@@ -253,6 +264,27 @@ export const sources = pgTable(
     status: sourceStatus("status").default("pending").notNull(),
     name: text("name").notNull(),
     rootUrl: text("root_url"),
+    /**
+     * A sitemap the operator supplied, tried before anything is guessed.
+     *
+     * Worth a column because the alternative is bad: a site whose sitemap sits
+     * at an unconventional path, or behind a firewall that answers robots.txt
+     * but not XML, falls back to walking links - which on a large site is the
+     * difference between knowing the page list in a minute and inferring a
+     * worse one over hours.
+     */
+    sitemapUrl: text("sitemap_url"),
+    /**
+     * Whether pages are run in a browser before being read.
+     *
+     * "auto" detects the common client-side frameworks by their fingerprints
+     * and renders only when a page arrives with almost no text. That covers
+     * most of the web and costs nothing on an ordinary site. It cannot cover a
+     * hand-rolled client-side site with no framework fingerprint - which is
+     * exactly what "always" is for, and why this is a setting rather than a
+     * cleverer guess.
+     */
+    renderJs: text("render_js").default("auto").notNull(),
     includePaths: text("include_paths").array().default([]).notNull(),
     excludePaths: text("exclude_paths").array().default([]).notNull(),
     pageLimit: integer("page_limit").default(10_000).notNull(),
@@ -650,6 +682,19 @@ export const crawlJobs = pgTable(
      */
     recoveries: integer("recoveries").default(0).notNull(),
     maxRecoveries: integer("max_recoveries").default(10).notNull(),
+    /**
+     * When discovery finished. Null means it has not run, which is how a
+     * resumed job knows to look for URLs rather than start fetching them.
+     */
+    discoveredAt: timestamp("discovered_at", { withTimezone: true }),
+    /**
+     * Skip the review step and index whatever is already selected.
+     *
+     * Set for scheduled re-crawls, which run at three in the morning with
+     * nobody to approve anything. The operator reviews once; the schedule
+     * honours that decision from then on.
+     */
+    autoApprove: boolean("auto_approve").default(false).notNull(),
     priority: integer("priority").default(0).notNull(),
     progress: integer("progress").default(0).notNull(),
     phase: jobPhase("phase").default("queued").notNull(),

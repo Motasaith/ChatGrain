@@ -1,6 +1,10 @@
 import { Braces, Code2, KeyRound, ShieldCheck } from "lucide-react";
+import { publicOrigin } from "@/lib/http/public-origin";
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+// Normalised, not raw. These two strings are printed for people to copy and
+// run, and a trailing slash in the environment turned them into
+// https://example.com//embed.js.
+const appUrl = publicOrigin();
 
 export default function ApiPage() {
   const chat = `curl -X POST ${appUrl}/api/chat/AGENT_ID \\\n  -H "Content-Type: application/json" \\\n  -d '{"sessionId":"your-stable-session-id","message":"How do I get started?"}'`;

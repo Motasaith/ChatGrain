@@ -284,7 +284,7 @@ export async function ensureHomepageAgent() {
     .where(
       and(
         eq(crawlJobs.sourceId, source.id),
-        sql`${crawlJobs.status} in ('queued', 'running')`,
+        sql`${crawlJobs.status} in ('queued', 'awaiting_review', 'running')`,
       ),
     )
     .limit(1);
@@ -292,6 +292,9 @@ export async function ensureHomepageAgent() {
     await db.insert(crawlJobs).values({
       sourceId: source.id,
       priority: 100,
+      // Nobody reviews this one: it is the marketing site indexing itself on a
+      // schedule, with no operator in the loop to approve a URL list.
+      autoApprove: true,
     });
   }
 

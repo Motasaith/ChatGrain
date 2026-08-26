@@ -33,7 +33,7 @@ export async function POST(_: Request, context: Context) {
       .where(
         and(
           eq(crawlJobs.sourceId, sourceId),
-          sql`${crawlJobs.status} in ('queued', 'running')`,
+          sql`${crawlJobs.status} in ('queued', 'awaiting_review', 'running')`,
         ),
       )
       .limit(1);
@@ -65,24 +65,57 @@ export async function POST(_: Request, context: Context) {
  * monthly to daily would still wait out the month.
  */
 const settingsSchema = z.object({
-  refreshIntervalHours: z.number().int().min(1).max(8_760).nullable(),
+  refreshIntervalHours: z.number().int().min(1).max(8_760).nullable().optional(),
+  /** Empty string clears it, which is how "go back to guessing" is expressed. */
+  sitemapUrl: z.string().max(2_000).nullable().optional(),
+  renderJs: z.enum(["auto", "always", "never"]).optional(),
 });
 
 export async function PATCH(request: Request, context: Context) {
   const requestId = crypto.randomUUID();
   try {
     const { agentId, sourceId } = await context.params;
-    await requireSource(agentId, sourceId);
+    const source = await requireSource(agentId, sourceId);
     const input = settingsSchema.parse(await request.json());
+    const changes: Record<string, unknown> = { updatedAt: new Date() };
+    if (input.refreshIntervalHours !== undefined) {
+      changes.refreshIntervalHours = input.refreshIntervalHours;
+      changes.nextSyncAt = input.refreshIntervalHours
+        ? new Date(Date.now() + input.refreshIntervalHours * 60 * 60 * 1000)
+        : null;
+    }
+    if (input.sitemapUrl !== undefined) {
+      const trimmed = input.sitemapUrl?.trim() ?? "";
+      if (!trimmed) {
+        changes.sitemapUrl = null;
+      } else {
+        // Validated here rather than at crawl time, so a typo is reported while
+        // the person who made it is still looking at the field.
+        let parsed: URL;
+        try {
+          parsed = new URL(trimmed);
+        } catch {
+          throw new AppError(
+            "INVALID_SITEMAP_URL",
+            "That does not look like a full URL. It should start with https://",
+            400,
+          );
+        }
+        const root = source.rootUrl ? new URL(source.rootUrl) : null;
+        if (root && parsed.origin !== root.origin) {
+          throw new AppError(
+            "SITEMAP_OFF_SITE",
+            `The sitemap has to be on ${root.origin}.`,
+            400,
+          );
+        }
+        changes.sitemapUrl = parsed.href;
+      }
+    }
+    if (input.renderJs !== undefined) changes.renderJs = input.renderJs;
     const [updated] = await db
       .update(sources)
-      .set({
-        refreshIntervalHours: input.refreshIntervalHours,
-        nextSyncAt: input.refreshIntervalHours
-          ? new Date(Date.now() + input.refreshIntervalHours * 60 * 60 * 1000)
-          : null,
-        updatedAt: new Date(),
-      })
+      .set(changes)
       .where(eq(sources.id, sourceId))
       .returning();
     return NextResponse.json({ data: updated, requestId });

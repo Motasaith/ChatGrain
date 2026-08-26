@@ -1,5 +1,10 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { crawlWebsite, type CrawlPageEvent } from "@/lib/crawl/crawler";
+import {
+  crawlWebsite,
+  discoverSiteUrls,
+  type CrawlPageEvent,
+} from "@/lib/crawl/crawler";
+import { wasFetched } from "@/lib/crawl/outcomes";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -39,6 +44,8 @@ function crawlBatchPages() {
 const PAGE_EVENT_FLUSH_SIZE = 10;
 
 /** Progress is split by phase so a stall can be attributed to a stage. */
+/** Discovery owns the first slice of the bar; it is quick but not instant. */
+const DISCOVERY_PROGRESS_CEILING = 12;
 const CRAWL_PROGRESS_CEILING = 60;
 const EMBED_PROGRESS_CEILING = 92;
 
@@ -82,6 +89,144 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     .set({ status: "training", updatedAt: new Date() })
     .where(eq(agents.id, record.agent.id));
 
+  // ---- Phase one: find out what the site has ---------------------------
+  //
+  // Deliberately separate from fetching, and it ends by stopping. Discovery
+  // costs seconds where indexing costs hours, so this is the only point at
+  // which excluding a page is free - and it is the only point at which the
+  // total is a fixed number rather than one climbing while it is read.
+  const [jobRow] = await db
+    .select({
+      discoveredAt: crawlJobs.discoveredAt,
+      autoApprove: crawlJobs.autoApprove,
+    })
+    .from(crawlJobs)
+    .where(eq(crawlJobs.id, jobId))
+    .limit(1);
+
+  if (jobRow && !jobRow.discoveredAt) {
+    await db
+      .update(crawlJobs)
+      .set({ phase: "discovering", progress: 1, updatedAt: new Date() })
+      .where(eq(crawlJobs.id, jobId));
+
+    const found = await discoverSiteUrls({
+      url: record.source.rootUrl,
+      pageLimit: record.source.pageLimit,
+      includePaths: record.source.includePaths,
+      excludePaths: record.source.excludePaths,
+      sitemapUrl: record.source.sitemapUrl,
+      trustedInternal:
+        process.env.NODE_ENV !== "production" &&
+        record.source.metadata?.managedBy === "docent-homepage" &&
+        record.source.metadata?.trustedInternal === true,
+      onProgress: async ({ discovered }) => {
+        await assertNotCancelled(jobId);
+        await db
+          .update(crawlJobs)
+          .set({
+            pagesDiscovered: discovered,
+            progress: Math.min(DISCOVERY_PROGRESS_CEILING, 1 + Math.round(discovered / 200)),
+            updatedAt: new Date(),
+          })
+          .where(eq(crawlJobs.id, jobId));
+      },
+    });
+
+    // Recorded, not selected. `selected` is absent from the update list so a
+    // URL the operator already turned off stays off through re-discovery, and
+    // `outcome` is only set on insert so a page that was indexed last run does
+    // not have that overwritten with "discovered".
+    for (let offset = 0; offset < found.urls.length; offset += 500) {
+      const batch = found.urls.slice(offset, offset + 500).map((url, index) => ({
+        jobId,
+        sourceId,
+        url: url.slice(0, 2_000),
+        sequence: offset + index,
+        outcome: "discovered",
+        lastSeenAt: new Date(),
+      }));
+      if (!batch.length) continue;
+      await db
+        .insert(crawlPages)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: [crawlPages.sourceId, crawlPages.url],
+          set: { lastSeenAt: sql`excluded.last_seen_at` },
+        });
+    }
+
+    await db
+      .update(crawlJobs)
+      .set({
+        discoveredAt: new Date(),
+        pagesDiscovered: found.urls.length,
+        updatedAt: new Date(),
+      })
+      .where(eq(crawlJobs.id, jobId));
+
+    // Recorded on the source, not only in a log, because the operator is the
+    // one who can act on it: a site whose sitemap could not be read is a site
+    // where supplying one, or lifting a firewall rule for a minute, turns a
+    // long inferred crawl into a short exact one. They cannot decide that
+    // without being told which happened.
+    await db
+      .update(sources)
+      .set({
+        metadata: {
+          ...(record.source.metadata ?? {}),
+          discovery: {
+            method: found.method,
+            sitemapUrl: found.sitemapUrl,
+            declaredSitemaps: found.declaredSitemaps,
+            urls: found.urls.length,
+            truncated: found.truncated,
+            at: new Date().toISOString(),
+          },
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(sources.id, sourceId));
+
+    logger.info(
+      {
+        jobId,
+        sourceId,
+        urls: found.urls.length,
+        method: found.method,
+        sitemapUrl: found.sitemapUrl,
+        truncated: found.truncated,
+        autoApprove: jobRow.autoApprove,
+      },
+      "Crawl discovery finished",
+    );
+
+    if (!jobRow.autoApprove) {
+      // Stop here and hand the job back to the queue in a state that says why.
+      // Not `running`, because nothing is running; not `failed`, because
+      // nothing went wrong.
+      await db.transaction(async (tx) => {
+        await tx
+          .update(crawlJobs)
+          .set({
+            status: "awaiting_review",
+            phase: "discovering",
+            progress: DISCOVERY_PROGRESS_CEILING,
+            lockedAt: null,
+            lockedBy: null,
+            finishedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(crawlJobs.id, jobId));
+        await tx
+          .update(sources)
+          .set({ status: "pending", updatedAt: new Date() })
+          .where(eq(sources.id, sourceId));
+      });
+      return;
+    }
+  }
+
   // The page list is no longer cleared here. It is an inventory of the URLs
   // this source holds, keyed by URL, and a crawl updates it in place - so an
   // operator can open a source a month later and see what is in it, and a
@@ -111,9 +256,16 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
   // Fetched by an earlier attempt of *this* job. Skipping these is what makes a
   // restart resume rather than begin again; rows from previous runs are not
   // included, because their content may have changed since.
+  //
+  // "discovered" is excluded, and the distinction is load-bearing. Discovery
+  // writes a row for every URL it finds, stamped with this same job id, and
+  // those rows record that a URL exists - not that it has been read. Counting
+  // them as fetched made an approved crawl skip its entire list and fail with
+  // "no useful public text", because every page it meant to fetch looked like
+  // one it had already done.
   const fetchedThisRun = new Set(
     inventory
-      .filter((row) => row.jobId === jobId && row.outcome !== "failed")
+      .filter((row) => row.jobId === jobId && wasFetched(row.outcome))
       .map((row) => row.url),
   );
   // Everything known, minus what the operator excluded. Feeding these back in
@@ -202,9 +354,21 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
       process.env.NODE_ENV !== "production" &&
       record.source.metadata?.managedBy === "docent-homepage" &&
       record.source.metadata?.trustedInternal === true,
+    // The approved list, and only it. Discovery has already written every URL
+    // it found into the inventory, so what survives `selected` here is exactly
+    // what someone agreed to index.
     seedUrls,
     skipUrls: fetchedThisRun,
     blockedUrls,
+    // Links found now are recorded for the next review rather than crawled.
+    // Following them would mean indexing pages nobody approved, and would make
+    // the total climb while it is being watched - the thing the review step
+    // exists to prevent.
+    followLinks: false,
+    renderJs: (record.source.renderJs ?? "auto") as
+      | "auto"
+      | "always"
+      | "never",
     onPage: recordPage,
     onProgress: async ({ discovered, processed }) => {
       // Throwing here unwinds out of the crawler, which is the earliest a stop
@@ -239,6 +403,46 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     },
   });
   await flushPageEvents(true);
+
+  // Pages the site has grown since the list was approved. Written as
+  // "discovered" and left unselected-by-default only in the sense that they are
+  // new: the next review shows them, and nothing indexes them until then. This
+  // is why the count on screen can stay still without the site quietly drifting
+  // out of date.
+  if (result.newUrls.length) {
+    for (let offset = 0; offset < result.newUrls.length; offset += 500) {
+      const batch = result.newUrls
+        .slice(offset, offset + 500)
+        .map((url, index) => ({
+          jobId,
+          sourceId,
+          url: url.slice(0, 2_000),
+          sequence: offset + index,
+          // "suggested", not "discovered". A discovered URL came from the site's
+          // own sitemap or from the list someone approved; a suggested one is
+          // something the crawler noticed in passing and nobody has ever looked
+          // at. Keeping them apart is what stops a reviewed list quietly
+          // filling with pages the operator never chose.
+          outcome: "suggested",
+          // Off by default, and deliberately. These are unreviewed guesses -
+          // pagination, tag archives, whatever a template happened to link -
+          // and indexing them without being asked is how a clean corpus turns
+          // into a noisy one. Ignoring this list has no effect on the agent.
+          selected: false,
+          lastSeenAt: new Date(),
+        }));
+      await db
+        .insert(crawlPages)
+        .values(batch)
+        .onConflictDoNothing({
+          target: [crawlPages.sourceId, crawlPages.url],
+        });
+    }
+    logger.info(
+      { jobId, sourceId, newUrls: result.newUrls.length },
+      "New URLs recorded for the next review",
+    );
+  }
 
   await db
     .update(sources)
