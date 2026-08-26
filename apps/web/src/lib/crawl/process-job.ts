@@ -138,14 +138,30 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     // `outcome` is only set on insert so a page that was indexed last run does
     // not have that overwritten with "discovered".
     for (let offset = 0; offset < found.urls.length; offset += 500) {
-      const batch = found.urls.slice(offset, offset + 500).map((url, index) => ({
-        jobId,
-        sourceId,
-        url: url.slice(0, 2_000),
-        sequence: offset + index,
-        outcome: "discovered",
-        lastSeenAt: new Date(),
-      }));
+      // Deduplicated after truncation, not before. Discovery hands back a set,
+      // so these are distinct URLs - but they are cut to 2,000 characters on
+      // the way in, and two long URLs that differ only past that point become
+      // the same row. Postgres refuses the whole statement when an ON CONFLICT
+      // DO UPDATE would touch a row twice, so the cost of that collision is not
+      // one lost URL, it is this entire batch of 500.
+      const batch = Array.from(
+        new Map(
+          found.urls.slice(offset, offset + 500).map((url, index) => {
+            const trimmed = url.slice(0, 2_000);
+            return [
+              trimmed,
+              {
+                jobId,
+                sourceId,
+                url: trimmed,
+                sequence: offset + index,
+                outcome: "discovered",
+                lastSeenAt: new Date(),
+              },
+            ] as const;
+          }),
+        ).values(),
+      );
       if (!batch.length) continue;
       await db
         .insert(crawlPages)
@@ -294,7 +310,20 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
   const flushPageEvents = async (force = false) => {
     if (!pageEventBuffer.length) return;
     if (!force && pageEventBuffer.length < PAGE_EVENT_FLUSH_SIZE) return;
-    const batch = pageEventBuffer;
+    // One row per URL, keeping the last state recorded for it.
+    //
+    // Postgres refuses an ON CONFLICT DO UPDATE whose statement would touch the
+    // same row twice - "cannot affect row a second time" - and it refuses the
+    // whole statement, not the offending row. So a single URL appearing twice
+    // in one flush window threw, the catch below swallowed it, and every page
+    // event in that batch vanished with nothing on screen to say so. A URL
+    // reported under two outcomes in the same window is ordinary: a redirect
+    // followed by the indexing of where it landed does exactly that.
+    //
+    // A Map keeps the last value written for a key, which is the state we want.
+    const batch = Array.from(
+      new Map(pageEventBuffer.map((row) => [row.url, row])).values(),
+    );
     pageEventBuffer = [];
     try {
       // Upsert on the URL. One row per URL per source, so a re-crawl updates

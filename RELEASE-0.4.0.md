@@ -1184,9 +1184,47 @@ Five of five. Marker discipline is good enough that the fallback was not
 holding anything up - it was only ever manufacturing attribution for answers
 that had none.
 
+### 28. One repeated URL destroyed a whole batch of page events
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/crawl/process-job.ts` — `flushPageEvents`, the discovery batch |
+| **Test** | `apps/web/src/lib/crawl/page-batch.test.ts` |
+| **Revert** | `const batch = pageEventBuffer;` |
+
+Found during a deployment, as an uncommitted edit sitting on the production
+server. Someone had hit this in the wild, fixed it there, and the fix was about
+to be overwritten by `git pull`. It belongs in the repository.
+
+Postgres refuses an `ON CONFLICT DO UPDATE` whose statement would touch the same
+row twice - *"cannot affect row a second time"* - and it refuses **the entire
+statement**, not the offending row. So one URL appearing twice in a single flush
+window threw, the surrounding catch swallowed it as "Crawl page events could not
+be stored", and every page event in that batch vanished with nothing on screen
+to explain the gap.
+
+A URL reported twice in one window is ordinary, not exotic: a redirect noticed
+first and the indexing of where it landed second does exactly that.
+
+Confirmed against the real database before fixing - two rows with the same URL
+in one `values()` call, and the insert throws.
+
+Deduplicated by URL, keeping the last state recorded, because the last thing
+written is the page's current state.
+
+**The same hazard, one step removed, in the discovery batch.** Those URLs come
+from a set and are distinct - but they are cut to 2,000 characters on the way
+in, and two long URLs differing only past that point collapse into one row. The
+cost of that collision would not be one lost URL, it would be that batch of 500.
+Deduplicated after truncation rather than trusting the set.
+
+The other two batched writes were checked and are safe: the pasted-URL insert
+deduplicates in `parsePastedUrls`, and the suggestions insert uses
+`ON CONFLICT DO NOTHING`, which tolerates repeats.
+
 ### Verification
 
-442 tests passing, 1 skipped. Typecheck and lint clean.
+447 tests passing, 1 skipped. Typecheck and lint clean.
 
 Tested against live sites, and the testing found a bug.
 
