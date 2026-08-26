@@ -1,6 +1,6 @@
 {
   "name": "@docent/web",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "dev": "concurrently -k -n web,worker,voice -c green,cyan,magenta \"next dev --webpack\" \"tsx watch src/worker-entry.ts\" \"tsx watch --tsconfig tsconfig.voice.json src/voice-entry.ts\"",

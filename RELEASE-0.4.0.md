@@ -1398,18 +1398,88 @@ old code writes to that table through a unique index it does not know about, and
 its page-event upsert will fail and log a warning rather than break the crawl.
 Restore the dump from step 1 only if that matters.
 
-### Every deploy after this one
+## Deploying, from now on
 
 ```bash
 cd /root/chatgrain
 bash scripts/deploy.sh
 ```
 
-It now checks the PM2 process names *before* touching anything. That check
-exists because it did not: the script restarted `docent-app` while this server
-runs `chatgrain`, and since the restart is the last step under `set -e`, the
-failure would have landed after the build had already replaced the running code.
-Override with `PM2_APPS="a b c" bash scripts/deploy.sh` if the names differ.
+That is the whole routine. Everything below is what the script does and why,
+because every check in it is the residue of a deploy that went wrong.
+
+### What it does, in order
+
+**1. Checks the PM2 process names** before touching anything. The script used to
+name `docent-app` while the server ran `chatgrain`, and since the restart is the
+last step under `set -e`, that failure landed *after* the build had already
+replaced the running code. Override with `PM2_APPS="a b c"` if the names differ.
+
+**2. Discards local changes to `package-lock.json`.** npm rewrites it on a
+server whenever platform binaries differ. It is never a change worth keeping and
+it is what silently blocks the pull.
+
+**3. Refuses to run if anything else is modified**, and shows what.
+
+Deliberately a refusal rather than a `git reset --hard`. A production server was
+found carrying an uncommitted one-line fix to `process-job.ts` - a real fix, for
+a Postgres error that silently destroyed a batch of page events, and it was not
+in the repository. A script that discarded local changes automatically would
+have deleted it with no trace. Stopping to show the diff costs a minute; the
+alternative cost is finding that bug a second time.
+
+**4. Pulls, and stops if the release adds migrations.** It names the new `.sql`
+files and prints the `psql` commands for them. `db:push` generates schema
+changes but not data changes, so a migration that has to de-duplicate rows
+before creating a unique index, or add an enum value and then use it, fails
+through push. Apply them, then run the script again: the pull is already done,
+so it finds nothing new and carries on.
+
+**5. `npm ci`, `db:push`, build, restart** with `--update-env`, without which a
+changed `.env` never reaches the processes.
+
+**6. Checks the app actually answers.** Polls `localhost:5000/api/health` for
+twenty seconds and prints the worker's log if nothing comes back. A restart
+that returns cleanly is not evidence the app came back up, and finding that out
+from a customer is the wrong way round. Override the port with `APP_PORT`.
+
+### When it stops
+
+It is meant to. Each exit tells you what to do next, and re-running after you
+have done it is always safe.
+
+| it says | do |
+|---|---|
+| `pm2 is not on PATH` | wrong machine, or pm2 installed for another user |
+| `Not found in pm2: ...` | run `pm2 list`, then set `PM2_APPS` to match |
+| `This checkout has changes that are not in git` | `git diff` and decide - see step 3 |
+| `This release adds migrations` | run the printed `psql` lines, then run the script again |
+| `Deploy finished but the app is down` | the code is deployed; read the log it printed |
+
+### Things it does not do
+
+- **No backup.** The database is on Aiven, which takes its own. A local
+  `pg_dump` cannot help here anyway: the Ubuntu client is 16.x and the server is
+  18.x, and `pg_dump` refuses to dump a newer server. Use the Aiven console's
+  backup or fork to roll back.
+- **No migration running.** By design - see step 4.
+- **No rollback.** If a deploy is bad: `git checkout <previous commit>`,
+  `npm ci`, build, restart. Additive columns mean the previous version runs
+  unchanged against the newer schema, so the schema is best left alone.
+
+### Watch the restart counter
+
+`pm2 list` shows `↺`. A worker that has restarted twenty times in a day is being
+killed by something, and it is worth knowing what:
+
+```bash
+pm2 describe chatgrain-worker | grep -iE "restart|memory|unstable"
+pm2 logs chatgrain-worker --lines 200 --nostream | grep -iE "error|fatal|out of memory" | tail
+```
+
+Since 0.4.0 a restart no longer costs a job its retry budget, so this is no
+longer urgent - but it was silently burning through three attempts per job
+before, and an hourly restart still means something is wrong.
 ---
 
 ## What was measured
