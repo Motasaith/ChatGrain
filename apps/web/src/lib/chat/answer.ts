@@ -979,6 +979,19 @@ export function asksForCorpusOverview(question: string) {
 const OVERVIEW_RETRIEVAL_LIMIT = 40;
 /** Distinct pages handed to the model for an overview question. */
 const OVERVIEW_EVIDENCE_PAGES = 14;
+/**
+ * Total chunks handed to the model for an overview question.
+ *
+ * The page cap above decides how much of the site is represented; this decides
+ * how much of each page is. One chunk per page was breadth without depth, and
+ * for "list everything" that is the wrong half: measured on a real site, the
+ * nine category pages that between them hold all twenty-three viewers each
+ * contributed one chunk out of five or six, so the model was asked to
+ * enumerate a list from a fifth of it.
+ */
+const OVERVIEW_EVIDENCE_CHUNKS = 30;
+/** Stops one long page from spending the whole chunk budget. */
+const OVERVIEW_CHUNKS_PER_PAGE = 4;
 
 function asksForRelatedContent(question: string) {
   return /\b(?:similar|related|alternative|another|other|more like|recommend)\b/i.test(
@@ -992,14 +1005,38 @@ function coherentEvidence(hits: RetrievalHit[], question: string) {
   // Before the single-document branch below: an overview question is the one
   // case where narrowing to the best-matching page is exactly wrong.
   if (asksForCorpusOverview(question)) {
-    const seen = new Set<string>();
-    return hits
-      .filter((hit) => {
-        if (seen.has(hit.documentId)) return false;
-        seen.add(hit.documentId);
-        return true;
-      })
-      .slice(0, OVERVIEW_EVIDENCE_PAGES);
+    // Breadth first: the best chunk from each page, in rank order, which is
+    // exactly what this used to return and decides which pages are represented.
+    const pageOrder: string[] = [];
+    const byPage = new Map<string, RetrievalHit[]>();
+    for (const hit of hits) {
+      const existing = byPage.get(hit.documentId);
+      if (existing) {
+        existing.push(hit);
+        continue;
+      }
+      if (pageOrder.length >= OVERVIEW_EVIDENCE_PAGES) continue;
+      pageOrder.push(hit.documentId);
+      byPage.set(hit.documentId, [hit]);
+    }
+    // Then depth, spent evenly rather than first-come: one more chunk from each
+    // page in turn until the budget runs out. Taking them page by page would
+    // let the highest-ranked page eat the allowance and leave the rest as
+    // single fragments, which is the shape being fixed.
+    const chosen: RetrievalHit[] = [];
+    for (let depth = 0; depth < OVERVIEW_CHUNKS_PER_PAGE; depth += 1) {
+      for (const documentId of pageOrder) {
+        const hit = byPage.get(documentId)?.[depth];
+        if (!hit) continue;
+        chosen.push(hit);
+        if (chosen.length >= OVERVIEW_EVIDENCE_CHUNKS) break;
+      }
+      if (chosen.length >= OVERVIEW_EVIDENCE_CHUNKS) break;
+    }
+    // Grouped by page for the model to read, keeping the page ranking.
+    return pageOrder.flatMap((documentId) =>
+      chosen.filter((hit) => hit.documentId === documentId),
+    );
   }
   if (asksForRelatedContent(question) || requestedProjectList(question)) {
     const seen = new Set<string>();

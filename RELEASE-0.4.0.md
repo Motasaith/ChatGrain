@@ -1222,9 +1222,66 @@ The other two batched writes were checked and are safe: the pasted-URL insert
 deduplicates in `parsePastedUrls`, and the suggestions insert uses
 `ON CONFLICT DO NOTHING`, which tolerates repeats.
 
+### 29. An overview answer saw a fifth of each page
+
+| | |
+|---|---|
+| **Files** | `apps/web/src/lib/chat/answer.ts` — `coherentEvidence`, `OVERVIEW_EVIDENCE_CHUNKS`, `OVERVIEW_CHUNKS_PER_PAGE` |
+| **Test** | `apps/web/src/lib/chat/overview-evidence.test.ts` |
+| **Revert** | Restore the one-chunk-per-page filter in the overview branch. |
+
+Reported as: asked how many viewers the site has, it listed five categories when
+there are nine.
+
+Retrieval was not the problem, and neither was the model. `coherentEvidence`
+took the best chunk from each page and stopped:
+
+```js
+.filter(...)   // one chunk per document
+.slice(0, 14)  // first 14 pages
+```
+
+One chunk per page is right for "what does the CSV viewer do" and exactly wrong
+for "list everything". Measured on the live corpus, the nine category pages that
+between them hold all twenty-three viewers have five or six chunks each - and
+each contributed one. The model was asked to enumerate a complete list from
+about a fifth of the material, and did as well as that allows.
+
+Breadth still decides which pages appear, exactly as before. The remaining
+budget is now spent **evenly** across those pages - one more chunk from each in
+turn - rather than first-come, because first-come lets the top-ranked page
+consume the allowance and leaves the rest as single fragments, which is the same
+fault one level down.
+
+Measured before and after, against the twenty-three viewer pages that exist:
+
+| question | formats named, before | after |
+|---|---|---|
+| how many viewers are there | 5 categories of 9 | **9 of 9, summing to 23** |
+| list all the viewers you have | partial | **23 of 23** |
+| what file types can I open here | partial | **23 of 23** |
+
+Four ordinary questions were re-checked and are untouched, which is expected -
+the branch only runs for overview questions - but worth confirming rather than
+assuming, since the cost of this change is a larger prompt on the questions it
+does affect.
+
+**An idea that did not survive measurement.** The obvious companion fix was to
+rank pages by coverage, so a page mentioning twenty relevant things outranks one
+mentioning three. The data says otherwise: `/categories`, which lists every
+viewer on the site, produced **one** retrieval hit and ranked 35th, while the
+partial category pages produced five or six each and filled the top nine. A
+coverage-by-hit-count boost would have pushed the comprehensive page further
+down. It was not built.
+
+That page is still not reaching the model, and the answers are now complete
+anyway - the nine partial pages, read properly, contain everything it holds.
+Surfacing a page that is the answer without looking like the question is a real
+retrieval problem and remains unsolved.
+
 ### Verification
 
-447 tests passing, 1 skipped. Typecheck and lint clean.
+455 tests passing, 1 skipped. Typecheck and lint clean.
 
 Tested against live sites, and the testing found a bug.
 
