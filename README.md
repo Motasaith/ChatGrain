@@ -462,8 +462,11 @@ psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector"
 npm run db:push
 npm run build
 npm install -g pm2
-pm2 start npm --name docent-web -- run start
-pm2 start npm --name docent-worker -- run worker -w @docent/web
+# These names are what scripts/deploy.sh restarts. Use others if you prefer,
+# and set PM2_APPS to match when deploying.
+pm2 start npm --name chatgrain      -- run start
+pm2 start npm --name chatgrain-worker -- run worker -w @docent/web
+pm2 start npm --name chatgrain-voice  -- run voice -w @docent/web
 pm2 save
 ```
 

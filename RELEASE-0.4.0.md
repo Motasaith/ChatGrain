@@ -1236,6 +1236,144 @@ to a sign-in page, so a crawler sees the login shell and never the inbox. The
 decline was run against the live model, but not through the widget.
 ---
 
+## Deploying this release
+
+Written against a real server: repository at `/root/chatgrain`, PM2 processes
+`chatgrain`, `chatgrain-worker`, `chatgrain-voice`.
+
+**Do not use `scripts/deploy.sh` for this one release.** The script is itself
+changing in this release, and `git pull` runs from inside it - bash reads a
+script incrementally, so replacing the file mid-run is genuinely unsafe. Run the
+steps below by hand this time. Every deploy after this one can use the script.
+
+### 1. Take a backup first
+
+This release changes the shape of a table rather than only adding to it, which
+is the one kind of change worth a backup.
+
+```bash
+cd /root/chatgrain
+DB="$(grep -m1 '^DATABASE_URL=' apps/web/.env.local | cut -d= -f2-)"
+pg_dump "$DB" -Fc -f ~/chatgrain-before-0.4.0.dump
+ls -lh ~/chatgrain-before-0.4.0.dump
+```
+
+### 2. Pull and install
+
+```bash
+cd /root/chatgrain
+git checkout -- package-lock.json    # npm rewrites this on the server
+git pull --ff-only
+npm ci
+```
+
+### 3. Apply the migrations, before the new code starts
+
+Order matters. The new code reads columns that do not exist yet, so these run
+while the old code is still serving.
+
+```bash
+cd /root/chatgrain
+DB="$(grep -m1 '^DATABASE_URL=' apps/web/.env.local | cut -d= -f2-)"
+psql "$DB" -f apps/web/drizzle/0022_page_inventory.sql
+psql "$DB" -f apps/web/drizzle/0023_reviewed_crawl.sql
+psql "$DB" -f apps/web/drizzle/0024_sitemap_url.sql
+psql "$DB" -f apps/web/drizzle/0025_render_js.sql
+```
+
+`0022` and `0023` **must** go through psql rather than `db:push`. 0022 needs a
+de-duplication pass before its new unique index can be created, and push
+generates the index without the dedupe; 0023 adds enum values, and Postgres will
+not add an enum value and use it inside one transaction. All four are written to
+be safe to run twice.
+
+`0022` is the one to watch on a server with real crawl history. It collapses one
+row per URL *per job* into one row per URL, so it will delete rows - the count it
+prints is duplicates being merged, not data being lost.
+
+### 4. Check the environment
+
+Nothing here is required; all have defaults. Worth a look:
+
+```bash
+grep -E '^(EMBEDDING_PROVIDER|CLOUDFLARE_ACCOUNT_ID|CRAWL_BATCH_PAGES|WORKER_HEARTBEAT_MS)=' apps/web/.env.local
+```
+
+| setting | why it matters now |
+|---|---|
+| `EMBEDDING_PROVIDER=cloudflare` | local embedding holds ~2.8 GB before a page is fetched |
+| `CRAWL_BATCH_PAGES=25` | pages held in memory before a batch is committed |
+| `WORKER_HEARTBEAT_MS=5000` | now decides how long a dead worker holds its job - six missed beats and another worker takes over |
+
+### 5. Build and restart
+
+```bash
+cd /root/chatgrain
+npm run build --workspace @docent/web
+pm2 restart chatgrain chatgrain-worker chatgrain-voice --update-env
+pm2 list
+```
+
+`--update-env` matters: without it a changed `.env.local` does not reach the
+processes.
+
+### 6. Verify
+
+```bash
+curl -s localhost:3000/api/health | head -c 400
+pm2 logs chatgrain-worker --lines 40 --nostream
+```
+
+Health should report `"ok":true`, the worker `up`, and `embeddings` should name
+the provider actually configured rather than always saying `local-transformer`,
+which is one of the things this release fixed.
+
+### 7. What changes for whoever uses it
+
+The largest behavioural change in this release is not a bug fix, and it will be
+noticed immediately:
+
+**A crawl no longer runs straight through.** It finds the URLs, stops, and waits
+for someone to approve the list. The Knowledge tab shows *"N pages found.
+Waiting for you"* with a **Review pages** button. Nothing is fetched or indexed
+until that is approved.
+
+Scheduled re-crawls are exempt - they approve themselves from the last review -
+so a Daily/Weekly/Monthly schedule keeps working with nobody awake.
+
+### Rolling back
+
+The code and the schema roll back independently, and only the code needs to.
+
+```bash
+cd /root/chatgrain
+git log --oneline -5          # find the commit before this release
+git checkout <that commit>
+npm ci && npm run build --workspace @docent/web
+pm2 restart chatgrain chatgrain-worker chatgrain-voice --update-env
+```
+
+Every column this release adds is nullable or has a default, so the previous
+version runs unchanged against the new schema. **Leave the migrations in place.**
+The one that is not purely additive is `0022`, which re-keys `crawl_pages` - the
+old code writes to that table through a unique index it does not know about, and
+its page-event upsert will fail and log a warning rather than break the crawl.
+Restore the dump from step 1 only if that matters.
+
+### Every deploy after this one
+
+```bash
+cd /root/chatgrain
+bash scripts/deploy.sh
+```
+
+It now checks the PM2 process names *before* touching anything. That check
+exists because it did not: the script restarted `docent-app` while this server
+runs `chatgrain`, and since the restart is the last step under `set -e`, the
+failure would have landed after the build had already replaced the running code.
+Override with `PM2_APPS="a b c" bash scripts/deploy.sh` if the names differ.
+---
+
 ## What was measured
 
 | | |
