@@ -4,13 +4,15 @@
 **Released:** 2026-08-20
 **Status:** Stable. First release where the answer pipeline is verified end to end.
 
-> Work on `0.4.0` — the worker rewrite from PLAN.md §11, plus nine answer,
-> interface and voice fixes — is in the tree as commit `d409840`, sitting
-> directly on this tag. It is **not released and not stable**: tested on one
-> machine against one site, never run on the VPS. It is written up separately,
-> in [RELEASE-0.4.0.md](RELEASE-0.4.0.md), so that an untested build is not read
-> as a released one, and that file carries the restore point and the revert
-> commands. `0.3.0` below is still the version to go back to.
+> **`0.4.0` is open.** It covers the crawler, the worker, and what the agent
+> says - nine commits on top of this tag, deployed to production on 26 August
+> and still accepting changes. It is written up separately, in
+> [RELEASE-0.4.0.md](RELEASE-0.4.0.md), which carries its restore point
+> (`a0d45bb`), what belongs in it, and what it has not solved.
+>
+> It is **not tagged and not stable**, so `0.3.0` below remains the last fixed
+> point. A change to crawling, indexing, retrieval or the system prompt belongs
+> to `0.4.0`; the admin dashboard is the next version and gets its own.
 
 ---
 

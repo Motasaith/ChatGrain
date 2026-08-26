@@ -1,84 +1,127 @@
-# ChatGrain — 0.4.0 (under test)
+# ChatGrain — 0.4.0 (open)
 
 **Version:** `0.4.0`
-**Status:** **Not a stable release.** Tested locally, on one site, on one
-machine. Not tested on the VPS. Not tested across multiple sites.
-**Covers:** the worker rewrite (PLAN.md §11), four answer-quality fixes, five
-interface and voice fixes, the page inventory, two crawl-pace fixes, the
-reviewed crawl, sitemap transparency, JavaScript rendering, and a contextual
-decline. Each is listed with its file below.
-**Last verified:** 2026-08-21
+**Status:** **Open, and not stable.** Deployed and running in production, but
+still accepting changes. Not tagged, and not folded into `VERSION.md`.
+**Last deployed:** 2026-08-26, commit `a0d45bb`
+
+---
+
+## What this version is about
+
+Two things, and it is worth saying plainly because it decides where the next
+change belongs.
+
+**The machinery that builds the knowledge.** The worker, the crawler, and
+everything between a URL and an indexed page: surviving its own restarts,
+resuming instead of starting over, reporting what it is doing, refusing traps,
+and stopping to ask before it indexes a site.
+
+**What the agent says.** Retrieval, evidence selection, the system prompt, and
+the wording of an answer - including the answers that are refusals.
+
+0.3.0 made answers correct. **0.4.0 made the thing that produces them
+survivable, and made the answers honest about their own limits.**
+
+### Where a change belongs
+
+| a change to | goes in |
+|---|---|
+| crawling, indexing, the worker, the queue | **0.4.0** |
+| retrieval, evidence selection, the system prompt | **0.4.0** |
+| what the widget says, including refusals and citations | **0.4.0** |
+| the admin dashboard | **the next version** |
+
+The next version is the admin dashboard. That work gets its own document and its
+own number.
+
+**This split is by subject, not by date.** A change to the system prompt made
+while the dashboard is being built still belongs to this document, because this
+is where the reasoning about prompts lives. Splitting it by when it happened
+would scatter one argument across two files, and the argument is the thing worth
+keeping - most entries below exist to record why something is the way it is, not
+merely that it changed.
+
+### Why it is still open
+
+Nothing here is finished in the sense that it cannot be improved. Several
+entries end with a limitation stated rather than solved - retrieval cannot
+surface a page that is the answer without looking like the question, a corpus
+cannot be counted, four screens have never been opened in a browser. Those are
+the room this version is deliberately leaving.
+
+It becomes stable when it stops changing, not when it stops being wrong.
 
 ---
 
 ## Restore point
 
-Everything in this document is one commit, sitting directly on the `v0.3.0`
-tag. That is the whole reason it is worth writing down: there is no history to
-untangle, and no cherry-picking to work out later.
+Nine commits sitting on the `v0.3.0` tag.
 
 | | |
 |---|---|
-| **All source changes** | `d409840` — 41 files, +13,261 / −217 |
+| **Current head** | `a0d45bb` |
+| **First commit of this version** | `d409840` |
 | **Its parent** | `80a4962`, which is exactly what `v0.3.0` points at |
-| **Since then** | documentation and `.env.example` only — no source |
+| **Range** | 73 files, +18,722 / −315 |
 | **Branch** | `main` |
-| **Committed** | 2026-08-21 |
 
-`d409840` is where the code last changed. Everything after it touches only
-documentation and configuration, so comparing against `v0.3.0` and comparing
-against `d409840` give the same answer at the source level.
+```
+a0d45bb  overview evidence selection            <- go back to here
+5c63ee7  deploy pre-flight checks, version fix
+8da1cdf  page-event de-duplication
+3d985bc  PM2 app names
+fbed165  reviewed crawl, sitemap transparency
+e8a0b85  page inventory
+503afd9  restore point corrections
+2e58e6b  .env.example for Cloudflare embeddings
+d409840  worker rewrite, search, system status
+80a4962  = v0.3.0
+```
 
-### If this becomes the stable release
+**To come back to this version, use `a0d45bb`** - the most recent commit, not
+the first one. Earlier drafts of this file named `d409840` on the reasoning that
+it was where the source last changed; six commits of source have landed since,
+so that is no longer true.
 
-Tag it, so it gets a permanent name the way `0.3.0` has one. A tag never moves,
-unlike a branch:
+### Going back
 
 ```bash
-# Tags the branch tip, so the documentation commits are included too.
-git tag -a v0.4.0 -m "0.4.0 - a worker that survives its own job"
+git checkout a0d45bb        # this version as deployed
+git checkout v0.3.0         # the last stable release
+git switch -                # return to where you were
+```
+
+Every column added since `v0.3.0` is nullable or has a default, so `0.3.0` runs
+unchanged against the current schema. **Leave the migrations in place.** The one
+exception is `0022`, which re-keys `crawl_pages`: the old code writes to that
+table through a unique index it does not know about, so its page-event upsert
+logs a warning rather than breaking the crawl.
+
+### When it does become stable
+
+```bash
+git tag -a v0.4.0 -m "0.4.0 - the crawler, the worker, and the answer"
 git push origin v0.4.0
 ```
 
-Then fold this file into `VERSION.md` and `CHANGELOG.md` and delete it — it only
-exists to keep an untested build from being read as a released one.
-
-### If it does not
-
-The parent is the 0.3.0 release, so going back is one command. Look around
-without moving your branch:
-
-```bash
-git checkout v0.3.0        # or: git checkout 80a4962
-git switch -               # return to where you were
-```
-
-To undo it on `main` while keeping the history visible — `d409840` is the only
-commit carrying source, so it is the only one that has to be reverted:
-
-```bash
-git revert d409840
-```
-
-The two database columns this release adds are additive and have defaults, so
-`0.3.0` runs unchanged against a database that has them. **Reverting the code
-does not require reverting the schema**, and the migration should be left in
-place.
-
-To back out one fault's fix rather than the whole release, each is listed with
-its file and a one-line revert in the sections above.
+Then fold this file into `VERSION.md` and `CHANGELOG.md` and delete it. It only
+exists to keep an unfinished version from being read as a released one.
 
 ---
 
 ## Why this is a separate file
 
-`VERSION.md` describes `0.3.0`, which is stable and has a tag to go back to.
-This does not, and mixing the two would make an untested build look like a
-released one. Everything here is honest about what was actually run, and the
-[Not proven yet](#not-proven-yet) section is the important part of the document.
+`VERSION.md` describes `0.3.0`, which is stable, tagged, and finished. This
+version is none of those, and folding it in would make an open one read as
+closed. The [Not proven yet](#not-proven-yet) section is the important part of
+this document, and it is the part that would be lost first in a merge.
 
-`package.json` deliberately still reads `0.3.0`. The version number moves when
-this passes on the VPS, not before.
+`package.json` still reads `0.3.0`, and stays there until this version is
+tagged. Not because it is untested - it has been running in production since
+26 August - but because the number names a fixed thing, and this is not fixed
+yet. Moving it while the version is still accepting changes would make it mean
+"roughly what is deployed", which is not worth having.
 
 ---
 
@@ -1331,15 +1374,18 @@ to a sign-in page, so a crawler sees the login shell and never the inbox. The
 decline was run against the live model, but not through the widget.
 ---
 
-## Deploying this release
+## First deployment of this release — a record
+
+*Done on 26 August 2026. Kept because the migrations are one-time and the notes
+below explain why they had to be run the way they were. For any deploy after
+this one, use `scripts/deploy.sh` and see "Deploying, from now on".*
 
 Written against a real server: repository at `/root/chatgrain`, PM2 processes
 `chatgrain`, `chatgrain-worker`, `chatgrain-voice`.
 
-**Do not use `scripts/deploy.sh` for this one release.** The script is itself
-changing in this release, and `git pull` runs from inside it - bash reads a
-script incrementally, so replacing the file mid-run is genuinely unsafe. Run the
-steps below by hand this time. Every deploy after this one can use the script.
+`scripts/deploy.sh` was not used, because the script itself changed in this
+release and `git pull` runs from inside it - bash reads a script incrementally,
+so replacing the file mid-run is unsafe.
 
 ### 1. Take a backup first
 
@@ -1564,13 +1610,18 @@ death in that window freezes the bar in the same place.
 
 ## Not proven yet
 
-Read this before trusting the build.
+Read this before trusting the build. This is the room the version is leaving
+open, and the entries are as much a to-do list as a warning.
 
-- **Never run on the VPS.** Every measurement above is from one Windows
-  developer machine against a remote database. The original fault was reported
-  on the VPS and has not been re-tested there.
-- **One site.** sudoscout.dev, 305 pages. Not a Cloudflare-protected site, not a
-  large site, not a slow site, not a site behind auth.
+**Settled since this list was written:** it now runs on the VPS - deployed
+26 August, all four migrations applied, health green from both localhost and the
+public domain. The worker restart mystery is also closed: PM2's own log shows
+every restart was `exited with code [0] via signal [SIGINT]` on a deploy day,
+with zero unstable restarts. It was never crashing.
+
+- **One site, mostly.** The crawl work was measured against sudoscout.dev
+  (305 pages) and fileviewerhub.com (52). Not a large site, not a slow one, not
+  one behind auth.
 - **The graceful `SIGTERM` handback is not verified end to end.** On Windows a
   signal sent from another process terminates it outright and the handler never
   runs, so the path could not be exercised locally. What was verified is the
@@ -1580,11 +1631,19 @@ Read this before trusting the build.
   `WORKER_RESTARTED` rather than `STALE_JOB_RECOVERED` in `error_code`.
 - **`max_recoveries` has never been reached.** The give-up path — job marked
   failed, source and agent marked broken — is covered by reasoning, not a run.
-- **The original VPS symptom is unexplained.** Locally the killer was `tsx watch`
-  restarting the worker on every file save. The VPS has no file watcher, so
-  something else was restarting it there. Check `pm2 describe` for the restart
-  count and whether `max_memory_restart` is set.
 - **File jobs share the machinery but were not re-tested** after these changes.
+- **No crawl has been run through the review flow on the VPS.** Discovery,
+  approval and indexing are proven end to end against live data from a
+  developer machine; the deployed instance has not yet done one.
+- **Retrieval cannot surface a page that is the answer without looking like the
+  question.** `/categories` lists every viewer on fileviewerhub.com and ranks
+  35th, beaten by nine partial pages whose titles happen to contain the query
+  word. The symptom is gone - the partial pages, read properly, hold everything
+  - but the weakness is not.
+- **A corpus cannot be counted.** "How many X" is answered from a sample, so the
+  agent now declines to give a total rather than inventing one. Doing it
+  properly means routing the question to a query over the index instead of to
+  the model.
 - **`sources`, `agent` and `pinned` still ignore `router.refresh()`.** Only
   `job` was fixed. A newly uploaded source may not appear in the list until the
   page is reloaded.
