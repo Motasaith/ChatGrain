@@ -669,3 +669,128 @@ Replacing the crawler with Crawlee or another framework. That was evaluated in
 INFRASTRUCTURE.md §E2 and remains the right answer for phase 2 scale work, but
 none of the three faults above are fetching problems — they are all in what
 happens to a page after it is fetched.
+
+---
+
+## 12. Next release, 0.5.0 — an administrator who can act
+
+*Written 26 August 2026, after 0.4.0 shipped to production. Discussion and scope
+only; nothing here is built.*
+
+The admin page answers *"is it working?"* and answers it well: runtime health,
+Postgres storage, failed jobs, every agent, recent users, recent crawl jobs, the
+audit trail, operational logs and Sentry issues, on one screen.
+
+It cannot answer *"something is wrong, fix it from here."* Nine panels to look
+at; six things to do, three of which are about deleting inactive users and one
+of which is a Sentry test button. **An administrator who has to open a terminal
+anyway does not have an admin panel, they have a status page.**
+
+### The faults, as observed
+
+Not hypothetical. Each of these happened while building 0.4.0.
+
+**1. A crawl nobody could stop.** A manager started training an agent, left for
+the day, and the job ran overnight stuck at 0%. It was running a version with a
+known fault. Nobody else could stop it: the cancel endpoint resolves the job
+through `agents.workspaceId` and throws `JOB_NOT_FOUND` when it does not match
+the caller's workspace. An administrator gets the same 404 as a stranger. The
+options were to wait for the manager to come back, or to open `psql`.
+
+That is the whole fault in one line:
+
+```js
+if (!result || result.workspaceId !== workspaceId) {
+  throw new AppError("JOB_NOT_FOUND", "Job not found.", 404);
+}
+```
+
+`requireAdminIdentity()` already exists and is already used elsewhere. It is
+simply not applied to anything that touches another workspace's work.
+
+**2. Every list is inert.** Failed jobs are shown, and can be retried - all of
+them, together, with one button. Not this one. Recent crawl jobs are shown and
+cannot be cancelled. Agents are shown and cannot be paused. The dashboard
+reports incidents it has no way to resolve.
+
+**3. A support request cannot be reproduced.** A customer says "it gives me an
+error". There is no way to see what they see. No conversation view, no way to
+look at their agent, no way to stand where they are standing. Support currently
+means asking them for a screenshot and guessing.
+
+**4. Nothing about money.** Every question costs an LLM call and every page
+costs an embedding call. There is no view of spend, no per-workspace usage, and
+no cap. For a paying client this is usually the first question asked and the
+last one this system can answer.
+
+**5. Every limit is global and lives in a file.** Crawl concurrency, page
+limits, the grounding threshold, provider choice - all environment variables.
+Raising one customer's page limit means an SSH session and a restart, applied to
+everybody.
+
+### What to build
+
+**Act on the row you are looking at.** Cancel this job, retry this job, pause
+this agent, re-index this source, delete this document. The machinery mostly
+exists - `cancelJobs`, `/api/jobs/[jobId]/cancel`, the retry path - and is
+locked behind workspace scoping. The change is an administrator route that
+resolves without the workspace filter, writes an audit row, and is refused to
+everyone else.
+
+The audit row is not decoration. An administrator stopping another person's
+crawl is exactly the kind of action that needs to be explainable afterwards,
+and `recordAudit` is already in use on the routes that do less.
+
+**Impersonation, scoped and recorded.** The support case is real and the feature
+is standard, but it is also the largest new privilege in this release, so it
+gets designed rather than added.
+
+- **The administrator stays themselves.** No session is minted for the customer
+  and no credential of theirs is used. `getWorkspaceContext()` gains an override
+  that an administrator may set; the identity underneath does not change.
+- **Read-only by default.** Most support requests are "show me what they see",
+  which needs no writes at all. Writing requires turning it on explicitly, and
+  that is a second audit entry.
+- **Time-boxed.** The override expires on its own. An administrator who forgets
+  to leave is the failure mode to design against, because it is the one that
+  will happen.
+- **Visible the entire time.** A banner that cannot be dismissed. The danger is
+  not an administrator abusing this; it is an administrator forgetting they are
+  in it and mistaking a customer's data for their own.
+- **Every request logged with both identities.** Who acted, as whom, on what.
+
+**Per-workspace limits.** Page limit, refresh cadence, and whether the workspace
+is suspended, as columns rather than environment variables. This is what makes
+"raise this one customer's limit" a click instead of a deploy.
+
+**Usage and cost.** Count the calls that cost money - generations, embeddings,
+speech - per workspace, and show them. A cap can come later; the number has to
+exist first, and nothing counts it today.
+
+### Decisions
+
+**Administrator access is a separate route, not a flag on the existing one.**
+The tempting shortcut is to make `getWorkspaceContext()` return everything when
+the caller is an administrator. That would silently widen every existing
+endpoint at once, including ones written on the assumption that scoping is
+guaranteed. Administrator actions get their own paths under `/api/admin/`, where
+the absence of a workspace filter is the obvious and intended reading.
+
+**Suspend before delete, everywhere.** Deleting a workspace cascades to agents,
+sources, documents and chunks. Every destructive administrator action gets a
+reversible sibling and a confirmation that names what will be lost.
+
+**The dashboard stops being a server component.** It is currently rendered once
+per request with two small client islands. Acting on a row means state, and
+pretending otherwise will produce the same fault found in `agent-studio`, where
+`useState(initialJob)` ignored every `router.refresh()` and the screen quietly
+stopped matching the database.
+
+### Not in scope
+
+**Role-based permissions.** There are two kinds of person today: an
+administrator, decided by an email address in `ADMIN_EMAILS`, and everybody
+else. A real permission model is a larger piece of work and nothing here needs
+it yet. Worth saying out loud so it is a decision rather than an oversight.
+
+**Billing.** Counting usage is in scope; charging for it is not.

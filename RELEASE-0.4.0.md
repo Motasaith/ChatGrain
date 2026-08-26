@@ -32,8 +32,9 @@ survivable, and made the answers honest about their own limits.**
 | what the widget says, including refusals and citations | **0.4.0** |
 | the admin dashboard | **the next version** |
 
-The next version is the admin dashboard. That work gets its own document and its
-own number.
+The next version is the admin dashboard, scoped in
+[PLAN.md §12](Docent_plan/PLAN.md). That work gets its own document and its own
+number.
 
 **This split is by subject, not by date.** A change to the system prompt made
 while the dashboard is being built still belongs to this document, because this
