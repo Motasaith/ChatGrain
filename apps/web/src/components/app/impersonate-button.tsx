@@ -30,14 +30,22 @@ export function ImpersonateButton({
   const { ask, dialog } = useAskDialog();
 
   const start = async () => {
-    const reason = await ask(
-      `View ${workspaceName} as an administrator?\n\n` +
-        "You will see their dashboard exactly as they do. The session is " +
-        "read-only, expires by itself, and is recorded in their audit trail " +
-        "under your name.\n\nWhy are you looking? (optional)",
-      "",
-    );
-    // Cancel returns null; an empty string is someone who chose not to say.
+    const reason = await ask({
+      title: `View ${workspaceName} as an administrator?`,
+      body: (
+        <>
+          You will see their dashboard exactly as they do. The session is{" "}
+          <b>read-only</b>, expires by itself, and is recorded in their audit
+          trail under your name.
+        </>
+      ),
+      confirmLabel: "View as",
+      input: {
+        label: "Why are you looking? (optional)",
+        placeholder: "Support ticket, reported fault, …",
+      },
+    });
+    // Cancel resolves null; an empty string is someone who chose not to say.
     if (reason === null) return;
 
     setBusy(true);

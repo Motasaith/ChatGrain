@@ -39,6 +39,7 @@ export function AdminWorkspaceActions({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { ask, dialog } = useAskDialog();
 
   const send = async (body: Record<string, unknown>) => {
     setBusy(true);
