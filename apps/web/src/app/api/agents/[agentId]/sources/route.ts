@@ -29,6 +29,7 @@ export async function POST(request: Request, context: RouteContext) {
     const pageLimit = enforceCrawlPageLimit(
       input.pageLimit,
       workspace.isAdmin,
+      workspace.workspacePageLimit,
     );
     const url = await validatePublicUrl(input.url);
     const result = await db.transaction(async (tx) => {

@@ -162,9 +162,85 @@ export const workspaces = pgTable("workspaces", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   plan: text("plan").default("community").notNull(),
+  /**
+   * Set when an administrator suspends this workspace, and null otherwise.
+   *
+   * A timestamp rather than a boolean, because "when" is the first thing anyone
+   * asks afterwards and a boolean cannot answer it.
+   *
+   * Suspension stops work being *started* - the worker will not pick up a job
+   * belonging to a suspended workspace - and deliberately does not stop the
+   * widget answering. Silencing a customer's live chat is a far larger act than
+   * pausing their crawls, and an administrator reaching for "suspend" over
+   * runaway cost or abuse is asking for the second, not the first.
+   */
+  suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+  suspendedReason: text("suspended_reason"),
+  /**
+   * A ceiling for this workspace alone, or null to use the installation's.
+   *
+   * The reason this is a column: every limit was an environment variable, so
+   * raising one customer's allowance meant an SSH session, an edit and a
+   * restart - applied to everybody, because there was nowhere else to put it.
+   */
+  pageLimit: integer("page_limit"),
+  /**
+   * The shortest gap this workspace may re-crawl on, in hours, or null for no
+   * floor beyond whatever each source asks for.
+   *
+   * A floor rather than a default, because the problem it solves is cost: a
+   * customer who sets every source to Daily on a large site is expensive, and
+   * an administrator needs a way to slow that down without editing each source
+   * or taking the whole workspace away.
+   */
+  minRefreshHours: integer("min_refresh_hours"),
   settings: jsonb("settings").$type<Record<string, unknown>>().default({}),
   ...timestamps,
 });
+
+/**
+ * What each workspace has cost, rolled up by day.
+ *
+ * A row per call would be the obvious design and the wrong one: a single crawl
+ * of a large site makes tens of thousands of embedding calls, and nobody ever
+ * wants to read them individually. This is the aggregate anybody actually asks
+ * for - "which workspace is expensive" - and it stays small enough to keep
+ * forever.
+ *
+ * Counting is not billing. There is no price here and no cap; the number has to
+ * exist before either can, and today nothing counts at all.
+ */
+export const workspaceUsage = pgTable(
+  "workspace_usage",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** The UTC day, as text, so a rollup never depends on the server's zone. */
+    day: text("day").notNull(),
+    /** generation | embedding | speech */
+    kind: text("kind").notNull(),
+    calls: integer("calls").default(0).notNull(),
+    /**
+     * What was charged for, in whatever the provider counts: passages for an
+     * embedding, characters for speech. Zero when the provider does not say,
+     * which is why `calls` exists separately rather than being inferred.
+     */
+    units: integer("units").default(0).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("workspace_usage_day_kind_unique").on(
+      table.workspaceId,
+      table.day,
+      table.kind,
+    ),
+    index("workspace_usage_workspace_idx").on(table.workspaceId, table.day),
+  ],
+);
 
 export const memberships = pgTable(
   "memberships",

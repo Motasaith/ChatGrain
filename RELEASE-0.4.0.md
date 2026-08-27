@@ -30,11 +30,11 @@ survivable, and made the answers honest about their own limits.**
 | crawling, indexing, the worker, the queue | **0.4.0** |
 | retrieval, evidence selection, the system prompt | **0.4.0** |
 | what the widget says, including refusals and citations | **0.4.0** |
-| the admin dashboard | **the next version** |
+| the admin dashboard, impersonation, cross-account control | **[0.5.0](RELEASE-0.5.0.md)** |
 
 The next version is the admin dashboard, scoped in
-[PLAN.md §12](Docent_plan/PLAN.md). That work gets its own document and its own
-number.
+[PLAN.md §12](Docent_plan/PLAN.md) and now written up in
+[RELEASE-0.5.0.md](RELEASE-0.5.0.md). It is open, uncommitted and not deployed.
 
 **This split is by subject, not by date.** A change to the system prompt made
 while the dashboard is being built still belongs to this document, because this

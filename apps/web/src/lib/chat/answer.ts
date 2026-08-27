@@ -12,6 +12,7 @@ import {
   streamGroundedAnswer,
 } from "@/lib/llm/client";
 import { suggestFollowUps } from "@/lib/chat/follow-ups";
+import { recordUsage } from "@/lib/usage/record";
 import { providersForAgent } from "@/lib/llm/providers";
 import { decryptSecret } from "@/lib/security/secrets";
 import { logger } from "@/lib/observability/logger";
@@ -1155,7 +1156,7 @@ async function llmAnswer(
     )
     .join("\n\n");
   try {
-    return await generateGroundedAnswer({
+    const generated = await generateGroundedAnswer({
       model,
       systemPrompt: agent.systemPrompt,
       context,
@@ -1170,6 +1171,11 @@ async function llmAnswer(
         modelName: agent.modelName,
       }),
     });
+    // Counted after the call returns, not before it, so a provider that refuses
+    // does not appear as spend. Not awaited: this is a statistic, and a
+    // customer's answer must not wait on it or fail with it.
+    void recordUsage(agent.workspaceId, "generation");
+    return generated;
   } catch (error) {
     logger.warn({ error, model }, "Ollama generation failed");
     return { status: "unavailable" } as const;

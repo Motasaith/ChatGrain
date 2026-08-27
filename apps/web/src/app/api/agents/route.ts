@@ -38,7 +38,11 @@ export async function POST(request: Request) {
   try {
     const input = createAgentSchema.parse(await readJson(request));
     const context = await getWorkspaceContext();
-    const pageLimit = enforceCrawlPageLimit(input.pageLimit, context.isAdmin);
+    const pageLimit = enforceCrawlPageLimit(
+      input.pageLimit,
+      context.isAdmin,
+      context.workspacePageLimit,
+    );
     const websiteUrl = input.websiteUrl
       ? await validatePublicUrl(input.websiteUrl)
       : null;

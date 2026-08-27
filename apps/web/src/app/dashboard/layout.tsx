@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { and, count, eq } from "drizzle-orm";
 import { AppShell } from "@/components/app/app-shell";
+import { ImpersonationBanner } from "@/components/app/impersonation-banner";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, conversations } from "@/lib/db/schema";
@@ -34,18 +35,31 @@ export default async function DashboardLayout({
         eq(conversations.status, "escalated"),
       ),
     );
+  // Outside AppShell, above everything. Whose data is on screen is not a
+  // detail of the dashboard; it is the first thing to know about the page, and
+  // it has to survive whatever the page below decides to render.
+  const acting = context.impersonating;
   return (
-    <AppShell
-      identity={{
-        name: context.name,
-        email: context.email,
-        isAdmin: context.isAdmin,
-        workspaceName: context.workspaceName,
-      }}
-      clerkEnabled={process.env.AUTH_PROVIDER === "clerk"}
-      pendingHandoffs={handoffs?.count ?? 0}
-    >
-      {children}
-    </AppShell>
+    <>
+      {acting ? (
+        <ImpersonationBanner
+          canWrite={acting.canWrite}
+          expiresAt={acting.expiresAt}
+          workspaceName={acting.workspaceName}
+        />
+      ) : null}
+      <AppShell
+        identity={{
+          name: context.name,
+          email: context.email,
+          isAdmin: context.isAdmin,
+          workspaceName: context.workspaceName,
+        }}
+        clerkEnabled={process.env.AUTH_PROVIDER === "clerk"}
+        pendingHandoffs={handoffs?.count ?? 0}
+      >
+        {children}
+      </AppShell>
+    </>
   );
 }

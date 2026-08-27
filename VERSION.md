@@ -12,7 +12,13 @@
 >
 > It is **not tagged and not stable**, so `0.3.0` below remains the last fixed
 > point. A change to crawling, indexing, retrieval or the system prompt belongs
-> to `0.4.0`; the admin dashboard is the next version and gets its own.
+> to `0.4.0`.
+>
+> **`0.5.0` is open too, and is not deployed.** It is the admin dashboard:
+> impersonation, cross-account control, and the record of both. It is written up
+> in [RELEASE-0.5.0.md](RELEASE-0.5.0.md). Every part of it is uncommitted work
+> in a local tree, tested locally and never run in production — reverting it
+> means returning to `f9144d3`, the last commit of `0.4.0`.
 
 ---
 

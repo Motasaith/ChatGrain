@@ -674,8 +674,16 @@ happens to a page after it is fetched.
 
 ## 12. Next release, 0.5.0 — an administrator who can act
 
-*Written 26 August 2026, after 0.4.0 shipped to production. Discussion and scope
-only; nothing here is built.*
+*Written 26 August 2026, after 0.4.0 shipped to production.*
+
+> **Status, 27 August 2026: built, locally.** Everything scoped below now exists
+> in the working tree — impersonation, cross-account control over jobs, agents,
+> sources and workspaces, the per-workspace limits, the usage counters and the
+> audit trail. It is **uncommitted and never deployed**; 494 tests pass and the
+> build is clean, and that is the entire extent of the evidence. What it does
+> and what it has not proved are written up in
+> [RELEASE-0.5.0.md](../RELEASE-0.5.0.md). This section is kept as written, as
+> the reasoning the work was built from.
 
 The admin page answers *"is it working?"* and answers it well: runtime health,
 Postgres storage, failed jobs, every agent, recent users, recent crawl jobs, the

@@ -19,6 +19,7 @@ import {
   crawlJobs,
   documents,
   sources,
+  workspaces,
   systemState,
 } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
@@ -76,16 +77,42 @@ async function scheduleRefreshes() {
   if (Date.now() - lastRefreshScan < 60_000) return;
   lastRefreshScan = Date.now();
   const due = await db
-    .select({ id: sources.id })
+    .select({
+      id: sources.id,
+      lastSyncedAt: sources.lastSyncedAt,
+      minRefreshHours: workspaces.minRefreshHours,
+      suspendedAt: workspaces.suspendedAt,
+    })
     .from(sources)
+    .innerJoin(agents, eq(agents.id, sources.agentId))
+    .innerJoin(workspaces, eq(workspaces.id, agents.workspaceId))
     .where(
       and(
         eq(sources.status, "ready"),
         lte(sources.nextSyncAt, new Date()),
+        // A suspended workspace schedules nothing. Without this its sources
+        // would keep queuing jobs the worker then refuses to claim, and the
+        // queue would fill with work that can never run.
+        isNull(workspaces.suspendedAt),
       ),
     )
     .limit(50);
   for (const source of due) {
+    // A floor an administrator set on the whole workspace, applied on top of
+    // whatever cadence the source asks for. The source is not rewritten - the
+    // customer keeps the setting they chose, and it simply does not fire more
+    // often than this until the floor is lifted.
+    if (source.minRefreshHours && source.lastSyncedAt) {
+      const earliest =
+        source.lastSyncedAt.getTime() + source.minRefreshHours * 60 * 60 * 1000;
+      if (Date.now() < earliest) {
+        await db
+          .update(sources)
+          .set({ nextSyncAt: new Date(earliest), updatedAt: new Date() })
+          .where(eq(sources.id, source.id));
+        continue;
+      }
+    }
     const [active] = await db
       .select({ id: crawlJobs.id })
       .from(crawlJobs)
@@ -328,8 +355,11 @@ async function warnAboutPeers() {
 
 async function claimJob() {
   const candidates = await db
-    .select()
+    .select({ job: crawlJobs })
     .from(crawlJobs)
+    .innerJoin(sources, eq(sources.id, crawlJobs.sourceId))
+    .innerJoin(agents, eq(agents.id, sources.agentId))
+    .innerJoin(workspaces, eq(workspaces.id, agents.workspaceId))
     .where(
       and(
         eq(crawlJobs.status, "queued"),
@@ -337,10 +367,16 @@ async function claimJob() {
         // its first checkpoint; this only avoids starting one needlessly.
         isNull(crawlJobs.cancelRequestedAt),
         lte(crawlJobs.nextAttemptAt, new Date()),
+        // A suspended workspace does no work. Its jobs are left queued rather
+        // than failed, so lifting the suspension resumes them instead of
+        // requiring someone to notice and start each one again - suspension is
+        // meant to be the reversible half of deleting a workspace.
+        isNull(workspaces.suspendedAt),
       ),
     )
     .orderBy(desc(crawlJobs.priority), asc(crawlJobs.createdAt))
-    .limit(1);
+    .limit(1)
+    .then((rows) => rows.map((row) => row.job));
   const candidate = candidates[0];
   if (!candidate) return null;
 

@@ -1,4 +1,8 @@
 import Link from "next/link";
+import { AdminAgentActions } from "@/components/app/admin-agent-actions";
+import { AdminJobActions } from "@/components/app/admin-job-actions";
+import { AdminWorkspaceActions } from "@/components/app/admin-workspace-actions";
+import { ImpersonateButton } from "@/components/app/impersonate-button";
 import { notFound } from "next/navigation";
 import {
   Activity,
@@ -28,6 +32,7 @@ import {
   systemLogs,
   systemState,
   users,
+  workspaceUsage,
   workspaces,
 } from "@/lib/db/schema";
 
@@ -169,6 +174,7 @@ async function loadAdminData() {
     recentJobs,
     failedJobs,
     allAgents,
+    allWorkspaces,
     recentAudit,
     recentSystemLogs,
     states,
@@ -187,9 +193,26 @@ async function loadAdminData() {
         .from(users)
         .orderBy(desc(users.lastSeenAt))
         .limit(10),
+      // Joined rather than selected bare. A row that says only "running" and a
+      // job id is not something anyone can act on - and acting on it is the
+      // point now, so it has to say whose crawl it is.
       db
-        .select()
+        .select({
+          id: crawlJobs.id,
+          status: crawlJobs.status,
+          phase: crawlJobs.phase,
+          progress: crawlJobs.progress,
+          pagesProcessed: crawlJobs.pagesProcessed,
+          pagesDiscovered: crawlJobs.pagesDiscovered,
+          updatedAt: crawlJobs.updatedAt,
+          sourceName: sources.name,
+          agentName: agents.name,
+          workspaceName: workspaces.name,
+        })
         .from(crawlJobs)
+        .innerJoin(sources, eq(sources.id, crawlJobs.sourceId))
+        .innerJoin(agents, eq(agents.id, sources.agentId))
+        .innerJoin(workspaces, eq(workspaces.id, agents.workspaceId))
         .orderBy(desc(crawlJobs.updatedAt))
         .limit(10),
       // Failed jobs carry the message that explains the failure; the summary
@@ -224,6 +247,7 @@ async function loadAdminData() {
           status: agents.status,
           createdAt: agents.createdAt,
           workspaceName: workspaces.name,
+          workspaceId: workspaces.id,
           sourceCount: sql<number>`(
             select count(*)::int from ${sources} where ${sources.agentId} = ${agents.id}
           )`,
@@ -235,6 +259,39 @@ async function loadAdminData() {
         .from(agents)
         .innerJoin(workspaces, eq(workspaces.id, agents.workspaceId))
         .orderBy(desc(agents.createdAt))
+        .limit(40),
+      // Every workspace, with the two things an administrator can act on and
+      // the counts that make the decision possible.
+      db
+        .select({
+          id: workspaces.id,
+          name: workspaces.name,
+          plan: workspaces.plan,
+          suspendedAt: workspaces.suspendedAt,
+          suspendedReason: workspaces.suspendedReason,
+          pageLimit: workspaces.pageLimit,
+          minRefreshHours: workspaces.minRefreshHours,
+          createdAt: workspaces.createdAt,
+          agentCount: sql<number>`(
+            select count(*)::int from ${agents} where ${agents.workspaceId} = ${workspaces.id}
+          )`,
+          // Thirty days, because "which workspace is expensive" is a question
+          // about a trend and a single day answers it badly.
+          answersLast30: sql<number>`(
+            select coalesce(sum(calls), 0)::int from ${workspaceUsage}
+            where ${workspaceUsage.workspaceId} = ${workspaces.id}
+              and ${workspaceUsage.kind} = 'generation'
+              and ${workspaceUsage.day} >= to_char(now() - interval '30 days', 'YYYY-MM-DD')
+          )`,
+          passagesLast30: sql<number>`(
+            select coalesce(sum(units), 0)::int from ${workspaceUsage}
+            where ${workspaceUsage.workspaceId} = ${workspaces.id}
+              and ${workspaceUsage.kind} = 'embedding'
+              and ${workspaceUsage.day} >= to_char(now() - interval '30 days', 'YYYY-MM-DD')
+          )`,
+        })
+        .from(workspaces)
+        .orderBy(desc(workspaces.createdAt))
         .limit(40),
       db
         .select()
@@ -258,6 +315,7 @@ async function loadAdminData() {
     tableSizes,
     failedJobs,
     allAgents,
+    allWorkspaces,
     recentUsers,
     recentJobs,
     recentAudit,
@@ -389,6 +447,68 @@ export default async function AdminPage() {
       <section className="app-card admin-list-card">
         <div className="app-card-head">
           <div>
+            <h2>Workspaces</h2>
+            <p>Every account here, and what it is allowed to do.</p>
+          </div>
+          <ShieldCheck size={18} />
+        </div>
+        <div className="admin-table-scroll">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Workspace</th>
+                <th>Plan</th>
+                <th>Agents</th>
+                <th title="Answers generated in the last 30 days">Answers</th>
+                <th title="Passages embedded in the last 30 days">Passages</th>
+                <th>State</th>
+                <th>Created</th>
+                <th aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {data.allWorkspaces.map((workspace) => (
+                <tr key={workspace.id}>
+                  <td>{workspace.name}</td>
+                  <td>{workspace.plan}</td>
+                  <td>{workspace.agentCount}</td>
+                  <td>{workspace.answersLast30.toLocaleString()}</td>
+                  <td>{workspace.passagesLast30.toLocaleString()}</td>
+                  <td>
+                    {workspace.suspendedAt ? (
+                      <i
+                        className="status-pill status-error"
+                        title={workspace.suspendedReason ?? undefined}
+                      >
+                        suspended
+                      </i>
+                    ) : (
+                      <i className="status-pill status-ready">active</i>
+                    )}
+                  </td>
+                  <td>{formatDate(workspace.createdAt)}</td>
+                  <td>
+                    <AdminWorkspaceActions
+                      minRefreshHours={workspace.minRefreshHours}
+                      name={workspace.name}
+                      pageLimit={workspace.pageLimit}
+                      suspended={Boolean(workspace.suspendedAt)}
+                      workspaceId={workspace.id}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {data.allWorkspaces.length ? null : (
+          <p className="admin-empty">No workspaces yet.</p>
+        )}
+      </section>
+
+      <section className="app-card admin-list-card">
+        <div className="app-card-head">
+          <div>
             <h2>All agents</h2>
             <p>Every agent on this installation, newest first.</p>
           </div>
@@ -404,6 +524,7 @@ export default async function AdminPage() {
                 <th>Sources</th>
                 <th>Chats</th>
                 <th>Created</th>
+                <th aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -417,6 +538,19 @@ export default async function AdminPage() {
                   <td>{agent.sourceCount}</td>
                   <td>{agent.conversationCount}</td>
                   <td>{formatDate(agent.createdAt)}</td>
+                  <td>
+                    <span className="admin-row-actions">
+                      <AdminAgentActions
+                        agentId={agent.id}
+                        agentName={agent.name}
+                        status={agent.status}
+                      />
+                      <ImpersonateButton
+                        workspaceId={agent.workspaceId}
+                        workspaceName={agent.workspaceName}
+                      />
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -452,8 +586,21 @@ export default async function AdminPage() {
             {data.recentJobs.map((job) => (
               <div key={job.id}>
                 <span className={`admin-job-dot ${job.status}`} />
-                <span><b>{job.status}</b><small>{job.id}</small></span>
-                <span className="admin-list-meta">{job.pagesProcessed}/{job.pagesDiscovered} pages</span>
+                <span>
+                  <b>{job.sourceName}</b>
+                  <small>
+                    {job.workspaceName} · {job.agentName} · {job.status}
+                    {job.status === "running" ? ` · ${job.progress}%` : ""}
+                  </small>
+                </span>
+                <span className="admin-list-meta">
+                  {job.pagesProcessed}/{job.pagesDiscovered} pages
+                </span>
+                <AdminJobActions
+                  jobId={job.id}
+                  label={`${job.sourceName} (${job.workspaceName})`}
+                  status={job.status}
+                />
               </div>
             ))}
           </div>

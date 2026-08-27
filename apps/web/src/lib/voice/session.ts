@@ -4,6 +4,7 @@ import { answerQuestionStream, type AnswerHistoryMessage } from "@/lib/chat/answ
 import { db } from "@/lib/db/client";
 import { conversations, messages } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
+import { recordUsage } from "@/lib/usage/record";
 import { pcmDurationMs } from "@/lib/voice/audio";
 import {
   CAPTURE_SAMPLE_RATE,
@@ -244,6 +245,13 @@ export class VoiceSession {
     let audioRate = 0;
     const speak = async (text: string) => {
       if (!speaking || signal.aborted) return;
+      // Counted in characters, because that is what a hosted speech service
+      // charges for. Recorded before synthesis rather than after: the cost is
+      // incurred by asking, and a caller interrupting halfway through does not
+      // get the first half free.
+      void recordUsage(this.deps.agent.workspaceId, "speech", {
+        units: text.length,
+      });
       for await (const { pcm, sampleRate } of synthesizeSpeech(text, { signal })) {
         if (signal.aborted) return;
         // The rate comes from the speech server rather than configuration, and

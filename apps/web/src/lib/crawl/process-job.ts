@@ -5,6 +5,7 @@ import {
   type CrawlPageEvent,
 } from "@/lib/crawl/crawler";
 import { wasFetched } from "@/lib/crawl/outcomes";
+import { recordUsage } from "@/lib/usage/record";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -650,6 +651,11 @@ export async function processCrawlJob(jobId: string, sourceId: string) {
     ) {
       const batch = textChunks.slice(offset, offset + EMBEDDING_BATCH_SIZE);
       const embeddings = await embedTexts(batch.map((item) => item.content));
+      // Passages, not pages: a provider charges for what it embedded, and one
+      // page can be twenty of these.
+      void recordUsage(record.agent.workspaceId, "embedding", {
+        units: batch.length,
+      });
       embeddedChunks.push(
         ...batch.map((item, index) => ({
           ...item,

@@ -11657,3 +11657,281 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 .source-pages-discovery-help li + li {
   margin-top: 5px;
 }
+
+/* Impersonation ------------------------------------------------------------
+   A bar that cannot be dismissed. The danger is not misuse; it is an
+   administrator forgetting they are in someone else's account and reading it
+   as their own, because the whole point is that it looks identical. */
+
+.impersonation-banner {
+  position: sticky;
+  z-index: 200;
+  top: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 9px 16px;
+  color: #3a2c05;
+  /* A colour used nowhere else in the product, so it never reads as chrome. */
+  background: repeating-linear-gradient(
+    135deg,
+    #f7d774,
+    #f7d774 12px,
+    #f2ce62 12px,
+    #f2ce62 24px
+  );
+  box-shadow: 0 2px 10px -4px rgb(58 44 5 / 45%);
+  font-size: 12.5px;
+}
+
+/* Write access is the rarer and more dangerous state, so it looks different. */
+.impersonation-banner.is-write {
+  color: #4a1410;
+  background: repeating-linear-gradient(
+    135deg,
+    #f3a99f,
+    #f3a99f 12px,
+    #eb9a8f 12px,
+    #eb9a8f 24px
+  );
+}
+
+.impersonation-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: rgb(255 255 255 / 65%);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.impersonation-banner > b {
+  flex: none;
+  font-size: 13.5px;
+}
+
+.impersonation-banner > small {
+  min-width: 0;
+  flex: 1;
+  opacity: 0.85;
+}
+
+.impersonation-banner > em {
+  flex: none;
+  border-radius: 6px;
+  padding: 2px 7px;
+  background: rgb(255 255 255 / 55%);
+  font-family: var(--font-mono), monospace;
+  font-size: 11.5px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.impersonation-banner > button {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+  border: 1px solid rgb(58 44 5 / 30%);
+  border-radius: 8px;
+  padding: 5px 11px;
+  color: inherit;
+  background: rgb(255 255 255 / 70%);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.impersonation-banner > button:hover:not(:disabled) {
+  background: #fff;
+}
+
+.impersonation-banner > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Admin row actions -------------------------------------------------------- */
+
+.admin-job-actions,
+.admin-impersonate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-job-actions > button,
+.admin-impersonate > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 9px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+}
+
+.admin-job-actions > button:hover:not(:disabled),
+.admin-impersonate > button:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.admin-job-actions > button:disabled,
+.admin-impersonate > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.admin-job-actions > em,
+.admin-impersonate > em {
+  max-width: 160px;
+  overflow: hidden;
+  color: #92312a;
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Row controls ------------------------------------------------------- */
+
+.admin-workspace-actions,
+.admin-agent-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.admin-workspace-actions > button,
+.admin-agent-actions > button,
+.admin-source-row > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 9px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.admin-workspace-actions > button:hover:not(:disabled),
+.admin-agent-actions > button:hover:not(:disabled),
+.admin-source-row > button:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+/* Resuming is the reassuring action, so it reads as one. */
+.admin-workspace-actions > button.is-suspended,
+.admin-agent-actions > button.is-suspended {
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+}
+
+.admin-workspace-actions > button:disabled,
+.admin-agent-actions > button:disabled,
+.admin-source-row > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.admin-workspace-actions > em,
+.admin-agent-actions > em {
+  max-width: 150px;
+  overflow: hidden;
+  color: #92312a;
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Destructive actions look destructive, and only appear once suspension has
+   already been tried - so this red is a last step, never a first one. */
+.admin-workspace-actions > button.is-destructive {
+  border-color: color-mix(in srgb, #92312a 35%, transparent);
+  color: #92312a;
+  background: color-mix(in srgb, #92312a 7%, transparent);
+}
+
+.admin-workspace-actions > button.is-destructive:hover:not(:disabled) {
+  color: #fff;
+  background: #92312a;
+}
+
+/* Impersonation sits beside the repair controls rather than in a column of its
+   own: they are all "act on this row", and separating them implied an order
+   that does not exist. */
+.admin-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* The source list is anchored to the button that opened it. Position is
+   relative on the wrapper so a long list in the last table row does not stretch
+   the table itself. */
+.admin-agent-actions {
+  position: relative;
+}
+
+.admin-source-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 260px;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 12%);
+}
+
+.admin-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-source-row > b {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-source-row > i {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}

@@ -57,14 +57,44 @@ export function crawlPageLimit(isAdmin: boolean) {
       );
 }
 
-export function enforceCrawlPageLimit(value: number, isAdmin: boolean) {
-  const maximum = crawlPageLimit(isAdmin);
+/**
+ * The ceiling that applies to one workspace.
+ *
+ * A workspace may carry its own, set by an administrator. It is honoured in
+ * both directions - a workspace can be given more than the installation's
+ * default, or held below it - because both are things an administrator needs:
+ * one customer with a large site, and one customer whose crawls are costing too
+ * much.
+ *
+ * Null means "no override", which is not the same as zero and must not be
+ * confused with it.
+ */
+export function workspaceCrawlPageLimit(
+  isAdmin: boolean,
+  workspaceLimit: number | null | undefined,
+) {
+  if (typeof workspaceLimit === "number" && workspaceLimit > 0) {
+    return workspaceLimit;
+  }
+  return crawlPageLimit(isAdmin);
+}
+
+export function enforceCrawlPageLimit(
+  value: number,
+  isAdmin: boolean,
+  workspaceLimit?: number | null,
+) {
+  const maximum = workspaceCrawlPageLimit(isAdmin, workspaceLimit);
   if (value > maximum) {
+    const overridden =
+      typeof workspaceLimit === "number" && workspaceLimit > 0;
     throw new AppError(
       "CRAWL_PAGE_LIMIT_EXCEEDED",
-      isAdmin
-        ? `Administrator crawls are limited to ${maximum.toLocaleString()} pages by this deployment. Increase ADMIN_CRAWL_MAX_PAGES to raise it.`
-        : `Website crawls are limited to ${maximum.toLocaleString()} pages.`,
+      overridden
+        ? `This workspace is limited to ${maximum.toLocaleString()} pages. An administrator can change it.`
+        : isAdmin
+          ? `Administrator crawls are limited to ${maximum.toLocaleString()} pages by this deployment. Increase ADMIN_CRAWL_MAX_PAGES to raise it.`
+          : `Website crawls are limited to ${maximum.toLocaleString()} pages.`,
       422,
     );
   }
