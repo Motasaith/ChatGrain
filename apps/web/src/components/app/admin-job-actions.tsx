@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CircleStop, LoaderCircle, RotateCcw } from "lucide-react";
+import { useAskDialog } from "@/components/app/ask-dialog";
 
 const ACTIVE = new Set(["queued", "awaiting_review", "running"]);
 const RETRYABLE = new Set(["failed", "partial", "cancelled"]);
@@ -32,15 +33,23 @@ export function AdminJobActions({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { ask, dialog } = useAskDialog();
 
   const act = async (action: "cancel" | "retry") => {
     if (action === "cancel") {
-      const confirmed = window.confirm(
-        `Stop the crawl of ${label}?\n\nThis belongs to another workspace. ` +
-          `Whatever it has already indexed is kept, and the action is recorded ` +
-          `in their audit trail under your name.`,
-      );
-      if (!confirmed) return;
+      const confirmed = await ask({
+        title: `Stop the crawl of ${label}?`,
+        body: (
+          <>
+            This belongs to another workspace. Whatever it has already indexed
+            is kept, and the action is recorded in their audit trail under your
+            name.
+          </>
+        ),
+        confirmLabel: "Stop the crawl",
+        danger: true,
+      });
+      if (confirmed === null) return;
     }
     setBusy(true);
     setError(null);
@@ -66,6 +75,7 @@ export function AdminJobActions({
 
   return (
     <span className="admin-job-actions">
+      {dialog}
       {error ? <em title={error}>{error}</em> : null}
       {ACTIVE.has(status) ? (
         <button

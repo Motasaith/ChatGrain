@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Wrench,
 } from "lucide-react";
+import { useAskDialog } from "@/components/app/ask-dialog";
 
 type SourceRow = {
   id: string;
@@ -49,17 +50,24 @@ export function AdminAgentActions({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sources, setSources] = useState<SourceRow[] | null>(null);
+  const { ask, dialog } = useAskDialog();
 
   const paused = status === "paused";
 
   const toggle = async () => {
     if (!paused) {
-      const ok = window.confirm(
-        `Pause ${agentName}?\n\n` +
-          "Any crawl running now is stopped, and no new one starts. Queued " +
-          "work is kept and resumes when you unpause.",
-      );
-      if (!ok) return;
+      const ok = await ask({
+        title: `Pause ${agentName}?`,
+        body: (
+          <>
+            Any crawl running now is stopped, and no new one starts. Queued work
+            is kept and resumes when you unpause.
+          </>
+        ),
+        confirmLabel: "Pause",
+        danger: true,
+      });
+      if (ok === null) return;
     }
     setBusy(true);
     setError(null);
@@ -103,13 +111,19 @@ export function AdminAgentActions({
   };
 
   const reindex = async (source: SourceRow) => {
-    const ok = window.confirm(
-      `Re-index ${source.name}?\n\n` +
-        `This re-crawls the ${source.documents.toLocaleString()} page(s) ` +
-        "already selected for this source and replaces what they say. The " +
-        "agent keeps answering from the old pages until the crawl finishes.",
-    );
-    if (!ok) return;
+    const ok = await ask({
+      title: `Re-index ${source.name}?`,
+      body: (
+        <>
+          This re-crawls the <b>{source.documents.toLocaleString()}</b> page
+          {source.documents === 1 ? "" : "s"} already selected for this source
+          and replaces what they say. The agent keeps answering from the old
+          pages until the crawl finishes.
+        </>
+      ),
+      confirmLabel: "Re-index",
+    });
+    if (ok === null) return;
     setBusy(true);
     setError(null);
     try {
@@ -132,6 +146,7 @@ export function AdminAgentActions({
 
   return (
     <span className="admin-agent-actions">
+      {dialog}
       {error ? <em title={error}>{error}</em> : null}
       <button
         className={paused ? "is-suspended" : ""}

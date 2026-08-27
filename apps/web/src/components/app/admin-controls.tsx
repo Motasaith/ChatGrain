@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Trash2,
 } from "lucide-react";
+import { useAskDialog } from "@/components/app/ask-dialog";
 
 type MaintenanceAction =
   | "cleanup-preview"
@@ -20,13 +21,22 @@ export function AdminControls() {
   const router = useRouter();
   const [busy, setBusy] = useState<MaintenanceAction | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  const { ask, dialog } = useAskDialog();
 
   async function run(action: MaintenanceAction) {
     if (
       action === "cleanup-run" &&
-      !window.confirm(
-        "Delete ChatGrain data for non-admin accounts inactive beyond the retention period? This cannot be undone.",
-      )
+      (await ask({
+        title: "Delete inactive accounts?",
+        body: (
+          <>
+            This removes ChatGrain data for non-administrator accounts that have
+            been inactive beyond the retention period. It cannot be undone.
+          </>
+        ),
+        confirmLabel: "Delete inactive accounts",
+        danger: true,
+      })) === null
     ) {
       return;
     }
@@ -63,6 +73,7 @@ export function AdminControls() {
 
   return (
     <section className="admin-control-card">
+      {dialog}
       <div className="app-card-head">
         <div>
           <h2>Maintenance controls</h2>

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
+import { useAskDialog } from "@/components/app/ask-dialog";
 
 /**
  * Per-user administrative actions.
@@ -23,6 +24,7 @@ export function AdminUserActions({
   const router = useRouter();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const { ask, dialog } = useAskDialog();
 
   async function toggleExempt() {
     setBusy("exempt");
@@ -45,10 +47,25 @@ export function AdminUserActions({
   }
 
   async function remove() {
-    const typed = window.prompt(
-      `Deleting ${email} also deletes any workspace they are the last member of, including its agents, sources and conversations.\n\nType the email address to confirm.`,
-    );
-    if (typed?.trim().toLowerCase() !== email.toLowerCase()) return;
+    // The confirm button will not enable until the address matches, so a
+    // resolved value here is already the right one.
+    const typed = await ask({
+      title: `Delete ${email}?`,
+      body: (
+        <>
+          This also deletes any workspace they are the last member of, including
+          its agents, sources and conversations.
+        </>
+      ),
+      confirmLabel: "Delete permanently",
+      danger: true,
+      input: {
+        label: "Type the email address to confirm",
+        placeholder: email,
+        mustMatch: email,
+      },
+    });
+    if (typed === null) return;
     setBusy("delete");
     setError("");
     try {
@@ -68,6 +85,7 @@ export function AdminUserActions({
 
   return (
     <span className="admin-user-actions">
+      {dialog}
       {error ? <em title={error}>!</em> : null}
       <button
         aria-label={

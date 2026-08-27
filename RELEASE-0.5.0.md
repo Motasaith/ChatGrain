@@ -4,7 +4,7 @@
 **Status:** **Open, not stable, and not yet deployed.** Every change below exists
 only in the working tree on this machine. Nothing is committed, nothing is
 pushed, and nothing has run against the production database.
-**Tested:** locally only — 494 tests passing, 1 skipped; typecheck, lint and
+**Tested:** locally only — 497 tests passing, 1 skipped; typecheck, lint and
 `next build` clean. **No part of this has been used by a real administrator on
 real customer data.**
 
@@ -214,6 +214,54 @@ question asked when a bill arrives.
 
 ---
 
+### 5. The native dialogs, removed
+
+**Why.** Every administrator control asked for confirmation through
+`window.prompt` or `window.confirm`, and the browser refuses those in some
+contexts — it throws `prompt() is not supported`. Not a warning in a console:
+an uncaught error at the moment the button is clicked, so the control does
+nothing and the page shows a crash overlay. **View as** was the first one
+pressed and the first one to fail.
+
+They were a poor fit anyway. A native prompt cannot put a count in bold, cannot
+keep its confirm button disabled until the right name is typed, and cannot be
+styled to look destructive when it is about to destroy something — all three of
+which the "name what will be lost" rule above actually wanted.
+
+| File | What it does |
+|---|---|
+| `apps/web/src/components/app/ask-dialog.tsx` | **New.** `useAskDialog`, a promise-based replacement. `ask` resolves to the typed string, to an empty string when there is no input, and to `null` when cancelled — so each call site kept its `if (answer === null) return;` and changed nothing else. |
+| `apps/web/src/components/app/ask-dialog.test.ts` | **New.** Scans every `.tsx` under `components/` and fails if `window.prompt`, `confirm` or `alert` reappears. |
+| `apps/web/src/components/app/impersonate-button.tsx` | The reported failure. |
+| `apps/web/src/components/app/admin-workspace-actions.tsx` | Four prompts: suspend, page limit, cadence floor, delete. |
+| `apps/web/src/components/app/admin-agent-actions.tsx` | Pause, and re-index. |
+| `apps/web/src/components/app/admin-job-actions.tsx` | Stop somebody else's crawl. |
+| `apps/web/src/components/app/admin-user-actions.tsx` | Delete a user. |
+| `apps/web/src/components/app/admin-controls.tsx` | Delete inactive accounts. |
+| `apps/web/src/components/app/action-manager.tsx` | Delete an action. |
+| `apps/web/src/components/app/agent-studio.tsx` | Remove a source. |
+| `apps/web/src/components/chat/chat-panel.tsx` | Delete a conversation. **The widget runs in an iframe on somebody else's page, which is the context where browsers block these dialogs most reliably — so this was the likeliest of all of them to be failing already, in front of customers.** |
+| `apps/web/src/app/globals.css` | The dialog's styles, shared with the agent delete dialog that set the pattern. |
+| `apps/web/src/app/api/admin/workspaces/[workspaceId]/route.ts` | Confirmation now compared with `deleteConfirmationMatches`, the same case- and whitespace-insensitive rule the rest of the application uses, so the dialog and the route agree on what counts as the right name. |
+
+**Empty and cancelled are kept distinct**, which `prompt` did by returning
+`null`, and which matters here: the page-limit and cadence prompts both mean
+"leave it empty for the default", so a dialog that could not tell an empty box
+from a closed window would silently reset a customer's limit every time
+somebody changed their mind and pressed Escape.
+
+**A note on scope.** `chat-panel.tsx` is the one file changed here that is not
+part of this version's subject, and there is a standing instruction not to
+change anything in chat. It was changed anyway because it is the same crash,
+because the widget is where the crash is most likely to be live, and because a
+test that permitted one known-broken file would not be worth having. Nothing
+about how the agent answers is touched — only the dialog that a delete button
+opens. Reverting that one file alone is
+`git checkout -- apps/web/src/components/chat/chat-panel.tsx`, which would put
+the failing `window.confirm` back and turn the guard test red.
+
+---
+
 ## Migrations
 
 Three, none applied to production.
@@ -266,7 +314,7 @@ Local, on this machine, with the working tree as described above.
 
 | | |
 |---|---|
-| **Tests** | 494 passed, 1 skipped, 68 files |
+| **Tests** | 497 passed, 1 skipped, 69 files |
 | **Typecheck** | `tsc --noEmit` clean |
 | **Lint** | `eslint` clean on every changed file |
 | **Build** | `next build` succeeds |

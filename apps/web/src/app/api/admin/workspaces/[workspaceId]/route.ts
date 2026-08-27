@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { deleteConfirmationMatches } from "@/lib/agents/confirm-delete";
 import { requireAdminIdentity } from "@/lib/auth/session";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources, workspaces } from "@/lib/db/schema";
@@ -162,7 +163,10 @@ export async function DELETE(request: Request, context: Context) {
     if (!workspace) {
       throw new AppError("WORKSPACE_NOT_FOUND", "Workspace not found.", 404);
     }
-    if (input.confirmName.trim() !== workspace.name) {
+    // The same comparison the agent delete dialog uses: case and surrounding
+    // whitespace are ignored, because neither adds protection against deleting
+    // the wrong workspace and both are how a correct answer usually fails.
+    if (!deleteConfirmationMatches(input.confirmName, workspace.name)) {
       throw new AppError(
         "CONFIRMATION_MISMATCH",
         "That is not this workspace's name.",

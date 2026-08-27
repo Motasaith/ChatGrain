@@ -128,14 +128,14 @@ function AskDialog({
 
   return (
     <div
-      className="agent-delete-backdrop"
+      className="ask-backdrop"
       onClick={onCancel}
       role="presentation"
     >
       <form
         aria-label={options.title}
         aria-modal="true"
-        className="agent-delete-dialog"
+        className="ask-dialog"
         onClick={(event) => event.stopPropagation()}
         onSubmit={(event) => {
           event.preventDefault();
@@ -158,7 +158,7 @@ function AskDialog({
             />
           </label>
         ) : null}
-        <div className="agent-delete-actions">
+        <div className="ask-actions">
           <button onClick={onCancel} type="button">
             {options.cancelLabel ?? "Cancel"}
           </button>

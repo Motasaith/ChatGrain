@@ -10,6 +10,7 @@ import {
   Timer,
   Trash2,
 } from "lucide-react";
+import { useAskDialog } from "@/components/app/ask-dialog";
 
 /**
  * Suspending a workspace, and giving it a page limit of its own.
@@ -94,26 +95,36 @@ export function AdminWorkspaceActions({
     }
     setBusy(false);
 
-    const typed = window.prompt(
-      `Delete ${name}?\n\n` +
-        `This removes ${preview.agents} agent(s), ${preview.sources} source(s), ` +
-        "and every page, passage and conversation belonging to them. Their " +
-        "widget stops answering. Nothing here can undo it.\n\n" +
-        `Type the workspace name to confirm:`,
-      "",
-    );
+    // The confirm button stays disabled until the name matches, so there is no
+    // "that was not the name" path to fall down here.
+    const typed = await ask({
+      title: `Delete ${name}?`,
+      body: (
+        <>
+          This removes <b>{preview.agents.toLocaleString()}</b> agent
+          {preview.agents === 1 ? "" : "s"} and{" "}
+          <b>{preview.sources.toLocaleString()}</b> source
+          {preview.sources === 1 ? "" : "s"}, with every page, passage and
+          conversation belonging to them. Their widget stops answering. Nothing
+          here can undo it.
+        </>
+      ),
+      confirmLabel: "Delete permanently",
+      danger: true,
+      input: {
+        label: "Type the workspace name to confirm",
+        placeholder: name,
+        mustMatch: name,
+      },
+    });
     if (typed === null) return;
-    if (typed.trim() !== name) {
-      setError("That is not the workspace name — nothing was deleted.");
-      return;
-    }
 
     setBusy(true);
     try {
       const response = await fetch(`/api/admin/workspaces/${workspaceId}`, {
         method: "DELETE",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ confirmName: typed.trim() }),
+        body: JSON.stringify({ confirmName: typed }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -132,24 +143,43 @@ export function AdminWorkspaceActions({
       await send({ suspended: false });
       return;
     }
-    const reason = window.prompt(
-      `Suspend ${name}?\n\n` +
-        "New crawls will not start, and any crawl running now is stopped. " +
-        "Their chat widget keeps working — this pauses indexing, it does not " +
-        "take their agent offline.\n\nReason (recorded in their audit trail):",
-      "",
-    );
+    const reason = await ask({
+      title: `Suspend ${name}?`,
+      body: (
+        <>
+          New crawls will not start, and any crawl running now is stopped. Their
+          chat widget keeps working — this pauses indexing, it does not take
+          their agent offline.
+        </>
+      ),
+      confirmLabel: "Suspend",
+      danger: true,
+      input: {
+        label: "Reason (recorded in their audit trail)",
+        placeholder: "Why is this being stopped?",
+      },
+    });
     if (reason === null) return;
     await send({ suspended: true, reason });
   };
 
   const setLimit = async () => {
-    const entered = window.prompt(
-      `Page limit for ${name}\n\n` +
-        "The most pages one crawl in this workspace may index. " +
-        "Leave empty to use the installation default.",
-      pageLimit ? String(pageLimit) : "",
-    );
+    const entered = await ask({
+      title: `Page limit for ${name}`,
+      body: (
+        <>
+          The most pages one crawl in this workspace may index. Leave it empty
+          to use the installation default.
+        </>
+      ),
+      confirmLabel: "Save",
+      input: {
+        label: "Pages per crawl",
+        numeric: true,
+        defaultValue: pageLimit ? String(pageLimit) : "",
+        placeholder: "Installation default",
+      },
+    });
     if (entered === null) return;
     const trimmed = entered.trim();
     if (!trimmed) {
@@ -173,12 +203,22 @@ export function AdminWorkspaceActions({
    * settings for them.
    */
   const setCadence = async () => {
-    const entered = window.prompt(
-      `Minimum hours between re-crawls for ${name}\n\n` +
-        "Sources set to refresh more often than this are held to it. " +
-        "Leave empty to let each source keep its own schedule.",
-      minRefreshHours ? String(minRefreshHours) : "",
-    );
+    const entered = await ask({
+      title: `Minimum hours between re-crawls for ${name}`,
+      body: (
+        <>
+          Sources set to refresh more often than this are held to it. Leave it
+          empty to let each source keep its own schedule.
+        </>
+      ),
+      confirmLabel: "Save",
+      input: {
+        label: "Hours",
+        numeric: true,
+        defaultValue: minRefreshHours ? String(minRefreshHours) : "",
+        placeholder: "No floor",
+      },
+    });
     if (entered === null) return;
     const trimmed = entered.trim();
     if (!trimmed) {
@@ -195,6 +235,7 @@ export function AdminWorkspaceActions({
 
   return (
     <span className="admin-workspace-actions">
+      {dialog}
       {error ? <em title={error}>{error}</em> : null}
       <button
         disabled={busy}

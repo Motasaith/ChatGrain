@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useAskDialog } from "@/components/app/ask-dialog";
 import { SourcePages } from "@/components/app/source-pages";
 import {
   AlertTriangle,
@@ -261,6 +262,7 @@ export function AgentStudio({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [workerHealthy, setWorkerHealthy] = useState<boolean | null>(null);
+  const { ask, dialog } = useAskDialog();
   const [textOpen, setTextOpen] = useState(false);
   const [textName, setTextName] = useState("");
   const [textContent, setTextContent] = useState("");
@@ -511,9 +513,17 @@ export function AgentStudio({
     // Deleting a source cascades to its documents and chunks, so the agent
     // stops answering from it immediately. There is no undo.
     if (
-      !window.confirm(
-        `Remove "${name}" and everything indexed from it? This cannot be undone.`,
-      )
+      (await ask({
+        title: `Remove "${name}"?`,
+        body: (
+          <>
+            This deletes everything indexed from it, so the agent stops
+            answering from those pages immediately. It cannot be undone.
+          </>
+        ),
+        confirmLabel: "Remove",
+        danger: true,
+      })) === null
     ) {
       return;
     }
@@ -785,6 +795,7 @@ export function AgentStudio({
 
   return (
     <>
+      {dialog}
       <div className="studio-heading">
         <div className="studio-agent-identity">
           <span style={{ background: agent.primaryColor }}>

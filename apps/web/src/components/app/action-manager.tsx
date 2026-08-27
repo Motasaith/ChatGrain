@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { Braces, LoaderCircle, Plus, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
+import { useAskDialog } from "@/components/app/ask-dialog";
 
 type AgentOption = { id: string; name: string };
 type Action = { id: string; name: string; description: string; type: string; enabled: boolean; agentId: string; agentName: string };
 
 export function ActionManager({ initialActions, agents }: { initialActions: Action[]; agents: AgentOption[] }) {
   const [list, setList] = useState(initialActions);
+  const { ask, dialog } = useAskDialog();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
@@ -34,13 +36,20 @@ export function ActionManager({ initialActions, agents }: { initialActions: Acti
   }
 
   async function remove(action: Action) {
-    if (!window.confirm(`Delete "${action.name}"?`)) return;
+    const confirmed = await ask({
+      title: `Delete "${action.name}"?`,
+      body: <>This action stops being offered to the agent immediately.</>,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (confirmed === null) return;
     const response = await fetch(`/api/actions/${action.id}`, { method: "DELETE" });
     if (response.ok) setList((current) => current.filter((item) => item.id !== action.id));
   }
 
   return (
     <>
+      {dialog}
       <div className="page-heading">
         <div><span className="page-eyebrow">Actions</span><h1>Turn answers into outcomes</h1><p>Collect leads, hand off conversations, open links, and call webhooks.</p></div>
         <button className="app-primary-button" disabled={!agents.length} onClick={() => setOpen(true)}><Plus size={15} /> New action</button>

@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import type { ChatUiAction } from "@/lib/chat/answer";
+import { useAskDialog } from "@/components/app/ask-dialog";
 import { VoiceCallOverlay, type CallTurn } from "@/components/chat/voice-call";
 import {
   VoiceNotePlayer,
@@ -495,6 +496,7 @@ export function ChatPanel({
       ? "Request received"
       : null;
   const [deletingConversationId, setDeletingConversationId] = useState("");
+  const { ask, dialog } = useAskDialog();
   const [historyError, setHistoryError] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingAttachments, setPendingAttachments] = useState<
@@ -1148,13 +1150,16 @@ export function ChatPanel({
   }
 
   async function deleteConversation(conversation: ConversationSummary) {
-    if (
-      !window.confirm(
-        `Delete “${conversation.title}”? This permanently removes its messages and attachments.`,
-      )
-    ) {
-      return;
-    }
+    // Not `window.confirm`: the widget runs in an iframe on somebody else's
+    // page, which is precisely where a browser refuses the native dialogs and
+    // throws instead - so the delete button would do nothing at all.
+    const confirmed = await ask({
+      title: `Delete “${conversation.title}”?`,
+      body: <>This permanently removes its messages and attachments.</>,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (confirmed === null) return;
     setDeletingConversationId(conversation.id);
     setHistoryError("");
     try {
@@ -1206,6 +1211,7 @@ export function ChatPanel({
       className={`chat-panel ${embedded ? "chat-panel-embedded" : ""}`}
       style={panelStyle}
     >
+      {dialog}
       <header>
         <span className="chat-brand-avatar">
           {brandImage ? (

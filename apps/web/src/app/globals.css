@@ -1896,7 +1896,8 @@ button {
   color: #a3271c;
 }
 
-.agent-delete-backdrop {
+.agent-delete-backdrop,
+.ask-backdrop {
   position: fixed;
   inset: 0;
   z-index: 60;
@@ -1907,7 +1908,8 @@ button {
   background: rgb(12 26 18 / 45%);
 }
 
-.agent-delete-dialog {
+.agent-delete-dialog,
+.ask-dialog {
   width: min(430px, 100%);
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -1916,12 +1918,14 @@ button {
   box-shadow: 0 18px 45px rgb(12 26 18 / 22%);
 }
 
-.agent-delete-dialog h2 {
+.agent-delete-dialog h2,
+.ask-dialog h2 {
   margin: 0 0 8px;
   font-size: 1.0625rem;
 }
 
-.agent-delete-dialog > p {
+.agent-delete-dialog > p,
+.ask-dialog > p {
   margin: 0 0 14px;
   color: var(--muted);
   font-size: 0.875rem;
@@ -1934,14 +1938,16 @@ button {
   font-size: 0.8125rem;
 }
 
-.agent-delete-actions {
+.agent-delete-actions,
+.ask-actions {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
   gap: 8px;
 }
 
-.agent-delete-actions > button:first-child {
+.agent-delete-actions > button:first-child,
+.ask-actions > button:first-child {
   padding: 9px 15px;
   border: 1px solid var(--line);
   border-radius: 8px;
