@@ -4,7 +4,7 @@
 **Status:** **Open, not stable, and not yet deployed.** Every change below exists
 only in the working tree on this machine. Nothing is committed, nothing is
 pushed, and nothing has run against the production database.
-**Tested:** locally only — 497 tests passing, 1 skipped; typecheck, lint and
+**Tested:** locally only — 516 tests passing, 1 skipped; typecheck, lint and
 `next build` clean. **No part of this has been used by a real administrator on
 real customer data.**
 
@@ -19,13 +19,13 @@ commit on `main`, and the last commit of `0.4.0`.
 |---|---|
 | **Revert to** | `f9144d3` (`feat(release): update next version reference to include admin dashboard scope`) |
 | **Branch** | `main` |
-| **Migrations to undo** | `0026`, `0027`, `0028` — none of which have been applied to production |
+| **Migrations to undo** | `0026`, `0027`, `0028`, `0029` — none of which have been applied to production |
 
 Because nothing here is committed, reverting is `git checkout .` plus deleting
 the untracked files listed under **New files** below. Once it *is* committed,
-`git revert` back to `f9144d3` is the whole of it, with the three migrations
-dropped by hand — Drizzle does not generate down-migrations and these three add
-columns and one table, so undoing them is three `DROP` statements.
+`git revert` back to `f9144d3` is the whole of it, with the four migrations
+dropped by hand — Drizzle does not generate down-migrations and these four add
+columns and two tables, so undoing them is a handful of `DROP` statements.
 
 ---
 
@@ -46,8 +46,9 @@ Three things follow from that, and they are the whole scope:
 1. **Cross-account control.** Stop a job, pause an agent, suspend a workspace,
    re-index a source, remove a page — per account, without touching the rest of
    the installation.
-2. **Impersonation.** See what the customer sees, because a support case that
-   begins "it says something wrong" cannot be diagnosed from a table of counts.
+2. **Impersonation, in three tiers.** See what the customer sees; reproduce
+   their fault in a sandbox that keeps nothing; or change their account, but
+   only with their recorded permission.
 3. **A record of it.** Every administrator action, and every request made while
    impersonating, written down under the account it affected.
 
@@ -262,17 +263,155 @@ the failing `window.confirm` back and turn the guard test red.
 
 ---
 
+### 6. Sandbox sessions, and consent before editing
+
+**Why.** Read-only impersonation cannot answer the question support is actually
+asked. "It gives me an error" only shows itself when you *use* the thing, and
+using it means writing something — so a read-only session could not reproduce a
+single fault, and the only alternative on offer was full write access to a
+stranger's account, which is far more than reproducing a fault needs.
+
+**Three tiers instead of a read-write flag.**
+
+| tier | can | needs |
+|---|---|---|
+| `read` | look at everything, change nothing | nothing |
+| `sandbox` | talk to their agent and reproduce what they see | nothing |
+| `write` | change anything they own | **the customer's recorded approval** |
+
+**What makes a sandbox a sandbox.** It permits exactly the writes a conversation
+needs and refuses every other kind, decided by one allowlist rather than by each
+route remembering. What it does write is marked at the moment of creation,
+filtered out of everywhere the customer sees their own conversations, and
+deleted when the session ends.
+
+The mark is applied server-side from the cookie, never from anything the caller
+sends — the widget posts to the same endpoint, and a client-supplied "this is a
+sandbox" flag would let any visitor hide their conversation from the workspace
+that owns it.
+
+**Two things a sandbox deliberately refuses**, despite sitting under a writable
+path: tickets and leads. Both get delivered — a ticket notifies the customer's
+support address, a lead lands in the list their sales people work from — and an
+effect that has already left the building cannot be discarded when the session
+ends.
+
+**Why the conversation is persisted at all**, rather than held in memory: the
+agent reads its own history back out of the database to answer a follow-up
+(`chat/[agentId]/route.ts`), so a conversation that was never written would
+break the second question in every reproduction. Persist-mark-hide-delete gives
+the customer the same guarantee and keeps follow-ups working.
+
+| File | What it does |
+|---|---|
+| `apps/web/src/lib/auth/impersonation-payload.ts` | `canWrite: boolean` becomes `mode: "read" \| "sandbox" \| "write"`, and the mode is part of what gets signed. An unrecognised mode is rejected rather than treated as the safe tier — the signature has already passed by then, so an unknown value means a cookie from a different build, and guessing what it meant is how a privilege bug gets written. |
+| `apps/web/src/lib/auth/impersonation-policy.ts` | **New.** The allowlist and the refusal messages, runtime-neutral so the proxy and the routes reach the same verdict. |
+| `apps/web/src/lib/auth/impersonation-policy.test.ts` | **New.** 12 tests, mostly about what is *refused* — including that a prefix match on `/api/chat/` is not satisfied by `/api/chatsettings`. |
+| `apps/web/src/lib/chat/sandbox.ts` | **New.** The channel marker, in one place because the filter and the cleanup have to agree on it. |
+| `apps/web/src/proxy.ts` | Defers to the policy instead of refusing every non-GET. |
+| `apps/web/src/app/api/chat/[agentId]/route.ts` | Marks a conversation started inside a sandbox session. |
+| `apps/web/src/app/api/admin/impersonate/route.ts` | Takes a mode, checks the grant before allowing `write`, and discards sandbox data on the way out. |
+| `apps/web/src/lib/auth/impersonation.ts`, `workspace.ts`, `dashboard/layout.tsx` | Carry the mode through instead of the boolean. |
+| `apps/web/src/components/app/impersonation-banner.tsx` | Three states. The sandbox one is cool rather than warm on purpose — an administrator who reads it as a warning goes and asks for write access they did not need. |
+| `apps/web/src/app/dashboard/activity/page.tsx`, `page.tsx`, `agents/page.tsx`, `layout.tsx` | Hide sandbox conversations from the customer's lists, counts, and unread badge. |
+| `apps/web/src/app/globals.css` | The sandbox banner, and the permission page. |
+
+**The cleanup deletes every sandbox conversation in the workspace, not only this
+session's.** A session that ended by expiry, a closed tab or a crashed process
+never reaches that code, so a narrowly scoped cleanup would slowly accumulate
+exactly the rows this feature promises not to leave behind.
+
+#### Consent before write access
+
+Write access is no longer something an administrator can simply choose. It
+requires a row in a new table saying the customer agreed, and the check happens
+when the session starts rather than being trusted from the cookie — a cookie is
+minted once and consent can be withdrawn.
+
+| File | What it does |
+|---|---|
+| `apps/web/src/lib/db/schema.ts` | **New table** `impersonation_grants`: who asked, why, the answer, and when it lapses. A table rather than a flag because the useful question afterwards is "who allowed what, when, and why", which a boolean cannot answer. |
+| `apps/web/drizzle/0029_impersonation_grants.sql` | **New.** Additive; a new table and nothing else. |
+| `apps/web/src/lib/auth/impersonation-grant.ts` | **New.** The token, the expiries, the lookup, and the text of the request. |
+| `apps/web/src/app/api/admin/impersonate/request/route.ts` | **New.** Sends the request. Owners are asked in preference to members — a member authorising access to their colleagues' data is the wrong question put to the wrong person. |
+| `apps/web/src/app/api/impersonation-requests/[token]/route.ts` | **New.** Approve, decline, and withdraw. |
+| `apps/web/src/app/dashboard/permissions/[token]/page.tsx` | **New.** Where the customer answers. |
+| `apps/web/src/components/app/permission-decision.tsx` | **New.** The buttons. |
+| `apps/web/src/components/app/impersonate-button.tsx` | Three buttons: **View as**, **Sandbox**, **Ask to edit**. |
+
+**The link alone is not authority.** The token says *which* request is being
+answered; being signed in as an owner of that workspace says *who* is answering.
+Both are required, because the link arrives by email and email gets forwarded.
+
+**The reason is mandatory and has a minimum length**, which is unusual here —
+most optional reasons are optional because a required field only collects the
+word "support". This one is different: it is not for the audit trail, it is the
+entire basis on which somebody who is not a developer decides whether to let a
+stranger edit their agent. "Fixing an issue" is not something a person can
+consent to.
+
+**No mailer is not a dead end.** An installation with no outbound email is the
+normal self-hosted case, and telling an administrator "email is not configured"
+while offering nothing else leaves them doing the exact thing this prevents:
+changing an account and mentioning it afterwards. So the message comes back
+either way, formatted to be pasted into whatever they already use.
+
+**The consent page leads with what support can already do without asking.** That
+is the reassuring half and the half that makes the request legible as a limited
+thing rather than an alarming one. The approve and decline buttons are styled
+identically on purpose — the safe answer is "no", it stays available later, and
+a page that nudges towards "yes" is not asking for consent, it is collecting it.
+
+---
+
+### 7. A hydration mismatch in the banner
+
+**Why.** The countdown seeded its state from the clock:
+
+```js
+const [remaining, setRemaining] = useState(() => expiresAt - Date.now());
+```
+
+That initialiser runs twice — once on the server while the HTML is produced, and
+once in the browser during hydration — and time passes in between. The server
+wrote `26`, the client computed `25`, React found they disagreed and threw the
+whole tree away to render it again.
+
+There is no value the server could have sent that would be right, because the
+value *is* the current time. So it now sends none: `remaining` starts null, an
+effect fills it in after mount, and the first paint shows a one-character
+placeholder so the bar does not jump.
+
+**This was not new.** It had been in the banner since impersonation was first
+built and simply had not been seen — nothing warns at build time, the page still
+works, and the error only appears if somebody opens it during the second where
+the two answers differ.
+
+| File | What it does |
+|---|---|
+| `apps/web/src/components/app/impersonation-banner.tsx` | The fix: null until mounted, then a ticking effect. |
+| `apps/web/src/components/app/hydration-safety.test.ts` | **New.** Scans every `"use client"` component and fails on a `useState` initialiser that reads `Date.now()`, `new Date()` or `Math.random()`. |
+
+The scanner counts parentheses rather than matching a regex, because
+`useState\([^)]*\)` stops at the `)` in `() =>` — before the interesting part —
+and would have passed the exact line it exists to catch. It also matches
+`useState<number>(…)`, since a guard that a type annotation is enough to slip
+past is worse than no guard, because it is trusted.
+
+---
+
 ## Migrations
 
-Three, none applied to production.
+Four, none applied to production.
 
 | File | Effect |
 |---|---|
 | `apps/web/drizzle/0026_workspace_controls.sql` | Adds three nullable columns to `workspaces`. No data touched. |
 | `apps/web/drizzle/0027_workspace_usage.sql` | Creates `workspace_usage`. New table. |
 | `apps/web/drizzle/0028_workspace_cadence.sql` | Adds one nullable column to `workspaces`. No data touched. |
+| `apps/web/drizzle/0029_impersonation_grants.sql` | Creates `impersonation_grants`. New table. |
 
-All three are additive: nothing is dropped, no existing row is rewritten, and an
+All four are additive: nothing is dropped, no existing row is rewritten, and an
 old build runs unchanged against the new schema. That is deliberate — it means
 the code can be reverted without reverting the database.
 
@@ -300,6 +439,23 @@ Stated rather than solved, and this is why the version is open.
 - **The source list in the agent row is fetched on demand and not refreshed.**
   Re-index twice in a row and the page counts shown are the ones from when the
   list was opened.
+- **The sandbox allowlist is a list, and lists go stale.** It is correct for the
+  routes that exist today. A new route added under `/api/public/agents/` that
+  writes something a customer owns would be permitted by it, and nothing would
+  fail loudly. The test file pins the current shape; it cannot pin a route
+  nobody has written yet.
+- **Sandbox conversations are hidden by a filter in four queries, not by the
+  schema.** A fifth query written later that lists conversations will show them
+  unless whoever writes it knows. That is the same class of fault the proxy was
+  built to avoid, and it is not solved here — it is only made small.
+- **Revoking consent does not end a session already open.** The cookie is signed
+  and self-contained, so the exposure is bounded by the remainder of one session
+  — at most an hour — rather than being immediate.
+- **The consent emails have never been sent.** `mailerConfigured()` is false on
+  this machine, so only the copy-and-paste path has been exercised.
+- **Nobody has approved a request.** The flow type-checks and its parts are
+  tested in isolation; the round trip from request to email to approval to a
+  write session has not been run end to end by two people.
 - **The intermittent database disconnects seen during 0.4.0 are still not
   explained.** Two statements failed with a bare "Failed query" and then
   succeeded unchanged. It looks like the hosted database rather than this code,
@@ -314,7 +470,7 @@ Local, on this machine, with the working tree as described above.
 
 | | |
 |---|---|
-| **Tests** | 497 passed, 1 skipped, 69 files |
+| **Tests** | 516 passed, 1 skipped, 71 files |
 | **Typecheck** | `tsc --noEmit` clean |
 | **Lint** | `eslint` clean on every changed file |
 | **Build** | `next build` succeeds |

@@ -14,29 +14,71 @@ export const IMPERSONATION_COOKIE = "chatgrain_impersonation";
 /** Long enough to investigate, short enough to forget safely. */
 export const IMPERSONATION_MAX_MINUTES = 60;
 
+/**
+ * What an impersonated session is allowed to do.
+ *
+ * Three tiers rather than a read-write flag, because the flag could not express
+ * the case this feature is actually for. "It gives me an error" cannot be
+ * diagnosed by looking: the error appears when you *use* the thing, and using
+ * it means writing something. So a read-only session cannot reproduce a fault,
+ * and the only alternative on offer was full write access to a stranger's
+ * account - which is far more than reproducing a fault requires.
+ *
+ * `sandbox` is the missing middle. It permits exactly the writes that a
+ * conversation needs and refuses every other kind, so an administrator can talk
+ * to the agent, see what the customer sees, and change nothing the customer
+ * owns. What it does write is tagged, hidden from the customer, and deleted
+ * when the session ends.
+ *
+ * `write` is unchanged in what it permits and changed in how it is reached: it
+ * now requires the customer's recorded consent.
+ */
+export type ImpersonationMode = "read" | "sandbox" | "write";
+
+export const IMPERSONATION_MODES: readonly ImpersonationMode[] = [
+  "read",
+  "sandbox",
+  "write",
+];
+
+export function isImpersonationMode(
+  value: unknown,
+): value is ImpersonationMode {
+  return (
+    typeof value === "string" &&
+    (IMPERSONATION_MODES as readonly string[]).includes(value)
+  );
+}
+
 export type Impersonation = {
   workspaceId: string;
   /** Shown in the banner, so the administrator can see whose data this is. */
   workspaceName: string;
   /** The administrator who started it. Never the person being impersonated. */
   adminEmail: string;
-  /** Whether writes are permitted. Off unless deliberately turned on. */
-  canWrite: boolean;
+  /** What this session may do. Lowest tier unless deliberately raised. */
+  mode: ImpersonationMode;
   expiresAt: number;
 };
+
+/** Whether this session may write anything at all. */
+export function canWriteAnything(session: { mode: ImpersonationMode }) {
+  return session.mode !== "read";
+}
 
 /**
  * The exact bytes that get signed.
  *
  * Every field, in a fixed order. Signing a subset would leave the rest
- * editable, and `canWrite` is the one that matters: a read-only session whose
- * flag could be flipped is not read-only.
+ * editable, and `mode` is the one that matters most: a read-only session whose
+ * tier could be edited to `write` is not read-only, and is not a sandbox
+ * either.
  *
  * JSON rather than a joined string, because a workspace name may contain the
  * separator. Joined with a space, these two sessions sign identically:
  *
- *   ["ws-1", "Acme Corp", "a@b.c", "ro", "1"]
- *   ["ws-1", "Acme", "Corp a@b.c", "ro", "1"]
+ *   ["ws-1", "Acme Corp", "a@b.c", "read", "1"]
+ *   ["ws-1", "Acme", "Corp a@b.c", "read", "1"]
  *
  * A signature that cannot tell two payloads apart is not a signature. JSON
  * escapes the delimiter for us, so the encoding is unambiguous by construction
@@ -47,7 +89,7 @@ export function impersonationPayload(session: Impersonation) {
     session.workspaceId,
     session.workspaceName,
     session.adminEmail,
-    session.canWrite ? "rw" : "ro",
+    session.mode,
     String(session.expiresAt),
   ]);
 }
@@ -69,6 +111,12 @@ export function splitImpersonationCookie(value: string | undefined) {
  * Never trust the result of this on its own - it is whatever the cookie said.
  * Takes text rather than base64 so this file needs no encoding primitives, and
  * therefore no `Buffer`, which does not exist in the runtime the proxy uses.
+ *
+ * An unrecognised mode is rejected rather than treated as the safe tier. The
+ * signature has already been checked by the time this runs, so a mode this
+ * build does not know about means the cookie was minted by a different version
+ * of the application - and guessing what an older or newer build meant by it is
+ * exactly the kind of assumption that turns into a privilege bug.
  */
 export function parseImpersonationBody(json: string): Impersonation | null {
   let session: Impersonation;
@@ -81,7 +129,7 @@ export function parseImpersonationBody(json: string): Impersonation | null {
     typeof session?.workspaceId !== "string" ||
     typeof session?.workspaceName !== "string" ||
     typeof session?.adminEmail !== "string" ||
-    typeof session?.canWrite !== "boolean" ||
+    !isImpersonationMode(session?.mode) ||
     typeof session?.expiresAt !== "number"
   ) {
     return null;

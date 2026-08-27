@@ -1,6 +1,7 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { IMPERSONATION_COOKIE } from "@/lib/auth/impersonation-payload";
+import { decideImpersonatedWrite } from "@/lib/auth/impersonation-policy";
 import { decodeImpersonationToken } from "@/lib/auth/impersonation-token";
 
 /**
@@ -19,24 +20,8 @@ import { decodeImpersonationToken } from "@/lib/auth/impersonation-token";
  * function` and a 404 on every route.
  */
 
-/** Methods that cannot change anything. */
-const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-
 /**
- * The way out.
- *
- * Ending an impersonation session is a DELETE, so a blanket refusal of every
- * write would trap an administrator inside a read-only session with no way to
- * leave it except waiting out the expiry or clearing cookies by hand. The exit
- * cannot be behind the lock.
- *
- * Exempting it costs nothing: the route reads the same cookie, requires an
- * administrator, and its only effect is to remove the session.
- */
-const IMPERSONATION_ROUTE = "/api/admin/impersonate";
-
-/**
- * Read-only impersonation, enforced by HTTP method.
+ * Impersonation limits, enforced here rather than in the routes.
  *
  * Here rather than in the routes, and that is the whole point. A rule applied
  * by each mutating handler is a rule that one of them will eventually forget,
@@ -46,8 +31,12 @@ const IMPERSONATION_ROUTE = "/api/admin/impersonate";
  * correct direction to fail in.
  *
  * The cookie is verified rather than trusted. It names a workspace and carries
- * the read-write flag, so an unsigned one would let anybody able to set a
- * cookie read any workspace and write to it.
+ * the tier, so an unsigned one would let anybody able to set a cookie read any
+ * workspace and write to it.
+ *
+ * Which writes a tier permits is decided in `impersonation-policy.ts`, not
+ * here, so the same answer is available to a route that needs to know what kind
+ * of session it is serving.
  */
 /** The impersonation cookie on this request, verified, or null. */
 async function sessionFor(request: Request) {
@@ -84,7 +73,7 @@ async function sessionFor(request: Request) {
  */
 function logImpersonatedRequest(
   request: Request,
-  session: { adminEmail: string; workspaceName: string; canWrite: boolean },
+  session: { adminEmail: string; workspaceName: string; mode: string },
 ) {
   const url = new URL(request.url);
   console.info(
@@ -92,7 +81,7 @@ function logImpersonatedRequest(
       msg: "Impersonated request",
       admin: session.adminEmail,
       workspace: session.workspaceName,
-      canWrite: session.canWrite,
+      mode: session.mode,
       method: request.method,
       path: url.pathname,
       at: new Date().toISOString(),
@@ -104,19 +93,18 @@ export async function blockedByReadOnlyImpersonation(request: Request) {
   const session = await sessionFor(request);
   if (session) logImpersonatedRequest(request, session);
 
-  if (READ_METHODS.has(request.method)) return null;
-  if (new URL(request.url).pathname === IMPERSONATION_ROUTE) return null;
-  if (!session || session.canWrite) return null;
+  if (!session) return null;
+
+  const decision = decideImpersonatedWrite({
+    method: request.method,
+    pathname: new URL(request.url).pathname,
+    mode: session.mode,
+    workspaceName: session.workspaceName,
+  });
+  if (decision.allowed) return null;
 
   return NextResponse.json(
-    {
-      error: {
-        code: "IMPERSONATION_READ_ONLY",
-        message:
-          `You are viewing ${session.workspaceName} as an administrator. ` +
-          "This session is read-only, so nothing can be changed from it.",
-      },
-    },
+    { error: { code: decision.code, message: decision.message } },
     { status: 403 },
   );
 }

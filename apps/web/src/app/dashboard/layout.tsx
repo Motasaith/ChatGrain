@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, ne } from "drizzle-orm";
 import { AppShell } from "@/components/app/app-shell";
 import { ImpersonationBanner } from "@/components/app/impersonation-banner";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, conversations } from "@/lib/db/schema";
+import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -33,6 +34,7 @@ export default async function DashboardLayout({
       and(
         eq(agents.workspaceId, context.workspaceId),
         eq(conversations.status, "escalated"),
+        ne(conversations.channel, SANDBOX_CHANNEL),
       ),
     );
   // Outside AppShell, above everything. Whose data is on screen is not a
@@ -43,7 +45,7 @@ export default async function DashboardLayout({
     <>
       {acting ? (
         <ImpersonationBanner
-          canWrite={acting.canWrite}
+          mode={acting.mode}
           expiresAt={acting.expiresAt}
           workspaceName={acting.workspaceName}
         />

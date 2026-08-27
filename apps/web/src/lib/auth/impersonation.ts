@@ -5,6 +5,7 @@ import {
   IMPERSONATION_COOKIE,
   IMPERSONATION_MAX_MINUTES,
   type Impersonation,
+  type ImpersonationMode,
 } from "./impersonation-payload";
 import {
   decodeImpersonationToken,
@@ -14,7 +15,10 @@ import {
 export {
   IMPERSONATION_COOKIE,
   IMPERSONATION_MAX_MINUTES,
+  canWriteAnything,
+  isImpersonationMode,
   type Impersonation,
+  type ImpersonationMode,
 } from "./impersonation-payload";
 
 /**
@@ -31,11 +35,13 @@ export {
  * which workspace is resolved, not a change of identity, so an audit entry
  * written during impersonation still names who actually acted.
  *
- * **Read-only unless asked otherwise.** Most support requests are "show me what
- * they see", which needs no writes at all. Writing is a separate, explicit
- * decision and a separate audit entry. The read-only half is enforced in the
- * proxy, by HTTP method, because a rule that every mutating route has to
- * remember to apply is a rule that will eventually be forgotten by one of them.
+ * **The lowest tier that answers the question.** Most support requests are
+ * "show me what they see", which needs no writes at all. Reproducing a fault
+ * needs a few, and changing a customer's configuration needs their permission.
+ * Those are three different sessions - `read`, `sandbox` and `write` - and the
+ * boundary between them is enforced in the proxy, because a rule that every
+ * mutating route has to remember to apply is a rule that one of them will
+ * eventually forget.
  *
  * **It expires by itself.** The failure mode to design against is not an
  * administrator abusing this; it is an administrator forgetting they are in it
@@ -76,14 +82,17 @@ export function impersonationSession(
   workspaceId: string,
   workspaceName: string,
   adminEmail: string,
-  { canWrite = false, minutes = DEFAULT_MINUTES } = {},
+  {
+    mode = "read" as ImpersonationMode,
+    minutes = DEFAULT_MINUTES,
+  }: { mode?: ImpersonationMode; minutes?: number } = {},
 ): Impersonation {
   const capped = Math.min(Math.max(1, minutes), IMPERSONATION_MAX_MINUTES);
   return {
     workspaceId,
     workspaceName,
     adminEmail,
-    canWrite,
+    mode,
     expiresAt: Date.now() + capped * 60_000,
   };
 }

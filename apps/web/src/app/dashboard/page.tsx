@@ -10,7 +10,7 @@ import {
   ThumbsUp,
   UsersRound,
 } from "lucide-react";
-import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { DatabaseSetup } from "@/components/app/database-setup";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
@@ -21,6 +21,7 @@ import {
   messages,
   sources,
 } from "@/lib/db/schema";
+import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
 
 async function loadDashboard() {
   const context = await getWorkspaceContext();
@@ -44,6 +45,7 @@ async function loadDashboard() {
       and(
         eq(agents.workspaceId, context.workspaceId),
         gte(conversations.createdAt, weekAgo),
+        ne(conversations.channel, SANDBOX_CHANNEL),
       ),
     );
 
@@ -57,7 +59,12 @@ async function loadDashboard() {
     .innerJoin(messages, eq(messages.id, feedback.messageId))
     .innerJoin(conversations, eq(conversations.id, messages.conversationId))
     .innerJoin(agents, eq(agents.id, conversations.agentId))
-    .where(eq(agents.workspaceId, context.workspaceId));
+    .where(
+      and(
+        eq(agents.workspaceId, context.workspaceId),
+        ne(conversations.channel, SANDBOX_CHANNEL),
+      ),
+    );
 
   const recent = await db
     .select({
@@ -70,7 +77,12 @@ async function loadDashboard() {
     })
     .from(conversations)
     .innerJoin(agents, eq(agents.id, conversations.agentId))
-    .where(eq(agents.workspaceId, context.workspaceId))
+    .where(
+      and(
+        eq(agents.workspaceId, context.workspaceId),
+        ne(conversations.channel, SANDBOX_CHANNEL),
+      ),
+    )
     .orderBy(desc(conversations.lastMessageAt))
     .limit(5);
 

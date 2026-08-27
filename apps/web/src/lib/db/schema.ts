@@ -994,5 +994,53 @@ export const systemState = pgTable("system_state", {
     .notNull(),
 });
 
+/**
+ * A customer's recorded permission for an administrator to change their account.
+ *
+ * The rule this exists to enforce: an administrator may look without asking and
+ * may reproduce a fault without asking, but may not change what a customer owns
+ * without the customer saying so. Read and sandbox sessions need nothing from
+ * this table; a write session cannot start without a row here in "approved".
+ *
+ * The grant is per workspace, per administrator and time-limited, so consent
+ * given once for one problem does not become standing access. It is a table
+ * rather than a flag because the useful question afterwards is "who allowed
+ * what, when, and why" - which a boolean cannot answer.
+ */
+export const impersonationGrants = pgTable("impersonation_grants", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  /** The administrator who asked. Not a user id: they may not be a member. */
+  adminEmail: text("admin_email").notNull(),
+  /** Shown to the customer. The whole basis on which they decide. */
+  reason: text("reason").notNull(),
+  /** pending | approved | declined | revoked */
+  status: text("status").default("pending").notNull(),
+  /**
+   * The secret in the approval link.
+   *
+   * Long and random, because the link is the authority: it arrives by email and
+   * whoever opens it is answering on the workspace's behalf. Being signed in as
+   * a member of the workspace is required as well - the token alone is not
+   * enough - so a forwarded email cannot approve anything by itself.
+   */
+  token: text("token").notNull().unique(),
+  requestedAt: timestamp("requested_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  /** When the request itself goes stale, answered or not. */
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  respondedAt: timestamp("responded_at", { withTimezone: true }),
+  respondedByEmail: text("responded_by_email"),
+  /** How long write access lasts once approved. Null until it is. */
+  grantExpiresAt: timestamp("grant_expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 export type Agent = typeof agents.$inferSelect;
 export type Source = typeof sources.$inferSelect;
+export type ImpersonationGrant = typeof impersonationGrants.$inferSelect;

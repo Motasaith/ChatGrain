@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { Bot, ChevronRight, Inbox, MessageCircleMore } from "lucide-react";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, conversations, messages } from "@/lib/db/schema";
+import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
 import { relativeTime } from "@/lib/format";
 
 export default async function ActivityPage() {
@@ -23,7 +24,15 @@ export default async function ActivityPage() {
     .from(conversations)
     .innerJoin(agents, eq(agents.id, conversations.agentId))
     .leftJoin(messages, eq(messages.conversationId, conversations.id))
-    .where(eq(agents.workspaceId, workspace.workspaceId))
+    .where(
+      and(
+        eq(agents.workspaceId, workspace.workspaceId),
+        // Administrators' sandbox conversations are not this workspace's
+        // conversations. They are scratch data from a support session, deleted
+        // when it ends, and the customer should never have seen them at all.
+        ne(conversations.channel, SANDBOX_CHANNEL),
+      ),
+    )
     .groupBy(conversations.id, agents.id)
     .orderBy(desc(conversations.lastMessageAt))
     .limit(100);

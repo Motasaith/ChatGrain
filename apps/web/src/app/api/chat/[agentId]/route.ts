@@ -13,6 +13,8 @@ import {
   referencesConversationImage,
 } from "@/lib/chat/answer";
 import { readAttachment } from "@/lib/chat/attachment-storage";
+import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
+import { readImpersonation } from "@/lib/auth/impersonation";
 import { db } from "@/lib/db/client";
 import {
   agents,
@@ -107,6 +109,19 @@ export async function POST(request: Request, context: RouteContext) {
       }
     }
     if (!conversation) {
+      // A conversation started from inside a sandbox session is marked as one
+      // at the moment it is created, and never afterwards. The mark is what
+      // every "show me my conversations" query filters on and what the cleanup
+      // deletes by, so a row that missed it here would be indistinguishable
+      // from a customer's own - visible to them, and permanent.
+      //
+      // Read from the cookie rather than passed in by the caller: the widget
+      // posts here too, and a client-supplied "this is a sandbox" flag would
+      // let anybody hide their conversation from the workspace that owns it.
+      const acting = await readImpersonation();
+      const sandboxed =
+        acting?.mode === "sandbox" && acting.workspaceId === agent.workspaceId;
+
       [conversation] = await db
         .insert(conversations)
         .values({
@@ -114,6 +129,7 @@ export async function POST(request: Request, context: RouteContext) {
           sessionId: input.sessionId,
           externalUserId: input.externalUserId,
           metadata: input.metadata ?? {},
+          ...(sandboxed ? { channel: SANDBOX_CHANNEL } : {}),
         })
         .returning();
     }

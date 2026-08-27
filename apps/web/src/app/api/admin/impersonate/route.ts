@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdminIdentity } from "@/lib/auth/session";
@@ -9,10 +9,12 @@ import {
   impersonationSession,
   readImpersonation,
 } from "@/lib/auth/impersonation";
+import { activeGrant } from "@/lib/auth/impersonation-grant";
 import { db } from "@/lib/db/client";
-import { workspaces } from "@/lib/db/schema";
+import { agents, conversations, workspaces } from "@/lib/db/schema";
 import { AppError, errorResponse } from "@/lib/http/errors";
 import { recordAudit } from "@/lib/observability/audit";
+import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
 
 /**
  * Starting and ending an impersonation session.
@@ -20,20 +22,26 @@ import { recordAudit } from "@/lib/observability/audit";
  * Both halves are audited, and both audit rows are written against the
  * workspace being entered rather than the administrator's own. Someone reading
  * their own audit trail should be able to see that an administrator was in
- * their account, when, and whether they could change anything - that is the
- * point of recording it at all.
+ * their account, when, and what they were able to do - that is the point of
+ * recording it at all.
  */
 const startSchema = z.object({
   workspaceId: z.uuid(),
   /**
-   * Off unless deliberately turned on, and a separate audit entry when it is.
-   * Most support requests are "show me what they see", which needs no writes.
+   * Which tier. The lowest one unless deliberately raised, and `write` cannot
+   * be reached at all without the customer's recorded consent.
    */
-  canWrite: z.boolean().default(false),
+  mode: z.enum(["read", "sandbox", "write"]).default("read"),
   minutes: z.number().int().min(1).max(IMPERSONATION_MAX_MINUTES).optional(),
   /** Why. Free text, stored on the audit row. */
   reason: z.string().max(500).optional(),
 });
+
+const MODE_WORDING = {
+  read: "read-only",
+  sandbox: "in a sandbox",
+  write: "with permission to make changes",
+} as const;
 
 export async function POST(request: Request) {
   const requestId = crypto.randomUUID();
@@ -50,27 +58,41 @@ export async function POST(request: Request) {
       throw new AppError("WORKSPACE_NOT_FOUND", "Workspace not found.", 404);
     }
 
+    // Checked here rather than trusted from the cookie, because a cookie is
+    // minted once and consent can be withdrawn afterwards.
+    let grantExpiresAt: Date | null = null;
+    if (input.mode === "write") {
+      const grant = await activeGrant(workspace.id, identity.email);
+      if (!grant) {
+        throw new AppError(
+          "CONSENT_REQUIRED",
+          `${workspace.name} has not given you permission to change anything. ` +
+            "Request it, and they will be asked to approve. A sandbox session " +
+            "needs no permission and can reproduce most faults.",
+          403,
+        );
+      }
+      grantExpiresAt = grant.grantExpiresAt;
+    }
+
     const session = impersonationSession(
       workspace.id,
       workspace.name,
       identity.email,
-      { canWrite: input.canWrite, minutes: input.minutes },
+      { mode: input.mode, minutes: input.minutes },
     );
 
     await recordAudit({
       workspaceId: workspace.id,
       actorEmail: identity.email,
-      action: input.canWrite
-        ? "admin.impersonation_started_write"
-        : "admin.impersonation_started",
+      action: `admin.impersonation_started_${input.mode}`,
       targetType: "workspace",
       targetId: workspace.id,
-      message: `${identity.email} began viewing ${workspace.name}${
-        input.canWrite ? " with permission to make changes" : " (read-only)"
-      }`,
+      message: `${identity.email} began viewing ${workspace.name} ${MODE_WORDING[input.mode]}`,
       metadata: {
-        canWrite: input.canWrite,
+        mode: input.mode,
         expiresAt: new Date(session.expiresAt).toISOString(),
+        grantExpiresAt: grantExpiresAt?.toISOString() ?? null,
         reason: input.reason ?? null,
       },
       requestId,
@@ -80,7 +102,7 @@ export async function POST(request: Request) {
       data: {
         workspaceId: workspace.id,
         workspaceName: workspace.name,
-        canWrite: session.canWrite,
+        mode: session.mode,
         expiresAt: session.expiresAt,
       },
       requestId,
@@ -104,9 +126,45 @@ export async function POST(request: Request) {
 }
 
 /**
+ * Throws away everything a sandbox session wrote.
+ *
+ * This is what makes the promise on the banner true. A sandbox conversation is
+ * a real row while the session lasts - it has to be, because the agent reads
+ * its own history back out of the database to answer a follow-up - and it stops
+ * being one when the session ends.
+ *
+ * Every sandbox conversation in the workspace is removed, not only this
+ * session's. A session that ended by expiry, a closed tab or a crashed process
+ * never reaches this code, so scoping the cleanup narrowly would slowly
+ * accumulate exactly the rows this feature promises not to leave behind.
+ * Nothing else writes this channel, so there is nothing else to catch.
+ */
+async function discardSandboxData(workspaceId: string) {
+  const owned = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(eq(agents.workspaceId, workspaceId));
+  if (!owned.length) return 0;
+
+  const removed = await db
+    .delete(conversations)
+    .where(
+      and(
+        inArray(
+          conversations.agentId,
+          owned.map((agent) => agent.id),
+        ),
+        eq(conversations.channel, SANDBOX_CHANNEL),
+      ),
+    )
+    .returning({ id: conversations.id });
+  return removed.length;
+}
+
+/**
  * Ends the session.
  *
- * Exempted from the read-only rule in the proxy - the exit cannot be behind the
+ * Exempted from the write rules in the proxy - the exit cannot be behind the
  * lock, or an administrator is stuck until the session expires.
  */
 export async function DELETE() {
@@ -115,21 +173,29 @@ export async function DELETE() {
     const identity = await requireAdminIdentity();
     const session = await readImpersonation();
 
+    let discarded = 0;
     if (session) {
+      if (session.mode === "sandbox") {
+        discarded = await discardSandboxData(session.workspaceId);
+      }
       await recordAudit({
         workspaceId: session.workspaceId,
         actorEmail: identity.email,
         action: "admin.impersonation_ended",
         targetType: "workspace",
         targetId: session.workspaceId,
-        message: `${identity.email} stopped viewing ${session.workspaceName}`,
-        metadata: { canWrite: session.canWrite },
+        message:
+          `${identity.email} stopped viewing ${session.workspaceName}` +
+          (discarded
+            ? `, discarding ${discarded} sandbox conversation(s)`
+            : ""),
+        metadata: { mode: session.mode, discarded },
         requestId,
       });
     }
 
     const response = NextResponse.json({
-      data: { ended: Boolean(session) },
+      data: { ended: Boolean(session), discarded },
       requestId,
     });
     // Cleared whether or not one was found. A cookie that failed verification

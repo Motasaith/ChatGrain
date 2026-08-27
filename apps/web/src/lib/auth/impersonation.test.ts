@@ -21,7 +21,7 @@ const session = (over: Record<string, unknown> = {}) => ({
   workspaceId: "ws-1",
   workspaceName: "Acme",
   adminEmail: "admin@example.com",
-  canWrite: false,
+  mode: "read" as const,
   expiresAt: Date.now() + 30 * 60_000,
   ...over,
 });
@@ -48,7 +48,7 @@ describe("impersonation tokens", () => {
     expect(await decode(await encode(session()))).toMatchObject({
       workspaceId: "ws-1",
       adminEmail: "admin@example.com",
-      canWrite: false,
+      mode: "read",
     });
   });
 
@@ -78,10 +78,32 @@ describe("impersonation tokens", () => {
     expect(await decode(await forge(session(), { workspaceId: "ws-other" }))).toBeNull();
   });
 
-  // The one that matters most: a read-only session whose flag can be flipped is
-  // not read-only.
-  it("refuses an escalation from read-only to read-write", async () => {
-    expect(await decode(await forge(session(), { canWrite: true }))).toBeNull();
+  // The one that matters most: a read-only session whose tier can be edited is
+  // not read-only, and is not a sandbox either.
+  it("refuses an escalation from read to write", async () => {
+    expect(await decode(await forge(session(), { mode: "write" }))).toBeNull();
+  });
+
+  it("refuses an escalation from read to sandbox", async () => {
+    expect(await decode(await forge(session(), { mode: "sandbox" }))).toBeNull();
+  });
+
+  it("refuses an escalation from sandbox to write", async () => {
+    expect(
+      await decode(
+        await forge(session({ mode: "sandbox" }), { mode: "write" }),
+      ),
+    ).toBeNull();
+  });
+
+  // A mode this build does not recognise is rejected rather than treated as the
+  // safe tier. The signature has already passed by then, so an unknown value
+  // means a cookie minted by a different version - and guessing what it meant
+  // is how a privilege bug gets written.
+  it("refuses a mode it does not recognise", async () => {
+    expect(
+      await decode(await encode(session({ mode: "superuser" }))),
+    ).toBeNull();
   });
 
   it("refuses an extended expiry", async () => {

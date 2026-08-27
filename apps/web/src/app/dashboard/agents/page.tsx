@@ -6,10 +6,11 @@ import {
   MessageCircleMore,
   Plus,
 } from "lucide-react";
-import { count, desc, eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, inArray, ne } from "drizzle-orm";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, conversations, sources } from "@/lib/db/schema";
+import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
 import { AgentDeleteButton } from "@/components/app/agent-delete-button";
 
 export default async function AgentsPage() {
@@ -31,7 +32,12 @@ export default async function AgentsPage() {
     ? await db
         .select({ agentId: conversations.agentId, value: count(conversations.id) })
         .from(conversations)
-        .where(inArray(conversations.agentId, ids))
+        .where(
+          and(
+            inArray(conversations.agentId, ids),
+            ne(conversations.channel, SANDBOX_CHANNEL),
+          ),
+        )
         .groupBy(conversations.agentId)
     : [];
 

@@ -15,7 +15,7 @@ const cookieFor = async (over: Record<string, unknown> = {}) => {
       workspaceId: "ws-1",
       workspaceName: "Acme",
       adminEmail: "admin@example.com",
-      canWrite: false,
+      mode: "read" as const,
       expiresAt: Date.now() + 60_000,
       ...over,
     },
@@ -68,7 +68,7 @@ describe("read-only impersonation", () => {
   });
 
   it("allows writes when the session was granted them", async () => {
-    const cookie = await cookieFor({ canWrite: true });
+    const cookie = await cookieFor({ mode: "write" });
     expect(await blockedByReadOnlyImpersonation(request("POST", cookie))).toBeNull();
   });
 
@@ -161,7 +161,7 @@ describe("logging impersonated requests", () => {
       admin: "admin@example.com",
       workspace: "Acme",
       method: "GET",
-      canWrite: false,
+      mode: "read",
     });
   });
 

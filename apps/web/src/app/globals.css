@@ -11941,3 +11941,145 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   font-style: normal;
   white-space: nowrap;
 }
+
+/* A sandbox sits between the two: not the neutral amber of looking, not the
+   alarm of editing. Cool rather than warm, because the point of the tier is
+   that it is safe - an administrator who reads this as a warning will go and
+   ask for the write access they did not need. */
+.impersonation-banner.is-sandbox {
+  color: #0d3b45;
+  background: repeating-linear-gradient(
+    135deg,
+    #a8dbe4,
+    #a8dbe4 12px,
+    #97ced8 12px,
+    #97ced8 24px
+  );
+}
+
+/* The permission page: a customer answering a question they did not ask for. */
+.permission-card {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 720px;
+}
+
+.permission-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+}
+
+.permission-facts > div {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 620px) {
+  .permission-facts > div {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}
+
+.permission-facts dt {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.permission-facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.permission-context {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: var(--paper);
+}
+
+.permission-context h3 {
+  margin: 0 0 10px;
+  font-size: 0.875rem;
+}
+
+.permission-context ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+
+.permission-context > p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.permission-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Deliberately not styled as primary-versus-destructive. The safe answer here
+   is "no", it stays available later, and a page that nudges towards "yes" is
+   not asking for consent - it is collecting it. */
+.permission-actions > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 16px;
+  color: var(--ink);
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.permission-actions > button:hover:not(:disabled) {
+  background: var(--paper);
+}
+
+.permission-actions > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.permission-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.permission-error {
+  margin: 0;
+  color: #a3271c;
+  font-size: 0.8125rem;
+}
+
+/* The fallback when there is no mailer: text to be copied out by hand. */
+.permission-copy {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  resize: vertical;
+}

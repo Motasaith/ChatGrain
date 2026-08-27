@@ -5,7 +5,10 @@ import { and, eq, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { memberships, users, workspaces } from "@/lib/db/schema";
 import { getCurrentIdentity, isAdminEmail } from "./session";
-import { readImpersonation } from "./impersonation";
+import {
+  readImpersonation,
+  type ImpersonationMode,
+} from "./impersonation";
 
 /**
  * Present on every path, so the field exists whether or not anyone is
@@ -22,7 +25,7 @@ type Impersonating =
   | {
       workspaceName: string;
       adminEmail: string;
-      canWrite: boolean;
+      mode: ImpersonationMode;
       expiresAt: number;
     }
   | undefined;
@@ -69,7 +72,7 @@ export async function getWorkspaceContext() {
           impersonating: {
             workspaceName: target.workspaceName,
             adminEmail: acting.adminEmail,
-            canWrite: acting.canWrite,
+            mode: acting.mode,
             expiresAt: acting.expiresAt,
           },
         };
