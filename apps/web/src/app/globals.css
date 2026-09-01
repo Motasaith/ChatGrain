@@ -1925,7 +1925,7 @@ button {
 }
 
 .agent-delete-dialog > p,
-.ask-dialog > p {
+.ask-dialog > .ask-body {
   margin: 0 0 14px;
   color: var(--muted);
   font-size: 0.875rem;
@@ -12082,4 +12082,44 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   font-size: 11.5px;
   line-height: 1.5;
   resize: vertical;
+}
+
+/* The list of what a session changed, shown before keep-or-discard. */
+.impersonation-change-lead {
+  margin: 0 0 8px;
+}
+
+.impersonation-change-list {
+  max-height: 190px;
+  overflow-y: auto;
+  margin: 0 0 12px;
+  padding: 10px 12px 10px 26px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+
+.impersonation-change-list > li > i {
+  display: inline-block;
+  min-width: 58px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.impersonation-change-note {
+  margin: 0;
+}
+
+.ask-body > p:first-child {
+  margin-top: 0;
+}
+
+.ask-body > p:last-child {
+  margin-bottom: 0;
 }

@@ -144,7 +144,12 @@ function AskDialog({
         role="dialog"
       >
         <h2>{options.title}</h2>
-        <p>{options.body}</p>
+        {/* A div, not a p. Callers pass rich bodies - a list of what is about
+            to change, a paragraph of consequence - and a <ul> or <p> nested
+            inside a <p> is invalid HTML that the browser silently restructures,
+            which then fails hydration because React's tree and the DOM's no
+            longer match. */}
+        <div className="ask-body">{options.body}</div>
         {options.input ? (
           <label className="field">
             <span>{options.input.label}</span>

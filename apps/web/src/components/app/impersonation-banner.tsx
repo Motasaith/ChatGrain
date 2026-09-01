@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, FlaskConical, LoaderCircle, Pencil, X } from "lucide-react";
+import { useAskDialog } from "@/components/app/ask-dialog";
 import type { ImpersonationMode } from "@/lib/auth/impersonation-payload";
 
 /**
@@ -27,7 +28,7 @@ const WORDING = {
   write: {
     label: "Editing as",
     detail:
-      "They approved this. You can change things, and everything you do is recorded against this workspace.",
+      "You can change anything. Their configuration was copied when you came in, so you can undo all of it when you leave — or later.",
   },
 } as const;
 
@@ -56,6 +57,7 @@ export function ImpersonationBanner({
 }) {
   const router = useRouter();
   const [leaving, setLeaving] = useState(false);
+  const { ask, dialog } = useAskDialog();
   /**
    * Null until the component has mounted, and deliberately so.
    *
@@ -88,16 +90,88 @@ export function ImpersonationBanner({
     router.refresh();
   }, [remaining, router]);
 
-  const leave = async () => {
+  const end = async (decision: "keep" | "discard") => {
     setLeaving(true);
     try {
-      await fetch("/api/admin/impersonate", { method: "DELETE" });
+      await fetch("/api/admin/impersonate", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
       // Back to the admin page rather than staying put: the page underneath
       // belongs to a workspace that is no longer resolvable.
       window.location.href = "/dashboard/admin";
     } catch {
       setLeaving(false);
     }
+  };
+
+  /**
+   * Leaving an editing session: decide about a named list, not about a feeling.
+   *
+   * The changes are fetched and shown because nobody remembers everything they
+   * touched in twenty minutes, and "keep or discard?" with nothing named gets
+   * answered wrongly. A session that changed nothing does not ask at all -
+   * there is no decision to make, and a dialog with an empty list would train
+   * people to dismiss the one that matters.
+   */
+  const leave = async () => {
+    if (mode !== "write") {
+      await end("keep");
+      return;
+    }
+
+    setLeaving(true);
+    let changes: { label: string; kind: string; table: string }[] = [];
+    try {
+      const response = await fetch("/api/admin/impersonate/changes");
+      const payload = await response.json().catch(() => ({}));
+      changes = payload?.data?.changes ?? [];
+    } catch {
+      // A failure to list them is not a reason to trap somebody in the session.
+      // Keeping is the safe direction: the restore point survives either way.
+    }
+    setLeaving(false);
+
+    if (!changes.length) {
+      await end("keep");
+      return;
+    }
+
+    const keep = await ask({
+      title: `Keep your changes to ${workspaceName}?`,
+      body: (
+        <>
+          <p className="impersonation-change-lead">
+            You changed <b>{changes.length}</b>{" "}
+            {changes.length === 1 ? "thing" : "things"}:
+          </p>
+          <ul className="impersonation-change-list">
+            {changes.slice(0, 12).map((change) => (
+              <li key={`${change.table}:${change.label}`}>
+                <i>{change.kind}</i> {change.label}
+              </li>
+            ))}
+            {changes.length > 12 ? (
+              <li>…and {changes.length - 12} more</li>
+            ) : null}
+          </ul>
+          <p className="impersonation-change-note">
+            Discarding puts their configuration back as it was. Either way this
+            session stays on record and can be rolled back later.{" "}
+            <b>Re-indexing cannot be undone</b> — if you rebuilt their pages,
+            those stay rebuilt.
+          </p>
+        </>
+      ),
+      confirmLabel: "Keep changes",
+      cancelLabel: "Discard them",
+    });
+
+    // Cancel is the discard here, deliberately: the destructive-looking button
+    // is the one that puts the customer's account back, and it should be the
+    // easy one to reach.
+    await end(keep === null ? "discard" : "keep");
   };
 
   const minutes = Math.max(0, Math.floor((remaining ?? 0) / 60_000));
@@ -107,6 +181,7 @@ export function ImpersonationBanner({
 
   return (
     <div className={`impersonation-banner is-${mode}`} role="alert">
+      {dialog}
       <span className="impersonation-badge">
         {mode === "write" ? (
           <Pencil size={13} />

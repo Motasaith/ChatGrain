@@ -6,6 +6,7 @@ import {
   GRANT_TTL_HOURS,
   REQUEST_TTL_HOURS,
   activeGrant,
+  consentRequired,
   grantRequestMessage,
   grantToken,
   hoursFromNow,
@@ -49,6 +50,19 @@ export async function POST(request: Request) {
   try {
     const identity = await requireAdminIdentity();
     const input = schema.parse(await request.json());
+
+    // Off unless an installation turns it on. Where it is off, an administrator
+    // simply edits and decides afterwards, so sending the customer a request
+    // would be asking them to authorise something that needs no authorising.
+    if (!consentRequired()) {
+      throw new AppError(
+        "CONSENT_NOT_REQUIRED",
+        "This installation does not ask customers for permission. Edit the " +
+          "workspace directly - your changes can be undone when you leave, or " +
+          "rolled back later from the admin dashboard.",
+        409,
+      );
+    }
 
     const [workspace] = await db
       .select({ id: workspaces.id, name: workspaces.name })

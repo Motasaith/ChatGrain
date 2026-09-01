@@ -9,9 +9,20 @@ import {
   impersonationSession,
   readImpersonation,
 } from "@/lib/auth/impersonation";
-import { activeGrant } from "@/lib/auth/impersonation-grant";
+import { activeGrant, consentRequired } from "@/lib/auth/impersonation-grant";
+import {
+  diffSnapshot,
+  restoreSnapshot,
+  takeSnapshot,
+  type WorkspaceSnapshot,
+} from "@/lib/auth/workspace-snapshot";
 import { db } from "@/lib/db/client";
-import { agents, conversations, workspaces } from "@/lib/db/schema";
+import {
+  adminSessions,
+  agents,
+  conversations,
+  workspaces,
+} from "@/lib/db/schema";
 import { AppError, errorResponse } from "@/lib/http/errors";
 import { recordAudit } from "@/lib/observability/audit";
 import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
@@ -27,20 +38,16 @@ import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
  */
 const startSchema = z.object({
   workspaceId: z.uuid(),
-  /**
-   * Which tier. The lowest one unless deliberately raised, and `write` cannot
-   * be reached at all without the customer's recorded consent.
-   */
   mode: z.enum(["read", "sandbox", "write"]).default("read"),
   minutes: z.number().int().min(1).max(IMPERSONATION_MAX_MINUTES).optional(),
-  /** Why. Free text, stored on the audit row. */
+  /** Why. Free text, stored on the audit row and on the restore point. */
   reason: z.string().max(500).optional(),
 });
 
 const MODE_WORDING = {
   read: "read-only",
   sandbox: "in a sandbox",
-  write: "with permission to make changes",
+  write: "with changes that can be undone",
 } as const;
 
 export async function POST(request: Request) {
@@ -58,28 +65,48 @@ export async function POST(request: Request) {
       throw new AppError("WORKSPACE_NOT_FOUND", "Workspace not found.", 404);
     }
 
-    // Checked here rather than trusted from the cookie, because a cookie is
-    // minted once and consent can be withdrawn afterwards.
-    let grantExpiresAt: Date | null = null;
+    /**
+     * Entering an editing session copies the configuration first.
+     *
+     * This is what stands in place of asking the customer. They are not
+     * interrupted, not asked to judge something they have no context for, and
+     * not trained to click approval links in email - and nothing done here is
+     * permanent until somebody decides it should be.
+     */
+    let sessionId: string | undefined;
     if (input.mode === "write") {
-      const grant = await activeGrant(workspace.id, identity.email);
-      if (!grant) {
-        throw new AppError(
-          "CONSENT_REQUIRED",
-          `${workspace.name} has not given you permission to change anything. ` +
-            "Request it, and they will be asked to approve. A sandbox session " +
-            "needs no permission and can reproduce most faults.",
-          403,
-        );
+      // Consent is off unless an installation deliberately turns it on. Where
+      // it is on, it gates entry exactly as before.
+      if (consentRequired()) {
+        const grant = await activeGrant(workspace.id, identity.email);
+        if (!grant) {
+          throw new AppError(
+            "CONSENT_REQUIRED",
+            `This installation requires ${workspace.name} to approve changes. ` +
+              "Request it, and they will be asked.",
+            403,
+          );
+        }
       }
-      grantExpiresAt = grant.grantExpiresAt;
+
+      const snapshot = await takeSnapshot(workspace.id);
+      const [row] = await db
+        .insert(adminSessions)
+        .values({
+          workspaceId: workspace.id,
+          adminEmail: identity.email,
+          reason: input.reason ?? null,
+          snapshot,
+        })
+        .returning({ id: adminSessions.id });
+      sessionId = row.id;
     }
 
     const session = impersonationSession(
       workspace.id,
       workspace.name,
       identity.email,
-      { mode: input.mode, minutes: input.minutes },
+      { mode: input.mode, minutes: input.minutes, sessionId },
     );
 
     await recordAudit({
@@ -91,8 +118,8 @@ export async function POST(request: Request) {
       message: `${identity.email} began viewing ${workspace.name} ${MODE_WORDING[input.mode]}`,
       metadata: {
         mode: input.mode,
+        sessionId: sessionId ?? null,
         expiresAt: new Date(session.expiresAt).toISOString(),
-        grantExpiresAt: grantExpiresAt?.toISOString() ?? null,
         reason: input.reason ?? null,
       },
       requestId,
@@ -103,6 +130,7 @@ export async function POST(request: Request) {
         workspaceId: workspace.id,
         workspaceName: workspace.name,
         mode: session.mode,
+        sessionId: sessionId ?? null,
         expiresAt: session.expiresAt,
       },
       requestId,
@@ -128,16 +156,10 @@ export async function POST(request: Request) {
 /**
  * Throws away everything a sandbox session wrote.
  *
- * This is what makes the promise on the banner true. A sandbox conversation is
- * a real row while the session lasts - it has to be, because the agent reads
- * its own history back out of the database to answer a follow-up - and it stops
- * being one when the session ends.
- *
  * Every sandbox conversation in the workspace is removed, not only this
  * session's. A session that ended by expiry, a closed tab or a crashed process
  * never reaches this code, so scoping the cleanup narrowly would slowly
  * accumulate exactly the rows this feature promises not to leave behind.
- * Nothing else writes this channel, so there is nothing else to catch.
  */
 async function discardSandboxData(workspaceId: string) {
   const owned = await db
@@ -161,23 +183,92 @@ async function discardSandboxData(workspaceId: string) {
   return removed.length;
 }
 
-/**
- * Ends the session.
- *
- * Exempted from the write rules in the proxy - the exit cannot be behind the
- * lock, or an administrator is stuck until the session expires.
- */
-export async function DELETE() {
+const endSchema = z.object({
+  /**
+   * What to do with an editing session's changes.
+   *
+   * `keep` is the default, and is what an abandoned session gets. Silently
+   * undoing an administrator's completed work would leave the customer broken
+   * with nobody any the wiser - so changes stay, and the restore point stays
+   * with them, which is the part that makes keeping them defensible.
+   */
+  decision: z.enum(["keep", "discard"]).default("keep"),
+});
+
+export async function DELETE(request: Request) {
   const requestId = crypto.randomUUID();
   try {
     const identity = await requireAdminIdentity();
     const session = await readImpersonation();
+    const input = endSchema.parse(
+      await request.json().catch(() => ({})),
+    );
 
     let discarded = 0;
+    let restored: Awaited<ReturnType<typeof restoreSnapshot>> | null = null;
+    let changeCount = 0;
+
     if (session) {
       if (session.mode === "sandbox") {
         discarded = await discardSandboxData(session.workspaceId);
       }
+
+      if (session.sessionId) {
+        const [row] = await db
+          .select()
+          .from(adminSessions)
+          .where(eq(adminSessions.id, session.sessionId))
+          .limit(1);
+
+        if (row && row.status === "open") {
+          const before = row.snapshot as WorkspaceSnapshot;
+          const after = await takeSnapshot(session.workspaceId);
+          const changes = diffSnapshot(before, after);
+          changeCount = changes.length;
+          const endedAt = new Date();
+
+          if (input.decision === "discard" && changes.length) {
+            restored = await restoreSnapshot(before, session.workspaceId, {
+              endedAt,
+            });
+          }
+
+          await db
+            .update(adminSessions)
+            .set({
+              status: input.decision === "discard" ? "discarded" : "kept",
+              summary: { changes, skipped: restored?.skipped ?? [] },
+              endedAt,
+              decidedAt: endedAt,
+              decidedBy: identity.email,
+            })
+            .where(eq(adminSessions.id, row.id));
+
+          if (changes.length) {
+            await recordAudit({
+              workspaceId: session.workspaceId,
+              actorEmail: identity.email,
+              action:
+                input.decision === "discard"
+                  ? "admin.session_discarded"
+                  : "admin.session_kept",
+              targetType: "workspace",
+              targetId: session.workspaceId,
+              message:
+                input.decision === "discard"
+                  ? `${identity.email} undid ${changes.length} change(s) made during their session`
+                  : `${identity.email} kept ${changes.length} change(s) made during their session`,
+              metadata: {
+                sessionId: row.id,
+                changes: changes.slice(0, 50),
+                skipped: restored?.skipped ?? [],
+              },
+              requestId,
+            });
+          }
+        }
+      }
+
       await recordAudit({
         workspaceId: session.workspaceId,
         actorEmail: identity.email,
@@ -189,13 +280,19 @@ export async function DELETE() {
           (discarded
             ? `, discarding ${discarded} sandbox conversation(s)`
             : ""),
-        metadata: { mode: session.mode, discarded },
+        metadata: { mode: session.mode, discarded, changes: changeCount },
         requestId,
       });
     }
 
     const response = NextResponse.json({
-      data: { ended: Boolean(session), discarded },
+      data: {
+        ended: Boolean(session),
+        discarded,
+        changes: changeCount,
+        restored: restored?.restored ?? 0,
+        skipped: restored?.skipped ?? [],
+      },
       requestId,
     });
     // Cleared whether or not one was found. A cookie that failed verification

@@ -11,16 +11,22 @@ import { useAskDialog } from "@/components/app/ask-dialog";
  * different decisions and burying them behind a menu would make the cheapest
  * one no easier to reach than the most expensive.
  *
- * The order matters. Looking is first because it answers most questions.
- * Sandbox is second because it answers most of the rest, and the whole reason
- * it exists is that "reproduce the fault" previously had no answer short of
- * full write access. Asking for write access is last, looks like the
- * exceptional thing it is, and cannot be granted from this side at all.
+ * The order matters, and it is cheapest first. Looking answers most questions.
+ * A sandbox answers most of the rest without touching anything the customer
+ * owns. Editing answers the remainder, and is last because it is the one with
+ * consequences - not because it is hard to reach.
  *
- * A reason is asked for every time. Not enforced for looking - a required field
- * would collect the word "support" - but a prompt at the moment of doing it is
- * what makes the trail worth reading afterwards. For write access it *is*
- * enforced, because that text is what the customer reads before deciding.
+ * Editing asks nobody's permission. That was tried and reversed: a customer
+ * paying for a managed service does not want a decision put to them, usually
+ * has no basis on which to make it, and an emailed "click here to approve
+ * access" link is shaped exactly like a phishing attempt. Reversibility
+ * replaces consent - the configuration is copied on the way in, so anything
+ * done can be undone on the way out or from the dashboard afterwards.
+ *
+ * A reason is asked for every time and required nowhere. A mandatory field
+ * collects the word "support"; a prompt at the moment of acting is what makes
+ * the trail worth reading, and for an editing session it is what labels the
+ * restore point somebody may need to find later.
  */
 export function ImpersonateButton({
   workspaceId,
@@ -34,6 +40,14 @@ export function ImpersonateButton({
   const [notice, setNotice] = useState<string | null>(null);
   const { ask, dialog } = useAskDialog();
 
+  /**
+   * Starts a session, and reports why not if it could not.
+   *
+   * Returns the failure code rather than only showing a message, because one
+   * caller needs to act on it: an installation with consent switched on refuses
+   * an editing session, and that is a path to follow rather than an error to
+   * put in front of somebody.
+   */
   const enter = async (mode: "read" | "sandbox" | "write", reason: string) => {
     setBusy(true);
     setError(null);
@@ -45,16 +59,27 @@ export function ImpersonateButton({
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload?.error?.message ?? "Could not start.");
+        setBusy(false);
+        return { ok: false, code: payload?.error?.code as string | undefined,
+          message: payload?.error?.message as string | undefined };
       }
       // A full navigation rather than a router push: the cookie has just
       // changed, and every server component needs to be resolved again against
       // the workspace it now names.
-      window.location.href = "/dashboard";
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start.");
+      window.location.assign("/dashboard");
+      return { ok: true };
+    } catch {
       setBusy(false);
+      return { ok: false, code: undefined, message: "Could not start." };
     }
+  };
+
+  const enterOrReport = async (
+    mode: "read" | "sandbox" | "write",
+    reason: string,
+  ) => {
+    const result = await enter(mode, reason);
+    if (!result.ok) setError(result.message ?? "Could not start.");
   };
 
   const start = async (mode: "read" | "sandbox") => {
@@ -85,18 +110,68 @@ export function ImpersonateButton({
       },
     });
     if (reason === null) return;
-    await enter(mode, reason);
+    await enterOrReport(mode, reason);
   };
 
   /**
-   * Asking the customer, or entering if they have already said yes.
+   * Entering an editing session.
    *
-   * The same button for both, because from here they are the same intention -
-   * "I need to change something" - and which of the two happens depends on a
-   * grant the administrator cannot see and should not have to check first.
+   * No permission is asked, and that is deliberate. A customer paying for a
+   * managed service does not want a decision put to them, usually has no basis
+   * on which to make it, and "click this link to approve access" is
+   * structurally a phishing message - training people to click those is worse
+   * security than not asking.
+   *
+   * Reversibility replaces consent. The configuration is copied on the way in,
+   * so everything done here can be undone on the way out, or from the admin
+   * dashboard days later if the fix turns out to have made things worse.
+   *
+   * Where an installation has turned consent back on, the route refuses and
+   * says so, and `requestWrite` below is the path instead.
    */
-  const requestWrite = async () => {
+  const edit = async () => {
     const reason = await ask({
+      title: `Edit ${workspaceName}?`,
+      body: (
+        <>
+          You will be able to change <b>anything</b> — their agent, its prompt,
+          sources, actions and settings. Their configuration is copied first, so
+          you can undo all of it when you leave, and roll it back later even if
+          you do not.
+          <br />
+          <br />
+          Re-indexing is the exception: a rebuilt corpus cannot be restored.
+        </>
+      ),
+      confirmLabel: "Start editing",
+      input: {
+        label: "What are you fixing? (optional, kept with the restore point)",
+        placeholder: "Welcome message names the old product…",
+      },
+    });
+    if (reason === null) return;
+
+    const result = await enter("write", reason);
+    if (result.ok) return;
+    // The one installation-dependent branch: consent is switched on here, so
+    // the request flow is the way in rather than an error to report.
+    if (result.code === "CONSENT_REQUIRED") {
+      await requestWrite(reason);
+      return;
+    }
+    setError(result.message ?? "Could not start.");
+  };
+
+  /**
+   * Asking the customer, for installations that require it.
+   *
+   * Reached only when the editing route refuses, which happens when
+   * IMPERSONATION_REQUIRE_CONSENT is on - some installations answer to
+   * procurement rather than to a manager, and "support can change our
+   * configuration without asking" ends some contracts.
+   */
+  const requestWrite = async (given?: string) => {
+    const reason = given ?? await ask({
       title: `Ask ${workspaceName} for permission to make changes?`,
       body: (
         <>
@@ -202,14 +277,14 @@ export function ImpersonateButton({
         Sandbox
       </button>
       <button
-        aria-label={`Ask ${workspaceName} for permission to make changes`}
+        aria-label={`Edit ${workspaceName}`}
         disabled={busy}
-        onClick={() => void requestWrite()}
-        title="Ask them for permission to change something"
+        onClick={() => void edit()}
+        title="Change anything. Undoable when you leave, and afterwards."
         type="button"
       >
         <Pencil size={13} />
-        Ask to edit
+        Edit
       </button>
     </span>
   );

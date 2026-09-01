@@ -16,6 +16,29 @@ import { impersonationGrants } from "@/lib/db/schema";
  * row showing they asked and you said yes.
  */
 
+/**
+ * Whether this installation makes an administrator ask before editing.
+ *
+ * Off by default, and that is a deliberate reversal. Asking read badly in
+ * practice for three reasons, all of them about the customer rather than about
+ * us: somebody paying for a managed service does not want a decision put to
+ * them, usually has no basis on which to make it, and "click this link to
+ * approve access" is structurally identical to a phishing message - training
+ * people to click those is worse security than not asking at all.
+ *
+ * What replaces it is reversibility: an editing session copies the
+ * configuration first, so anything done can be undone, on the way out or days
+ * later. That protects the customer without involving them.
+ *
+ * The switch stays because some installations answer to procurement rather than
+ * to a manager, and "support can change our configuration without asking" is a
+ * sentence that ends some contracts. Turning it on restores the full request,
+ * approve and withdraw flow.
+ */
+export function consentRequired() {
+  return process.env.IMPERSONATION_REQUIRE_CONSENT?.trim() === "true";
+}
+
 /** How long a customer has to answer before the request goes stale. */
 export const REQUEST_TTL_HOURS = 48;
 

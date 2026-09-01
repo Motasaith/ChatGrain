@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AdminAgentActions } from "@/components/app/admin-agent-actions";
+import { AdminSessionActions } from "@/components/app/admin-session-actions";
 import { AdminJobActions } from "@/components/app/admin-job-actions";
 import { AdminWorkspaceActions } from "@/components/app/admin-workspace-actions";
 import { ImpersonateButton } from "@/components/app/impersonate-button";
@@ -8,6 +9,7 @@ import {
   Activity,
   AlertTriangle,
   Bot,
+  History,
   CircleAlert,
   Clock3,
   Database,
@@ -24,6 +26,7 @@ import { AdminUserActions } from "@/components/app/admin-user-actions";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import {
+  adminSessions,
   agents,
   auditLogs,
   conversations,
@@ -176,6 +179,7 @@ async function loadAdminData() {
     allAgents,
     allWorkspaces,
     recentAudit,
+    editSessions,
     recentSystemLogs,
     states,
     sentry,
@@ -298,6 +302,23 @@ async function loadAdminData() {
         .from(auditLogs)
         .orderBy(desc(auditLogs.createdAt))
         .limit(12),
+      // Editing sessions, newest first. Every one is a restore point until it
+      // is rolled back, which is what keeps "kept" from meaning "permanent".
+      db
+        .select({
+          id: adminSessions.id,
+          adminEmail: adminSessions.adminEmail,
+          status: adminSessions.status,
+          reason: adminSessions.reason,
+          startedAt: adminSessions.startedAt,
+          endedAt: adminSessions.endedAt,
+          summary: adminSessions.summary,
+          workspaceName: workspaces.name,
+        })
+        .from(adminSessions)
+        .innerJoin(workspaces, eq(workspaces.id, adminSessions.workspaceId))
+        .orderBy(desc(adminSessions.startedAt))
+        .limit(15),
       db
         .select()
         .from(systemLogs)
@@ -319,11 +340,28 @@ async function loadAdminData() {
     recentUsers,
     recentJobs,
     recentAudit,
+    editSessions,
     recentSystemLogs,
     states,
     sentry,
   };
 }
+
+type SessionChange = { table: string; label: string; kind: string };
+
+/**
+ * How each session state reads as a pill.
+ *
+ * "kept" is deliberately not styled as success. Most sessions end that way
+ * without anybody deciding - a closed tab, an expired hour - so a green tick
+ * would be claiming a review that never happened.
+ */
+const SESSION_PILL: Record<string, string> = {
+  open: "running",
+  kept: "queued",
+  discarded: "ready",
+  reverted: "ready",
+};
 
 export default async function AdminPage() {
   const context = await getWorkspaceContext();
@@ -503,6 +541,74 @@ export default async function AdminPage() {
         </div>
         {data.allWorkspaces.length ? null : (
           <p className="admin-empty">No workspaces yet.</p>
+        )}
+      </section>
+
+      <section className="app-card admin-list-card">
+        <div className="app-card-head">
+          <div>
+            <h2>Editing sessions</h2>
+            <p>
+              Every session where an administrator could change something. The
+              configuration was copied on the way in, so any of these can still
+              be put back.
+            </p>
+          </div>
+          <History size={18} />
+        </div>
+        <div className="admin-table-scroll">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Workspace</th>
+                <th>Administrator</th>
+                <th>Started</th>
+                <th>Changed</th>
+                <th>State</th>
+                <th aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {data.editSessions.map((session) => {
+                const changes =
+                  (session.summary as { changes?: SessionChange[] } | null)
+                    ?.changes ?? [];
+                return (
+                  <tr key={session.id}>
+                    <td>{session.workspaceName}</td>
+                    <td title={session.reason ?? undefined}>
+                      {session.adminEmail}
+                    </td>
+                    <td>{formatDate(session.startedAt)}</td>
+                    <td>
+                      {session.status === "open"
+                        ? "—"
+                        : changes.length.toLocaleString()}
+                    </td>
+                    <td>
+                      <i className={`status-pill status-${SESSION_PILL[session.status] ?? "queued"}`}>
+                        {session.status}
+                      </i>
+                    </td>
+                    <td>
+                      <AdminSessionActions
+                        adminEmail={session.adminEmail}
+                        changes={changes}
+                        sessionId={session.id}
+                        status={session.status}
+                        workspaceName={session.workspaceName}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {data.editSessions.length ? null : (
+          <p className="admin-empty">
+            No administrator has edited a workspace yet.
+          </p>
         )}
       </section>
 

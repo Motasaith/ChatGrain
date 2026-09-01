@@ -4,7 +4,7 @@
 **Status:** **Open, not stable, and not yet deployed.** Every change below exists
 only in the working tree on this machine. Nothing is committed, nothing is
 pushed, and nothing has run against the production database.
-**Tested:** locally only — 516 tests passing, 1 skipped; typecheck, lint and
+**Tested:** locally only — 525 tests passing, 1 skipped; typecheck, lint and
 `next build` clean. **No part of this has been used by a real administrator on
 real customer data.**
 
@@ -19,7 +19,7 @@ commit on `main`, and the last commit of `0.4.0`.
 |---|---|
 | **Revert to** | `f9144d3` (`feat(release): update next version reference to include admin dashboard scope`) |
 | **Branch** | `main` |
-| **Migrations to undo** | `0026`, `0027`, `0028`, `0029` — none of which have been applied to production |
+| **Migrations to undo** | `0026`–`0030` — none of which have been applied to production |
 
 Because nothing here is committed, reverting is `git checkout .` plus deleting
 the untracked files listed under **New files** below. Once it *is* committed,
@@ -47,10 +47,11 @@ Three things follow from that, and they are the whole scope:
    re-index a source, remove a page — per account, without touching the rest of
    the installation.
 2. **Impersonation, in three tiers.** See what the customer sees; reproduce
-   their fault in a sandbox that keeps nothing; or change their account, but
-   only with their recorded permission.
-3. **A record of it.** Every administrator action, and every request made while
-   impersonating, written down under the account it affected.
+   their fault in a sandbox that keeps nothing; or edit their account freely,
+   with everything undoable on the way out and rollable back afterwards.
+3. **A record of it, and a way back.** Every administrator action and every
+   impersonated request is written down under the account it affected, and every
+   editing session leaves a restore point that outlives it.
 
 ### Where a change belongs
 
@@ -400,9 +401,137 @@ past is worse than no guard, because it is trusted.
 
 ---
 
+### 8. Editing sessions, and the consent flow reversed
+
+**This reverses section 6's decision about consent**, and the reasoning is worth
+keeping because the first design was wrong for reasons that were not technical.
+
+Asking a customer to approve an emailed link fails on three counts, all of them
+about the customer rather than about us:
+
+1. **It looks like a scam.** "Click this link to approve access" is structurally
+   identical to a phishing message. Teaching customers to click those is worse
+   security than not asking at all.
+2. **They don't want the decision.** Somebody paying for a managed service is
+   paying precisely so that they do not have to think about this.
+3. **They usually can't make it.** "May I change your retrieval settings?" is
+   not answerable by a manager who hired us because they don't know what
+   retrieval settings are.
+
+And it made us look as though we did not control our own platform.
+
+**What replaces consent is reversibility.** An administrator enters an editing
+session and changes whatever they need. On the way out they are shown what they
+changed and asked to keep it or throw it away. The customer is never involved.
+
+#### How it works, and why it is not the rewrite I said it would be
+
+I twice said "changes that apply only in your session" meant a copy-on-write
+overlay across the whole data layer. That was an answer to the wrong question.
+Writes do not have to be *invisible to everyone else* — they have to be
+*undoable at the end*. Those are very different problems, and the second one is
+just a copy.
+
+Entering an editing session copies the workspace's configuration. Leaving it
+either keeps the changes or writes the copy back.
+
+**Four tables, and deliberately only four:** `agents`, `sources`,
+`pinned_answers`, `actions`. A few rows each. What is excluded matters as much:
+
+- **Documents and chunks** — the corpus. Thousands of rows carrying embeddings,
+  rewritten wholesale by a re-index. Copying that so it could be restored would
+  cost more disk and time than the feature is worth, **so a re-index is the one
+  thing discarding cannot undo, and both dialogs say so in bold.**
+- **Conversations, leads, tickets** — the customer's own data, not
+  configuration. A restore that deleted a lead which arrived during the session
+  would be destroying real business.
+
+#### The snapshot is not deleted when the session ends
+
+This is the decision the rest hangs on. **Discard is simply "restore this now",
+and because the row survives, the same restore is available tomorrow.**
+
+It answers the case that would otherwise be a hole. Most sessions never reach
+the exit dialog — a tab is closed, an hour runs out, a laptop lid comes down.
+Those changes are **kept**, because silently undoing an administrator's finished
+work would leave the customer broken and nobody any the wiser. They are kept
+*with a way back*, which is what makes keeping them defensible. Every session
+appears in the admin dashboard with a **Roll back** button.
+
+It also answers a support fix that turned out to make things worse. "Can you put
+it back how it was?" a week later now has an answer.
+
+#### The failure this had to avoid
+
+A customer editing their own prompt while support is in their account. A blind
+restore would silently destroy their work — the exact failure that would
+discredit the whole feature.
+
+So the restore compares each row's `updated_at` against the moment the session
+ended, and anything touched later is **left alone and reported** rather than
+overwritten.
+
+**That required a correction.** I claimed those four tables had no `updated_at`
+and wrote a migration adding it. They already had it, through a shared
+`timestamps` spread my grep had missed — I had searched for the column
+definition and not for its uses. The columns were never the problem. What was
+missing is anything keeping them *current*: they default on insert and are then
+only refreshed by the handful of routes that remember. So the migration sets a
+database trigger instead, which catches every write path including ones written
+later and including `psql` during an incident.
+
+| File | What it does |
+|---|---|
+| `apps/web/src/lib/auth/workspace-snapshot.ts` | **New.** Take a snapshot, diff two of them, restore one — including the refusal to overwrite rows the customer touched. |
+| `apps/web/src/lib/auth/workspace-snapshot.test.ts` | **New.** 9 tests on the diff, in both directions: it must not miss a change, and must not invent one. A dialog that always lists something is a dialog nobody reads. |
+| `apps/web/drizzle/0030_admin_sessions.sql` | **New.** The `admin_sessions` table, and the `updated_at` triggers. |
+| `apps/web/src/lib/db/schema.ts` | The `adminSessions` table. |
+| `apps/web/src/lib/auth/impersonation-payload.ts` | The session id joins the signed payload — an editable one would let a session be rolled back onto another session's configuration. |
+| `apps/web/src/app/api/admin/impersonate/route.ts` | Snapshots on entry; keeps or restores on exit. |
+| `apps/web/src/app/api/admin/impersonate/changes/route.ts` | **New.** What this session has changed so far. |
+| `apps/web/src/app/api/admin/sessions/[sessionId]/route.ts` | **New.** Rolling a session back afterwards. |
+| `apps/web/src/components/app/impersonation-banner.tsx` | The keep-or-discard dialog, listing what changed. |
+| `apps/web/src/components/app/admin-session-actions.tsx` | **New.** The Roll back button. |
+| `apps/web/src/app/dashboard/admin/page.tsx` | The editing-sessions table. |
+| `apps/web/src/components/app/impersonate-button.tsx` | **Ask to edit** becomes **Edit**. |
+| `apps/web/src/lib/auth/impersonation-grant.ts` | `consentRequired()` — off unless `IMPERSONATION_REQUIRE_CONSENT=true`. |
+| `apps/web/src/app/api/admin/impersonate/request/route.ts` | Refuses when consent is off, and says to just edit instead. |
+| `apps/web/src/components/app/ask-dialog.tsx` | The body renders in a `div`, not a `p`. |
+
+**The change list is computed, not tracked.** Recording every write as it
+happened would mean every route reporting into a session log, and would be wrong
+the first time one of them forgot. Comparing against the copy taken on the way
+in cannot miss anything, because it does not depend on anybody remembering.
+
+**The exit dialog names what changed** rather than asking about "your changes".
+Nobody reliably remembers what they touched in twenty minutes, and a question
+with nothing named gets answered wrongly. A session that changed nothing does
+not ask at all — a dialog with an empty list trains people to dismiss the one
+that matters.
+
+**Discard is the cancel button**, deliberately. The action that puts the
+customer's account back should be the easy one to reach.
+
+#### The consent flow is kept, not deleted
+
+`IMPERSONATION_REQUIRE_CONSENT=true` restores the whole request-approve-withdraw
+flow. It stays because some installations answer to procurement rather than to a
+manager, and "support can change our configuration without asking" is a sentence
+that ends some contracts. Off, nothing about it is reachable.
+
+#### A second invalid-nesting bug
+
+The dialog rendered its body inside a `<p>`. The new bodies contain lists and
+paragraphs, and a `<ul>` inside a `<p>` is invalid HTML that the browser
+silently restructures — which then fails hydration, because React's tree and the
+DOM's no longer agree. It is a `<div>` now. This is the same class of fault as
+section 7 and would have produced the same error.
+
+---
+
 ## Migrations
 
-Four, none applied to production.
+Five, none applied to production.
 
 | File | Effect |
 |---|---|
@@ -410,8 +539,9 @@ Four, none applied to production.
 | `apps/web/drizzle/0027_workspace_usage.sql` | Creates `workspace_usage`. New table. |
 | `apps/web/drizzle/0028_workspace_cadence.sql` | Adds one nullable column to `workspaces`. No data touched. |
 | `apps/web/drizzle/0029_impersonation_grants.sql` | Creates `impersonation_grants`. New table. |
+| `apps/web/drizzle/0030_admin_sessions.sql` | Creates `admin_sessions`, and adds `updated_at` triggers to four existing tables. No column added, no row rewritten. |
 
-All four are additive: nothing is dropped, no existing row is rewritten, and an
+All five are additive: nothing is dropped, no existing row is rewritten, and an
 old build runs unchanged against the new schema. That is deliberate — it means
 the code can be reverted without reverting the database.
 
@@ -451,8 +581,23 @@ Stated rather than solved, and this is why the version is open.
 - **Revoking consent does not end a session already open.** The cookie is signed
   and self-contained, so the exposure is bounded by the remainder of one session
   — at most an hour — rather than being immediate.
-- **The consent emails have never been sent.** `mailerConfigured()` is false on
-  this machine, so only the copy-and-paste path has been exercised.
+- **No editing session has ever been run.** The snapshot, the diff and the
+  restore are unit-tested against constructed data. Nothing has taken a snapshot
+  of a real workspace, changed it, and put it back.
+- **The `updated_at` triggers have never fired.** They are created by a
+  migration that has not been applied. Until they have, the guard that stops a
+  restore overwriting a customer's own edit is untested against a live database.
+- **A re-index during an editing session cannot be undone.** Stated in both
+  dialogs, but it is the one place where "you can undo anything" is not true.
+- **The restore is row-by-row, not a transaction.** A failure halfway through
+  leaves the configuration partly restored. The restore point survives, so it
+  can be run again — but the intermediate state is real.
+- **Nothing enforces a limit on stored snapshots.** One row per editing session,
+  each holding a workspace's configuration. Small, but it grows without bound
+  and there is no pruning.
+- **The consent flow is now off by default and has never been exercised at all.**
+  It is reachable only with `IMPERSONATION_REQUIRE_CONSENT=true`, and no email
+  has ever been sent.
 - **Nobody has approved a request.** The flow type-checks and its parts are
   tested in isolation; the round trip from request to email to approval to a
   write session has not been run end to end by two people.
@@ -470,7 +615,7 @@ Local, on this machine, with the working tree as described above.
 
 | | |
 |---|---|
-| **Tests** | 516 passed, 1 skipped, 71 files |
+| **Tests** | 525 passed, 1 skipped, 72 files |
 | **Typecheck** | `tsc --noEmit` clean |
 | **Lint** | `eslint` clean on every changed file |
 | **Build** | `next build` succeeds |

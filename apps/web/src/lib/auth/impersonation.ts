@@ -85,7 +85,12 @@ export function impersonationSession(
   {
     mode = "read" as ImpersonationMode,
     minutes = DEFAULT_MINUTES,
-  }: { mode?: ImpersonationMode; minutes?: number } = {},
+    sessionId,
+  }: {
+    mode?: ImpersonationMode;
+    minutes?: number;
+    sessionId?: string;
+  } = {},
 ): Impersonation {
   const capped = Math.min(Math.max(1, minutes), IMPERSONATION_MAX_MINUTES);
   return {
@@ -93,6 +98,7 @@ export function impersonationSession(
     workspaceName,
     adminEmail,
     mode,
+    ...(sessionId ? { sessionId } : {}),
     expiresAt: Date.now() + capped * 60_000,
   };
 }

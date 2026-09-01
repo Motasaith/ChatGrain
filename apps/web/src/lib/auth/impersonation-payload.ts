@@ -30,8 +30,16 @@ export const IMPERSONATION_MAX_MINUTES = 60;
  * owns. What it does write is tagged, hidden from the customer, and deleted
  * when the session ends.
  *
- * `write` is unchanged in what it permits and changed in how it is reached: it
- * now requires the customer's recorded consent.
+ * `write` permits everything. It is reached without asking the customer,
+ * because a customer paying for a managed service does not want a decision put
+ * to them, will usually lack the context to make it, and being asked to approve
+ * a link mailed to them is indistinguishable in shape from a phishing attempt -
+ * teaching people to click those is worse security than not asking.
+ *
+ * What replaces consent is reversibility. Entering `write` copies the
+ * workspace's configuration first, so every change made in the session can be
+ * undone afterwards - on the way out, or days later. Permission is asked of the
+ * customer only where an installation turns that on deliberately.
  */
 export type ImpersonationMode = "read" | "sandbox" | "write";
 
@@ -52,6 +60,14 @@ export function isImpersonationMode(
 
 export type Impersonation = {
   workspaceId: string;
+  /**
+   * The `admin_sessions` row holding the snapshot taken on the way in.
+   *
+   * Only set for `write`. Signed with the rest, because it decides which
+   * snapshot a discard restores - an editable one would let a session be
+   * rolled back onto some other session's configuration.
+   */
+  sessionId?: string;
   /** Shown in the banner, so the administrator can see whose data this is. */
   workspaceName: string;
   /** The administrator who started it. Never the person being impersonated. */
@@ -90,6 +106,7 @@ export function impersonationPayload(session: Impersonation) {
     session.workspaceName,
     session.adminEmail,
     session.mode,
+    session.sessionId ?? "",
     String(session.expiresAt),
   ]);
 }
@@ -130,7 +147,9 @@ export function parseImpersonationBody(json: string): Impersonation | null {
     typeof session?.workspaceName !== "string" ||
     typeof session?.adminEmail !== "string" ||
     !isImpersonationMode(session?.mode) ||
-    typeof session?.expiresAt !== "number"
+    typeof session?.expiresAt !== "number" ||
+    (session?.sessionId !== undefined &&
+      typeof session?.sessionId !== "string")
   ) {
     return null;
   }

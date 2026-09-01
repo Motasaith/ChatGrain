@@ -1041,6 +1041,53 @@ export const impersonationGrants = pgTable("impersonation_grants", {
     .notNull(),
 });
 
+/**
+ * One administrator edit session, and the restore point it leaves behind.
+ *
+ * The snapshot is taken when the session starts and is *not* thrown away when
+ * it ends. That is the decision the whole design rests on: "discard" is simply
+ * "restore this now", and because the row survives, the same restore is still
+ * available tomorrow - from the admin dashboard, or on the customer's request
+ * after a support fix turned out to make things worse.
+ *
+ * It also answers the case that would otherwise be a hole. Most sessions never
+ * reach the exit dialog: a tab gets closed, a session expires, a laptop lid
+ * comes down. Those changes stay live, because silently undoing an
+ * administrator's completed work would leave the customer broken and nobody
+ * any the wiser - but they stay live with a way back, which is the part that
+ * makes keeping them defensible.
+ */
+export const adminSessions = pgTable(
+  "admin_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    adminEmail: text("admin_email").notNull(),
+    reason: text("reason"),
+    /** open | kept | discarded | reverted */
+    status: text("status").default("open").notNull(),
+    /** The workspace's configuration as it stood when the session began. */
+    snapshot: jsonb("snapshot").notNull(),
+    /** What actually differed, worked out when the session ended. */
+    summary: jsonb("summary"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decidedBy: text("decided_by"),
+  },
+  (table) => [
+    index("admin_sessions_workspace_idx").on(
+      table.workspaceId,
+      table.startedAt,
+    ),
+  ],
+);
+
 export type Agent = typeof agents.$inferSelect;
+export type AdminSession = typeof adminSessions.$inferSelect;
 export type Source = typeof sources.$inferSelect;
 export type ImpersonationGrant = typeof impersonationGrants.$inferSelect;
