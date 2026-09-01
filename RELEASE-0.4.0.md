@@ -31,6 +31,7 @@ survivable, and made the answers honest about their own limits.**
 | retrieval, evidence selection, the system prompt | **0.4.0** |
 | what the widget says, including refusals and citations | **0.4.0** |
 | the admin dashboard, impersonation, cross-account control | **[0.5.0](RELEASE-0.5.0.md)** |
+| how the widget or dashboard looks or behaves | **[0.6.0](RELEASE-0.6.0.md)** |
 
 The next version is the admin dashboard, scoped in
 [PLAN.md §12](Docent_plan/PLAN.md) and now written up in

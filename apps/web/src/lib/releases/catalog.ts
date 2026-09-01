@@ -61,6 +61,27 @@ export type Release = {
  */
 export const RELEASES: Release[] = [
   {
+    version: "0.6.0",
+    status: "open",
+    date: "2026-09-01",
+    restorePoint: "5df6866 — the last commit of 0.5.0",
+    headline:
+      "How the software looks and feels to use, rather than whether it works — the widget a visitor sees, and the dashboard a customer works in.",
+    owns: [
+      "How the widget and dashboard look and behave",
+      "Accessibility, keyboard, focus, responsiveness",
+      "The presentation of what the agent says — not its wording",
+    ],
+    highlights: [
+      "The attribution line in the widget is a link, opening in a new tab so a visitor's conversation is not replaced by a marketing page.",
+    ],
+    unproven: [
+      "Nothing in this release has been deployed.",
+      "The three releases before it each made something work rather than making it pleasant, so the arrears here are large and mostly still unmeasured.",
+    ],
+    document: "RELEASE-0.6.0.md",
+  },
+  {
     version: "0.5.0",
     status: "open",
     date: "2026-09-01",

@@ -3307,6 +3307,24 @@ button {
 
 .chat-panel > footer b { color: #75877d; }
 
+/* The attribution link.
+ *
+ * Styled to sit still: no underline until hover, and the same colour the bold
+ * mark had before it became a link. The footer is the quietest thing in the
+ * widget and should stay that way - it is attribution, not a call to action,
+ * and a visitor mid-conversation is not being asked to leave. */
+.powered-by-link {
+  color: #75877d;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.powered-by-link:hover,
+.powered-by-link:focus-visible {
+  color: var(--ink, #17332a);
+  text-decoration: underline;
+}
+
 .widget-page {
   display: grid;
   width: 100vw;

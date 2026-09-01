@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import type { ChatUiAction } from "@/lib/chat/answer";
 import { useAskDialog } from "@/components/app/ask-dialog";
+import { PoweredBy } from "@/components/chat/powered-by";
 import { VoiceCallOverlay, type CallTurn } from "@/components/chat/voice-call";
 import {
   VoiceNotePlayer,
@@ -1804,7 +1805,7 @@ export function ChatPanel({
         </button>
       </form>
       )}
-      {showBranding ? <footer>Powered by <b>ChatGrain</b></footer> : null}
+      {showBranding ? <PoweredBy /> : null}
       {callOptions ? (
         <VoiceCallOverlay
           agentName={name}

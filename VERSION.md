@@ -14,7 +14,12 @@
 > point. A change to crawling, indexing, retrieval or the system prompt belongs
 > to `0.4.0`.
 >
-> **`0.5.0` is open too, and is not deployed.** It is the admin dashboard:
+> **`0.6.0` is open as well.** It is the user interface: how the widget and
+> the dashboard look and behave, rather than whether they work. Written up in
+> [RELEASE-0.6.0.md](RELEASE-0.6.0.md); reverting it means returning to
+> `5df6866`.
+>
+> **`0.5.0` is open too, and is partly deployed.** It is the admin dashboard:
 > impersonation, cross-account control, and the record of both. It is written up
 > in [RELEASE-0.5.0.md](RELEASE-0.5.0.md). Every part of it is uncommitted work
 > in a local tree, tested locally and never run in production — reverting it

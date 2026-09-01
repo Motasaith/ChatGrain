@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { LoaderCircle, MessageCircle, X } from "lucide-react";
 import { ChatPanel } from "@/components/chat/chat-panel";
+import { PoweredBy } from "@/components/chat/powered-by";
 import { ChatGrainMark } from "@/components/logo";
 
 type PublicAgent = {
@@ -74,7 +75,7 @@ function PreparingSupport({ state }: { state: SupportState }) {
           </div>
         </div>
       </div>
-      <footer>Powered by <b>ChatGrain</b></footer>
+      <PoweredBy />
     </div>
   );
 }

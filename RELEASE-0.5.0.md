@@ -60,6 +60,7 @@ Three things follow from that, and they are the whole scope:
 | a change to | goes in |
 |---|---|
 | the admin dashboard, impersonation, cross-account control | **0.5.0** |
+| how any of it **looks or behaves** | **[0.6.0](RELEASE-0.6.0.md)** |
 | crawling, indexing, the worker, the queue | **0.4.0** |
 | retrieval, evidence selection, the system prompt | **0.4.0** |
 | what the widget says, including refusals and citations | **0.4.0** |
