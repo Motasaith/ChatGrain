@@ -148,10 +148,23 @@ export const users = pgTable(
       .defaultNow()
       .notNull(),
     retentionExempt: boolean("retention_exempt").default(false).notNull(),
+    /**
+     * member | admin | superadmin.
+     *
+     * Text rather than an enum because adding a value to a Postgres enum cannot
+     * be done and used in the same transaction, which has already cost this
+     * project one failed migration. The set is validated in `roles.ts`.
+     */
+    platformRole: text("platform_role").default("member").notNull(),
     ...timestamps,
   },
   (table) => [
     uniqueIndex("users_email_unique").on(table.email),
+    // Partial: nearly every row is a member, and indexing those is paying for
+    // an answer nobody asks for.
+    index("users_platform_role_idx")
+      .on(table.platformRole)
+      .where(sql`${table.platformRole} <> 'member'`),
     uniqueIndex("users_external_id_unique").on(table.externalId),
     index("users_last_seen_idx").on(table.lastSeenAt),
   ],

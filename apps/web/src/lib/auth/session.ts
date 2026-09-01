@@ -1,9 +1,16 @@
 import "server-only";
 
 import { AppError } from "@/lib/http/errors";
-import { isAdminEmail } from "./admin-emails";
+import { platformRoleFor } from "./roles";
 
 export { getAdminEmails, isAdminEmail } from "./admin-emails";
+export {
+  isPlatformAdmin,
+  isSuperAdmin,
+  platformRoleFor,
+  roleIsFixedByEnvironment,
+  type PlatformRole,
+} from "./roles";
 
 export type AuthIdentity = {
   externalId: string;
@@ -62,12 +69,40 @@ export async function getCurrentIdentity(): Promise<AuthIdentity> {
   };
 }
 
+/**
+ * The caller, if they may operate this installation.
+ *
+ * Resolves through `platformRoleFor`, which consults `ADMIN_EMAILS` first and
+ * the database second - so an address granted from the dashboard works without
+ * a deploy, and an address in the environment works without a database.
+ */
 export async function requireAdminIdentity() {
   const identity = await getCurrentIdentity();
-  if (!isAdminEmail(identity.email)) {
+  const role = await platformRoleFor(identity.email);
+  if (role === "member") {
     throw new AppError(
       "ADMIN_REQUIRED",
       "This operation is restricted to ChatGrain administrators.",
+      403,
+    );
+  }
+  return { ...identity, role };
+}
+
+/**
+ * The caller, if they may change other people's roles.
+ *
+ * Separate from being an administrator, because the two are different powers.
+ * An administrator can already do a great deal inside customer accounts; being
+ * able to hand that out to somebody else is the one that decides who else can,
+ * and it should not come free with the first.
+ */
+export async function requireSuperAdminIdentity() {
+  const identity = await requireAdminIdentity();
+  if (identity.role !== "superadmin") {
+    throw new AppError(
+      "SUPERADMIN_REQUIRED",
+      "Only a super administrator can change roles.",
       403,
     );
   }

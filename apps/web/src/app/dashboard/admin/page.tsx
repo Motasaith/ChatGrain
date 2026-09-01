@@ -25,6 +25,7 @@ import { desc, eq, inArray, sql } from "drizzle-orm";
 import { AdminControls } from "@/components/app/admin-controls";
 import { AdminUserActions } from "@/components/app/admin-user-actions";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
+import { getAdminEmails } from "@/lib/auth/admin-emails";
 import { APP_VERSION } from "@/lib/version";
 import { db } from "@/lib/db/client";
 import {
@@ -194,10 +195,15 @@ async function loadAdminData() {
           name: users.name,
           lastSeenAt: users.lastSeenAt,
           retentionExempt: users.retentionExempt,
+          platformRole: users.platformRole,
           createdAt: users.createdAt,
         })
         .from(users)
-        .orderBy(desc(users.lastSeenAt))
+        // Administrators first, then by recency. On an installation with many
+        // customers the handful of people who can operate it are the rows this
+        // panel exists for, and they should not fall off the end of a list of
+        // ten sorted by who happened to sign in most recently.
+        .orderBy(sql`case when ${users.platformRole} = 'member' then 1 else 0 end`, desc(users.lastSeenAt))
         .limit(10),
       // Joined rather than selected bare. A row that says only "running" and a
       // job id is not something anyone can act on - and acting on it is the
@@ -368,6 +374,9 @@ const SESSION_PILL: Record<string, string> = {
 export default async function AdminPage() {
   const context = await getWorkspaceContext();
   if (!context.isAdmin) notFound();
+  // Read once here rather than per row: it is the same set for every user, and
+  // it decides which role controls are offered as usable.
+  const envAdmins = getAdminEmails();
   const data = await loadAdminData();
   const workerState = data.states.find((state) => state.key === "worker");
   const retentionState = data.states.find((state) => state.key === "retention");
@@ -681,7 +690,10 @@ export default async function AdminPage() {
                 <span><b>{user.name}</b><small>{user.email}</small></span>
                 <span className="admin-list-meta">{user.retentionExempt ? "Exempt" : formatDate(user.lastSeenAt)}</span>
                 <AdminUserActions
+                  canChangeRoles={context.platformRole === "superadmin"}
                   email={user.email}
+                  fixedByEnvironment={envAdmins.has(user.email.toLowerCase())}
+                  platformRole={user.platformRole}
                   retentionExempt={user.retentionExempt}
                   userId={user.id}
                 />

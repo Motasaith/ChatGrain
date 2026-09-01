@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { and, eq, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { memberships, users, workspaces } from "@/lib/db/schema";
-import { getCurrentIdentity, isAdminEmail } from "./session";
+import { getCurrentIdentity } from "./session";
+import { platformRoleFor } from "./roles";
 import {
   readImpersonation,
   type ImpersonationMode,
@@ -32,7 +33,11 @@ type Impersonating =
 
 export async function getWorkspaceContext() {
   const identity = await getCurrentIdentity();
-  const admin = isAdminEmail(identity.email);
+  // Awaited rather than read from the environment alone: an administrator
+  // promoted from the dashboard has no entry in ADMIN_EMAILS, and would
+  // otherwise see the application as an ordinary customer.
+  const role = await platformRoleFor(identity.email);
+  const admin = role !== "member";
 
   // An administrator standing where a customer is standing.
   //
@@ -69,6 +74,7 @@ export async function getWorkspaceContext() {
           role: "owner" as const,
           lastSeenAt: new Date(),
           isAdmin: true,
+          platformRole: role,
           impersonating: {
             workspaceName: target.workspaceName,
             adminEmail: acting.adminEmail,
@@ -119,7 +125,8 @@ export async function getWorkspaceContext() {
         })
         .where(eq(users.id, existing[0].userId));
     }
-    return { ...identity, ...existing[0], isAdmin: admin, ...NOT_IMPERSONATING };
+    return { ...identity, ...existing[0], isAdmin: admin,
+      platformRole: role, ...NOT_IMPERSONATING };
   }
 
   return db.transaction(async (tx) => {
@@ -178,6 +185,7 @@ export async function getWorkspaceContext() {
         workspacePageLimit: null as number | null,
         workspaceSuspendedAt: null as Date | null,
         isAdmin: admin,
+      platformRole: role,
         ...NOT_IMPERSONATING,
       };
     }
@@ -221,6 +229,7 @@ export async function getWorkspaceContext() {
       workspaceSuspendedAt: null as Date | null,
       role: "owner",
       isAdmin: admin,
+      platformRole: role,
       ...NOT_IMPERSONATING,
     };
   });

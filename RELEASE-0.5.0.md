@@ -3,9 +3,9 @@
 **Version:** `0.5.0`
 **Status:** **Open, not stable, partly deployed.** Everything up to and
 including section 8 is live on production as of 1 September 2026, commit
-`af32b02`, with migrations `0026`-`0030` applied. Sections 9 to 11 are not
+`af32b02`, with migrations `0026`-`0030` applied. Sections 9 to 12 are not
 deployed. It stays open because it is running, not because it is finished.
-**Tested:** 535 tests passing, 1 skipped; typecheck, lint and
+**Tested:** 545 tests passing, 1 skipped; typecheck, lint and
 `next build` clean. **No part of this has been used by a real administrator on
 real customer data.**
 
@@ -20,7 +20,7 @@ commit on `main`, and the last commit of `0.4.0`.
 |---|---|
 | **Revert to** | `f9144d3` (`feat(release): update next version reference to include admin dashboard scope`) |
 | **Branch** | `main` |
-| **Migrations to undo** | `0026`–`0031`. `0026`–`0030` are live on production as of 1 September 2026; `0031` is not yet applied |
+| **Migrations to undo** | `0026`–`0032`. `0026`–`0031` are live on production as of 1 September 2026; `0032` is not yet applied |
 
 Because nothing here is committed, reverting is `git checkout .` plus deleting
 the untracked files listed under **New files** below. Once it *is* committed,
@@ -44,7 +44,8 @@ everybody's work, not theirs.
 
 Three things follow from that, and they are the whole scope:
 
-1. **Cross-account control.** Stop a job, pause an agent, suspend a workspace,
+1. **Cross-account control.** Grant administrator access from the dashboard.
+   Stop a job, pause an agent, suspend a workspace,
    re-index a source, remove a page — per account, without touching the rest of
    the installation.
 2. **Impersonation, in three tiers.** See what the customer sees; reproduce
@@ -677,9 +678,91 @@ explicit, and both `/api/health` and the new panel read from it.
 
 ---
 
+### 12. Administrators granted from the dashboard, not from a file
+
+**Why.** Adding a colleague meant an SSH session, an edited `.env`, and a
+restart of everything. It also failed silently when a step was missed — a wrong
+answer here looks exactly like a correct one, because the person simply does not
+see the admin pages and has nothing to read that explains why.
+
+**Three tiers on the user, stored rather than configured:**
+
+| role | may |
+|---|---|
+| `member` | nothing administrative. The default. |
+| `admin` | operate the installation — dashboard, stop jobs, impersonate, edit a workspace |
+| `superadmin` | all of that, **and change other people's roles** |
+
+Splitting the last one out is the point. An administrator can already act inside
+every customer account; being able to hand that power to somebody else is a
+different decision, and it should not come free with the first.
+
+#### `ADMIN_EMAILS` still wins, deliberately
+
+Anyone listed there is a superadmin whatever the table says, and no database
+row can demote them.
+
+That is not a leftover — **it is the recovery path.** Roles now live in a table
+that a bad migration, a mistaken click or a restored backup could empty, and an
+installation whose only route back in is the interface it just locked you out of
+is one mistake from needing a database console. The file on disk is the thing
+the application cannot edit by accident.
+
+So the variable becomes what it should always have been: the bootstrap and the
+way back, not the day-to-day mechanism.
+
+| File | What it does |
+|---|---|
+| `apps/web/src/lib/auth/roles.ts` | **New.** Resolves a role: environment first, database second. Never throws. |
+| `apps/web/src/lib/auth/roles.test.ts` | **New.** 10 tests, most of them about the environment keeping precedence. |
+| `apps/web/drizzle/0032_platform_roles.sql` | **New.** `users.platform_role`, defaulting to `member`, with a partial index. |
+| `apps/web/src/lib/db/schema.ts` | The column and its index. |
+| `apps/web/src/lib/auth/session.ts` | `requireAdminIdentity` consults the database; `requireSuperAdminIdentity` added. |
+| `apps/web/src/lib/auth/workspace.ts` | Resolves the role rather than reading the environment, so a dashboard-granted administrator is not shown the application as an ordinary customer. |
+| `apps/web/src/app/api/admin/users/[userId]/route.ts` | Sets a role, with the guard rails below. |
+| `apps/web/src/components/app/admin-user-actions.tsx` | The control, shown only to a super administrator. |
+| `apps/web/src/app/dashboard/admin/page.tsx` | Administrators sorted to the top of the users list. |
+
+#### The guard rails, and why each exists
+
+- **A role fixed by `ADMIN_EMAILS` cannot be changed here.** Refused rather than
+  allowed to succeed pointlessly: writing `member` into that row changes nothing
+  about what the person can do, and would leave an administrator believing they
+  had revoked access they had not.
+- **Nobody can lower their own role.** Almost always a misclick, and the
+  recovery — editing a file on the server and restarting — is the exact thing
+  this feature exists to avoid.
+- **An administrator must be demoted before being deleted.** Previously the
+  check was "is this address in `ADMIN_EMAILS`", which would have let a
+  dashboard-granted administrator be deleted outright.
+- **Resolution degrades to `member` when the database is unreachable**, but the
+  environment is checked *first and without touching the database*, so an
+  installation whose database is down still lets its owner in to find out why.
+
+#### Why the deployed env change did nothing
+
+Worth recording, because the parsing was never the problem —
+`ADMIN_EMAILS` is split on commas, trimmed and lower-cased, and handles a third
+address correctly. Two things can stop an edited `.env` reaching the running
+application, and both are silent:
+
+1. **The process was not restarted.** Next reads `.env` at startup, so an edit
+   alone changes nothing.
+2. **`dotenv` does not override a variable that is already set.** If
+   `ADMIN_EMAILS` exists in PM2's own environment — from an ecosystem file, or
+   from the shell when the process was first started — the file is ignored, and
+   `pm2 restart --update-env` re-reads the *shell*, not the file.
+
+The second is the one that produces this exact symptom on a machine where
+everything looks right. It is also the argument for this whole change: a
+mechanism whose failure mode is "nothing happens, and nothing says why" is the
+wrong mechanism for something checked on every request.
+
+---
+
 ## Migrations
 
-Six. `0026`–`0030` are applied to production; `0031` is not.
+Seven. `0026`–`0031` are applied to production; `0032` is not.
 
 | File | Effect |
 |---|---|
@@ -689,6 +772,7 @@ Six. `0026`–`0030` are applied to production; `0031` is not.
 | `apps/web/drizzle/0029_impersonation_grants.sql` | Creates `impersonation_grants`. New table. |
 | `apps/web/drizzle/0030_admin_sessions.sql` | Creates `admin_sessions`, and adds `updated_at` triggers to four existing tables. No column added, no row rewritten. |
 | `apps/web/drizzle/0031_drop_superseded_indexes.sql` | Drops two dead indexes on `crawl_pages`. No data touched. |
+| `apps/web/drizzle/0032_platform_roles.sql` | Adds `users.platform_role`, defaulting every existing row to `member`. No row rewritten in meaning. |
 
 All five are additive: nothing is dropped, no existing row is rewritten, and an
 old build runs unchanged against the new schema. That is deliberate — it means
@@ -730,6 +814,12 @@ Stated rather than solved, and this is why the version is open.
 - **Revoking consent does not end a session already open.** The cookie is signed
   and self-contained, so the exposure is bounded by the remainder of one session
   — at most an hour — rather than being immediate.
+- **No role has been granted from the dashboard yet.** The resolution is unit
+  tested, but nobody has promoted a real colleague and watched them gain access.
+- **`business-hours.test.ts` is slow enough to time out under load.** Around a
+  second for one test, which exceeds the five-second limit when the machine is
+  also building. Pre-existing and unrelated to this release, but it will keep
+  producing failures that are not failures.
 - **No editing session has ever been run.** The snapshot, the diff and the
   restore are unit-tested against constructed data. Nothing has taken a snapshot
   of a real workspace, changed it, and put it back - and this is now deployed,
@@ -766,7 +856,7 @@ Local, on this machine, with the working tree as described above.
 
 | | |
 |---|---|
-| **Tests** | 535 passed, 1 skipped, 74 files |
+| **Tests** | 545 passed, 1 skipped, 75 files |
 | **Typecheck** | `tsc --noEmit` clean |
 | **Lint** | `eslint` clean on every changed file |
 | **Build** | `next build` succeeds |
