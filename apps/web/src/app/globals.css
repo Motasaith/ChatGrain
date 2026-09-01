@@ -12123,3 +12123,161 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 .ask-body > p:last-child {
   margin-bottom: 0;
 }
+
+/* Versions ----------------------------------------------------------------- */
+
+.release-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.release-lede {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+}
+
+.release-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.release-entry {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 15px 17px;
+  background: #fff;
+}
+
+/* The tagged release reads as settled; the open ones as still moving. The
+   difference matters because only one of them is a place to return to. */
+.release-entry.is-stable {
+  border-color: color-mix(in srgb, var(--green) 35%, transparent);
+  background: color-mix(in srgb, var(--green) 4%, transparent);
+}
+
+.release-entry > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.release-entry h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.release-entry > header > time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.release-headline {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.release-columns {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 2fr;
+  gap: 18px;
+}
+
+@media (max-width: 780px) {
+  .release-columns {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+.release-columns h4 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.release-columns ul {
+  margin: 0;
+  padding-left: 17px;
+  color: var(--ink);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+}
+
+.release-columns .release-owns {
+  padding-left: 0;
+  list-style: none;
+}
+
+/* "Owns" answers where a change belongs, so it reads as a set of labels rather
+   than as prose - it is looked at, not read. */
+.release-columns .release-owns > li {
+  margin-bottom: 4px;
+  padding-left: 11px;
+  border-left: 2px solid var(--line);
+  color: var(--muted);
+}
+
+.release-unproven {
+  margin-top: 13px;
+  border-top: 1px solid var(--line);
+  padding-top: 11px;
+}
+
+.release-unproven > summary {
+  cursor: pointer;
+  color: #92312a;
+  font-size: 0.75rem;
+}
+
+.release-unproven ul {
+  margin: 9px 0 0;
+  padding-left: 17px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+}
+
+.release-entry > footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 13px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.release-entry > footer > :last-child {
+  margin-left: auto;
+}
+
+.release-entry code {
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: var(--paper);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 11px;
+}

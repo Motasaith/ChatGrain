@@ -21,10 +21,13 @@ CREATE TABLE IF NOT EXISTS "admin_sessions" (
   "decided_by" text
 );
 
+-- Matches what the Drizzle schema declares, and only that. `db:push` runs on
+-- every deploy and treats the schema file as the truth, so an index created
+-- here but not declared there is dropped by the very next deploy - silently.
+-- There was a second index on (status, started_at) here; nothing queries these
+-- rows by status, so it is gone rather than declared.
 CREATE INDEX IF NOT EXISTS "admin_sessions_workspace_idx"
-  ON "admin_sessions" ("workspace_id", "started_at" DESC);
-CREATE INDEX IF NOT EXISTS "admin_sessions_open_idx"
-  ON "admin_sessions" ("status", "started_at");
+  ON "admin_sessions" ("workspace_id", "started_at");
 
 -- Keeping updated_at honest on the four tables a session can change.
 --

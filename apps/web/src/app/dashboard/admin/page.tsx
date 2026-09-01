@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AdminAgentActions } from "@/components/app/admin-agent-actions";
 import { AdminSessionActions } from "@/components/app/admin-session-actions";
+import { ReleasePanel } from "@/components/app/release-panel";
 import { AdminJobActions } from "@/components/app/admin-job-actions";
 import { AdminWorkspaceActions } from "@/components/app/admin-workspace-actions";
 import { ImpersonateButton } from "@/components/app/impersonate-button";
@@ -24,6 +25,7 @@ import { desc, eq, inArray, sql } from "drizzle-orm";
 import { AdminControls } from "@/components/app/admin-controls";
 import { AdminUserActions } from "@/components/app/admin-user-actions";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
+import { APP_VERSION } from "@/lib/version";
 import { db } from "@/lib/db/client";
 import {
   adminSessions,
@@ -543,6 +545,8 @@ export default async function AdminPage() {
           <p className="admin-empty">No workspaces yet.</p>
         )}
       </section>
+
+      <ReleasePanel reportedVersion={APP_VERSION} />
 
       <section className="app-card admin-list-card">
         <div className="app-card-head">

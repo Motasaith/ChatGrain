@@ -1,10 +1,11 @@
 # ChatGrain — 0.5.0 (open, not deployed)
 
 **Version:** `0.5.0`
-**Status:** **Open, not stable, and not yet deployed.** Every change below exists
-only in the working tree on this machine. Nothing is committed, nothing is
-pushed, and nothing has run against the production database.
-**Tested:** locally only — 525 tests passing, 1 skipped; typecheck, lint and
+**Status:** **Open, not stable, partly deployed.** Everything up to and
+including section 8 is live on production as of 1 September 2026, commit
+`af32b02`, with migrations `0026`-`0030` applied. Sections 9 to 11 are not
+deployed. It stays open because it is running, not because it is finished.
+**Tested:** 535 tests passing, 1 skipped; typecheck, lint and
 `next build` clean. **No part of this has been used by a real administrator on
 real customer data.**
 
@@ -19,7 +20,7 @@ commit on `main`, and the last commit of `0.4.0`.
 |---|---|
 | **Revert to** | `f9144d3` (`feat(release): update next version reference to include admin dashboard scope`) |
 | **Branch** | `main` |
-| **Migrations to undo** | `0026`–`0030` — none of which have been applied to production |
+| **Migrations to undo** | `0026`–`0031`. `0026`–`0030` are live on production as of 1 September 2026; `0031` is not yet applied |
 
 Because nothing here is committed, reverting is `git checkout .` plus deleting
 the untracked files listed under **New files** below. Once it *is* committed,
@@ -529,9 +530,156 @@ section 7 and would have produced the same error.
 
 ---
 
+### 9. A deploy that stalled on a printed instruction
+
+**What happened.** `deploy.sh` stopped at the new migration, as designed, and
+printed two lines to run — one setting `DB` from the env file, one calling
+`psql` with it. Only the second was copied. With `DB` empty, `psql ""` falls
+back to a local Unix socket, so the error was:
+
+```
+psql: error: connection to server on socket "/var/run/postgresql/.s.PGSQL.5432" failed
+        Is the server running locally and accepting connections on that socket?
+```
+
+on a machine whose database is a remote Aiven instance and never was local.
+Nothing in that message points at the actual mistake.
+
+**The fix is that one command cannot be half-copied.** `scripts/psql.sh`
+resolves `DATABASE_URL` itself and execs psql, and `deploy.sh` now prints a
+single self-contained line per migration.
+
+| File | What it does |
+|---|---|
+| `scripts/psql.sh` | **New.** psql pointed at this installation's database. Refuses clearly when the env file is missing, when `DATABASE_URL` is absent, when it is not a connection string, or when psql is not installed — instead of letting any of those become a socket error. |
+| `scripts/deploy.sh` | Prints `bash scripts/psql.sh -f <migration>` rather than an assignment plus a command that depends on it. |
+
+Two details worth keeping. The value is extracted with `tr -d '\042\047'` —
+octal for `"` and `'` — so the line never nests quotes inside quotes, which is
+what made the printed version awkward to copy correctly in the first place. And
+the banner it prints strips the credentials, showing only `host:port/database`:
+the connection string carries a password, and this output lands in terminals
+that get pasted into chat windows.
+
+---
+
+### 10. `db:push` was silently dropping indexes the migrations created
+
+**Found by reading a deploy log, not by anything failing.** In the middle of the
+`db:push` output:
+
+```
+DROP INDEX "admin_sessions_open_idx";
+DROP INDEX "admin_sessions_workspace_idx";
+...
+CREATE INDEX "admin_sessions_workspace_idx" ON "admin_sessions" ...
+```
+
+One was recreated. The other was not, and nothing said so.
+
+**The mechanism.** `db:push` treats `schema.ts` as the truth and removes
+anything in the database it cannot find there. An index created by a raw
+migration but never declared in the schema therefore survives exactly until the
+next deploy — and the deploy that drops it reports the fact as ordinary output
+in the middle of a successful run.
+
+Three had already gone this way:
+
+| Index | Created by | Fate |
+|---|---|---|
+| `impersonation_grants_lookup_idx` | `0029` | dropped by the next `db:push` |
+| `impersonation_grants_pending_idx` | `0029` | dropped by the next `db:push` |
+| `admin_sessions_open_idx` | `0030` | dropped minutes after being created |
+
+The proof was in the same session's output: re-running `0029` printed
+`CREATE INDEX` twice with no "already exists" notice, meaning both indexes were
+genuinely absent from a table that had existed for a day.
+
+**What changed.**
+
+| File | What it does |
+|---|---|
+| `apps/web/src/lib/db/schema.ts` | Declares `impersonation_grants_lookup_idx` and `impersonation_grants_pending_idx`, so `db:push` keeps them. |
+| `apps/web/drizzle/0030_admin_sessions.sql` | Drops `admin_sessions_open_idx`. Nothing queries these rows by status, so the answer is to not have the index rather than to declare an unused one. |
+| `apps/web/drizzle/0031_drop_superseded_indexes.sql` | **New.** Explicitly drops `crawl_pages_job_idx` and `crawl_pages_job_outcome_idx`, replaced by the `source_*` equivalents when `0022` re-keyed the table. They were already gone by the same silent mechanism; this makes it a decision rather than a side effect. `crawl_pages` takes a row per URL per crawl, so a surplus index there is paid for tens of thousands of times during a large index. |
+| `apps/web/src/lib/db/migration-drift.test.ts` | **New.** Fails when a migration creates an index the schema does not declare. |
+
+The test reads migrations in filename order, adding on `CREATE` and removing on
+`DROP`, so an index a later migration supersedes is not reported as drift — that
+is history, not a mistake. It was checked against a deliberately undeclared
+index to confirm it fails when it should, not only that it passes now.
+
+**The general rule this establishes:** with `db:push` on the deploy path, the
+schema file is the only durable place to declare structure. Raw SQL is still
+right for what `db:push` cannot express — data changes, triggers, an enum value
+added and used — but anything it *can* express has to be in `schema.ts` too, or
+it is temporary without anybody meaning it to be.
+
+---
+
+### 11. Version and release information on the admin dashboard
+
+**Why.** Three questions an administrator had to answer by reading four markdown
+files in a repository they may not have checked out:
+
+- What is actually running?
+- What is each release *for*?
+- Where does a new change belong?
+
+The third is the one nobody can guess. Releases here are split **by subject, not
+by date**, so a crawler fix made today belongs to `0.4.0` — not to whatever is
+newest — because that is where the reasoning about crawling lives.
+
+**And one thing that actively misleads.** `/api/health` reports `0.3.0` on a
+server running `0.5.0` work, because open releases deliberately do not bump the
+package version. Anyone reading that number without context concludes the deploy
+failed. The panel leads with exactly this: what the build reports, which
+releases are open on top of it, and which one is still the fixed point.
+
+| File | What it does |
+|---|---|
+| `apps/web/src/lib/releases/catalog.ts` | **New.** Each release: headline, what it owns, what it did, what it has not proved, and the commit to revert to. |
+| `apps/web/src/lib/releases/catalog.test.ts` | **New.** 8 tests keeping it honest. |
+| `apps/web/src/components/app/release-panel.tsx` | **New.** The panel. A server component with no state and no fetching. |
+| `apps/web/src/app/dashboard/admin/page.tsx` | Renders it. |
+| `apps/web/src/app/globals.css` | Its styles. |
+
+**Compiled in rather than parsed from the markdown**, which is a deliberate
+trade. Reading `RELEASE-*.md` at request time would keep a single copy of the
+text, but the documents live two levels above the application, and a build that
+did not ship them would leave the panel empty *on production* while working
+perfectly on a developer's machine. A summary that is wrong on the only machine
+that matters is worse than one kept in step by hand — and `catalog.test.ts`
+fails when a release document has no entry, which is the way it would otherwise
+rot.
+
+The test also asserts **exactly one stable release** — "which version do we
+return to" must have a single answer — and that **every open release admits to
+something unproven**. An open release with an empty list is either finished, in
+which case it should be tagged, or is not being honest.
+
+#### A latent leak in `/api/health`, found on the way
+
+```js
+import appVersion from "../../../../package.json" with { type: "json" };
+// …
+version: process.env.npm_package_version ?? appVersion,
+```
+
+`appVersion` is the **whole parsed package.json**, not the version string. The
+fallback never fired because PM2 starts the app through npm, which sets
+`npm_package_version` — but the first time anybody ran the server with plain
+`node`, this unauthenticated endpoint would have returned the entire package
+file, dependency ranges and all.
+
+`apps/web/src/lib/version.ts` now resolves it in one place, with `.version`
+explicit, and both `/api/health` and the new panel read from it.
+
+---
+
 ## Migrations
 
-Five, none applied to production.
+Six. `0026`–`0030` are applied to production; `0031` is not.
 
 | File | Effect |
 |---|---|
@@ -540,6 +688,7 @@ Five, none applied to production.
 | `apps/web/drizzle/0028_workspace_cadence.sql` | Adds one nullable column to `workspaces`. No data touched. |
 | `apps/web/drizzle/0029_impersonation_grants.sql` | Creates `impersonation_grants`. New table. |
 | `apps/web/drizzle/0030_admin_sessions.sql` | Creates `admin_sessions`, and adds `updated_at` triggers to four existing tables. No column added, no row rewritten. |
+| `apps/web/drizzle/0031_drop_superseded_indexes.sql` | Drops two dead indexes on `crawl_pages`. No data touched. |
 
 All five are additive: nothing is dropped, no existing row is rewritten, and an
 old build runs unchanged against the new schema. That is deliberate — it means
@@ -583,10 +732,12 @@ Stated rather than solved, and this is why the version is open.
   — at most an hour — rather than being immediate.
 - **No editing session has ever been run.** The snapshot, the diff and the
   restore are unit-tested against constructed data. Nothing has taken a snapshot
-  of a real workspace, changed it, and put it back.
-- **The `updated_at` triggers have never fired.** They are created by a
-  migration that has not been applied. Until they have, the guard that stops a
-  restore overwriting a customer's own edit is untested against a live database.
+  of a real workspace, changed it, and put it back - and this is now deployed,
+  so the first person to press **Edit** on a real account is the test.
+- **The `updated_at` triggers exist on production now** - all four confirmed
+  present after `0030` - but none has been observed firing, so the guard that
+  stops a restore overwriting a customer's own edit remains unproven in
+  practice.
 - **A re-index during an editing session cannot be undone.** Stated in both
   dialogs, but it is the one place where "you can undo anything" is not true.
 - **The restore is row-by-row, not a transaction.** A failure halfway through
@@ -615,7 +766,7 @@ Local, on this machine, with the working tree as described above.
 
 | | |
 |---|---|
-| **Tests** | 525 passed, 1 skipped, 72 files |
+| **Tests** | 535 passed, 1 skipped, 74 files |
 | **Typecheck** | `tsc --noEmit` clean |
 | **Lint** | `eslint` clean on every changed file |
 | **Build** | `next build` succeeds |

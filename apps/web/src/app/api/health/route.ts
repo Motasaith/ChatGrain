@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { llmProviders } from "@/lib/llm/providers";
-import appVersion from "../../../../package.json" with { type: "json" };
+import { APP_VERSION } from "@/lib/version";
 import { systemState } from "@/lib/db/schema";
 
 export const dynamic = "force-dynamic";
@@ -39,11 +39,11 @@ export async function GET() {
   return NextResponse.json(
     {
       ok,
-      // Read from the package rather than typed in. The literal here said
-      // "0.2.0" for two releases, which is worse than reporting nothing: a
-      // version string is only consulted when someone is trying to work out
-      // which build they are looking at.
-      version: process.env.npm_package_version ?? appVersion,
+      // Read from the package rather than typed in, and resolved in one place
+      // - the fallback here used to be the whole parsed package.json, which
+      // this unauthenticated endpoint would have returned in full the first
+      // time anybody started the server without npm setting the variable.
+      version: APP_VERSION,
       services: {
         database,
         worker,

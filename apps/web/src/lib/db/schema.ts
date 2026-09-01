@@ -1007,39 +1007,59 @@ export const systemState = pgTable("system_state", {
  * rather than a flag because the useful question afterwards is "who allowed
  * what, when, and why" - which a boolean cannot answer.
  */
-export const impersonationGrants = pgTable("impersonation_grants", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  workspaceId: uuid("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  /** The administrator who asked. Not a user id: they may not be a member. */
-  adminEmail: text("admin_email").notNull(),
-  /** Shown to the customer. The whole basis on which they decide. */
-  reason: text("reason").notNull(),
-  /** pending | approved | declined | revoked */
-  status: text("status").default("pending").notNull(),
-  /**
-   * The secret in the approval link.
-   *
-   * Long and random, because the link is the authority: it arrives by email and
-   * whoever opens it is answering on the workspace's behalf. Being signed in as
-   * a member of the workspace is required as well - the token alone is not
-   * enough - so a forwarded email cannot approve anything by itself.
-   */
-  token: text("token").notNull().unique(),
-  requestedAt: timestamp("requested_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  /** When the request itself goes stale, answered or not. */
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  respondedAt: timestamp("responded_at", { withTimezone: true }),
-  respondedByEmail: text("responded_by_email"),
-  /** How long write access lasts once approved. Null until it is. */
-  grantExpiresAt: timestamp("grant_expires_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-});
+export const impersonationGrants = pgTable(
+  "impersonation_grants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** The administrator who asked. Not a user id: they may not be a member. */
+    adminEmail: text("admin_email").notNull(),
+    /** Shown to the customer. The whole basis on which they decide. */
+    reason: text("reason").notNull(),
+    /** pending | approved | declined | revoked */
+    status: text("status").default("pending").notNull(),
+    /**
+     * The secret in the approval link.
+     *
+     * Long and random, because the link is the authority: it arrives by email and
+     * whoever opens it is answering on the workspace's behalf. Being signed in as
+     * a member of the workspace is required as well - the token alone is not
+     * enough - so a forwarded email cannot approve anything by itself.
+     */
+    token: text("token").notNull().unique(),
+    requestedAt: timestamp("requested_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    /** When the request itself goes stale, answered or not. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    respondedByEmail: text("responded_by_email"),
+    /** How long write access lasts once approved. Null until it is. */
+    grantExpiresAt: timestamp("grant_expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  // Declared here and not only in the migration. `db:push` treats this file
+  // as the truth and drops anything in the database it does not find in it -
+  // which is what it silently did to both of these on the first deploy after
+  // they were added. An index created by raw SQL alone survives exactly until
+  // the next deploy.
+  (table) => [
+    index("impersonation_grants_lookup_idx").on(
+      table.workspaceId,
+      table.adminEmail,
+      table.status,
+    ),
+    index("impersonation_grants_pending_idx").on(
+      table.workspaceId,
+      table.status,
+      table.requestedAt,
+    ),
+  ],
+);
 
 /**
  * One administrator edit session, and the restore point it leaves behind.

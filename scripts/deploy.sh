@@ -102,9 +102,13 @@ if [ "$before" != "$after" ]; then
     echo "    de-duplicate rows first, or add an enum value and use it, will" >&2
     echo "    fail through push and has to go through psql:" >&2
     echo >&2
-    echo "      DB=\"\$(grep -hm1 '^DATABASE_URL=' apps/web/.env* | cut -d= -f2- | tr -d '\"'\\''')\"" >&2
+    # One self-contained command per migration, and deliberately so. This block
+    # used to print a DB= assignment followed by psql lines using it; only the
+    # psql lines got copied, DB was empty, and psql fell back to a local socket
+    # on a machine whose database is remote - reporting "is the server running
+    # locally?", which points nowhere near the actual mistake.
     for f in $new_sql; do
-      echo "      psql \"\$DB\" -f $f" >&2
+      echo "      bash scripts/psql.sh -f $f" >&2
     done
     echo >&2
     echo "    Then run this script again. The pull is already done, so it will" >&2
