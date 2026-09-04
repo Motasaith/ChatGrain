@@ -2,7 +2,8 @@
 
 **Version:** `0.6.0`
 **Status:** **Open, not stable, and not yet deployed.** Just started.
-**Tested:** locally only.
+**Tested:** locally only — 552 tests passing, 1 skipped; typecheck, lint and
+`next build` clean.
 
 ---
 
@@ -97,6 +98,70 @@ same whoever is hosting the installation.
 
 ---
 
+### 2. The Copy button on the install snippet
+
+**Reported as "isn't interactive".** It was, in two different ways.
+
+```jsx
+<button onClick={() => navigator.clipboard.writeText(embedCode)} type="button">
+```
+
+**It said nothing when it worked.** No label change, no tick, no flash. A button
+that gives no signal is indistinguishable from a broken one, so people click it
+repeatedly and then paste somewhere to find out whether anything happened.
+
+**And it genuinely did nothing over plain HTTP.** `navigator.clipboard` exists
+only in a secure context — HTTPS, or localhost. Opened on the server's bare IP
+and port, which is exactly how this application gets checked after a deploy, the
+property is `undefined`, the click throws a `TypeError` into a handler nobody
+was watching, and the button is dead in the literal sense. Nothing was caught,
+so nothing was reported.
+
+| File | What it does |
+|---|---|
+| `apps/web/src/components/app/copy-button.tsx` | **New.** Confirms, falls back, and never fails silently. |
+| `apps/web/src/components/app/copy-button.test.tsx` | **New.** 4 tests on the first paint. |
+| `apps/web/src/components/app/agent-studio.tsx` | Uses it. |
+| `apps/web/src/app/globals.css` | The three states, and a fixed width so the button does not resize under the cursor as its label changes. |
+
+Three paths, in order: the clipboard API; then a hidden textarea and
+`document.execCommand("copy")`, which is deprecated and is still the only thing
+that works over plain HTTP; and if neither works, **the snippet is selected on
+the page** and the label becomes "Press Ctrl+C". A copy button that cannot copy
+should leave the reader one keystroke away rather than stranded — and the label
+is only honest because the selection actually happens.
+
+The result is announced in an `aria-live` region. A sighted user sees "Copy"
+become "Copied"; without that a screen reader user gets nothing at all, which is
+the original complaint experienced by somebody with no way around it.
+
+#### A hydration bug in the same line
+
+The snippet itself was built like this:
+
+```js
+const embedCode = `<script src="${typeof window === "undefined" ? "" : window.location.origin}/embed.js" ...>`;
+```
+
+That is a hydration mismatch by construction — the server renders an empty
+origin, the browser renders a real one, React finds they disagree and throws the
+tree away.
+
+The user-facing half is worse than the re-render: **the first paint shows
+`<script src="/embed.js" …>`**, and this is a block of text whose entire purpose
+is being copied. Anyone quick enough copied a snippet that does not work.
+
+It now uses `publicOrigin()` — the helper every other outward-facing URL already
+uses — resolved on the server and passed in, so the snippet agrees with the
+loader it points at and is identical in both renders.
+
+This is the second hydration fault of this shape found in two releases, and
+neither was caught by the `useState` guard added in `0.5.0` §7, because neither
+was in a `useState`. The pattern is broader than that guard: **any value read
+from `window` during render**.
+
+---
+
 ## What has not been proved
 
 - **Nothing here has been deployed.** It has been type-checked, linted, built
@@ -104,3 +169,11 @@ same whoever is hosting the installation.
 - **The link has not been clicked from a real embedded widget.** The iframe is
   unsandboxed in the embed script, so a new tab should open, but that has been
   read from the source rather than observed on a customer's page.
+- **The copy button's fallbacks have not been exercised.** There is no DOM
+  environment in the test suite, so only the first paint is asserted. The
+  `execCommand` path and the select-and-tell-them path have been reasoned
+  about, not run.
+- **`document.execCommand` is deprecated** and will eventually stop working. It
+  is reached only when the clipboard API is unavailable, which on a properly
+  served installation is never — but "never" here means "unless somebody opens
+  the dashboard over plain HTTP", which is how it gets checked after a deploy.

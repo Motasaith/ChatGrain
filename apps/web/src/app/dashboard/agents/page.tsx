@@ -1,7 +1,6 @@
 import Link from "next/link";
 import {
   Bot,
-  ChevronRight,
   Globe2,
   MessageCircleMore,
   Plus,
@@ -9,9 +8,12 @@ import {
 import { and, count, desc, eq, inArray, ne } from "drizzle-orm";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
-import { agents, conversations, sources } from "@/lib/db/schema";
+import { agents, conversations, crawlJobs, sources } from "@/lib/db/schema";
 import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
+import { agentDisplayStatus } from "@/lib/agents/display-status";
 import { AgentDeleteButton } from "@/components/app/agent-delete-button";
+import { AgentCardActions } from "@/components/app/agent-card-actions";
+import { LinkPending } from "@/components/app/link-pending";
 
 export default async function AgentsPage() {
   const workspace = await getWorkspaceContext();
@@ -28,6 +30,22 @@ export default async function AgentsPage() {
         .where(inArray(sources.agentId, ids))
         .groupBy(sources.agentId)
     : [];
+  // Which agents are waiting on somebody rather than on the worker. Stored as
+  // "training" because there is no other status for it, which reads as stuck.
+  const awaitingReview = ids.length
+    ? await db
+        .selectDistinct({ agentId: sources.agentId })
+        .from(crawlJobs)
+        .innerJoin(sources, eq(sources.id, crawlJobs.sourceId))
+        .where(
+          and(
+            inArray(sources.agentId, ids),
+            eq(crawlJobs.status, "awaiting_review"),
+          ),
+        )
+    : [];
+  const reviewing = new Set(awaitingReview.map((row) => row.agentId));
+
   const conversationCounts = ids.length
     ? await db
         .select({ agentId: conversations.agentId, value: count(conversations.id) })
@@ -77,10 +95,17 @@ export default async function AgentsPage() {
                     <img alt="" src={agent.logoUrl || agent.iconUrl || ""} />
                   ) : agent.name[0]}
                 </span>
-                <i className={`status-pill status-${agent.status}`}>
-                  {agent.status}
-                </i>
-                <ChevronRight size={17} />
+                {(() => {
+                  const shown = agentDisplayStatus(agent.status, {
+                    awaitingReview: reviewing.has(agent.id),
+                  });
+                  return (
+                    <i className={`status-pill status-${shown.tone}`}>
+                      {shown.label}
+                    </i>
+                  );
+                })()}
+                <LinkPending />
               </div>
               <h2>{agent.name}</h2>
               <p>{agent.description || "Grounded support agent"}</p>
@@ -93,6 +118,11 @@ export default async function AgentsPage() {
                 } chats</span>
               </div>
             </Link>
+            {/* A row of siblings, never nested in the link: a button inside an
+                anchor only reaches the right handler if hit testing is exactly
+                right, and none of these are places to rely on that. */}
+            <span className="agent-card-tools">
+            <AgentCardActions agentId={agent.id} agentName={agent.name} />
             <AgentDeleteButton
               agentId={agent.id}
               agentName={agent.name}
@@ -104,6 +134,7 @@ export default async function AgentsPage() {
                 sourceCounts.find((row) => row.agentId === agent.id)?.value ?? 0
               }
             />
+            </span>
             </div>
           ))}
         </div>

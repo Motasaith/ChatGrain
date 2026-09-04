@@ -15,7 +15,6 @@ import {
   Braces,
   ChevronDown,
   CircleHelp,
-  Cog,
   ContactRound,
   Inbox,
   LayoutDashboard,
@@ -71,16 +70,19 @@ export function AppShell({
         <div className="sidebar-logo">
           <Logo inverse />
         </div>
-        <button className="workspace-switcher" type="button">
+      {/* A label, not a button.
+          This was a <button> with a chevron and no handler - it promised a
+          workspace switcher that does not exist, and the plan beneath the name
+          was the word "Community" hard-coded regardless of the actual plan.
+          The name itself is worth keeping and is the one part that was true:
+          it says whose data is on screen, which matters most when an
+          administrator is impersonating somebody. */}
+        <div className="workspace-identity">
           <span className="workspace-avatar">
             {identity.workspaceName.slice(0, 1).toUpperCase()}
           </span>
-          <span>
-            <b>{identity.workspaceName}</b>
-            <small>Community</small>
-          </span>
-          <ChevronDown size={14} />
-        </button>
+          <b>{identity.workspaceName}</b>
+        </div>
 
         <nav className="sidebar-nav" aria-label="Product">
           <span className="sidebar-section-label">Workspace</span>
@@ -138,16 +140,13 @@ export function AppShell({
           ) : null}
         </nav>
 
-        <div className="sidebar-local">
-          <div>
-            <span className="local-status-dot" />
-            <b>Local stack</b>
-          </div>
-          <small>Postgres · Worker · Local embeddings</small>
-          <Link href="/dashboard/settings">
-            Configure <Cog size={12} />
-          </Link>
-        </div>
+        {/* The "Local stack - Postgres · Worker · Local embeddings" panel was
+            here. Every word of it was hard-coded, and on this installation
+            every word was wrong: embeddings come from Cloudflare and generation
+            from Groq. A status panel that cannot be wrong about the thing it
+            reports is worth having; one that never reads anything is furniture
+            that lies. The real figures are on the admin dashboard, which does
+            read them. */}
 
         <div className="sidebar-profile">
           {clerkEnabled ? (

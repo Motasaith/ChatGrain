@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Search,
   Globe,
+  X,
 } from "lucide-react";
 import type { SearchHit } from "@/app/api/search/route";
 
@@ -149,6 +150,21 @@ export function CommandPalette() {
                 value={query}
               />
               {searching ? <LoaderCircle className="spin" size={15} /> : null}
+              {/* A visible way out.
+                  Escape closed it and so did clicking the backdrop, but neither
+                  is discoverable: the overlay covers the page with no control on
+                  it, and somebody who does not know the keystroke and does not
+                  guess that the dimmed area is clickable is simply stuck looking
+                  at it. Every other dialog here has a way out that can be seen. */}
+              <button
+                aria-label="Close search"
+                className="command-palette-close"
+                onClick={close}
+                title="Close search"
+                type="button"
+              >
+                <X size={16} />
+              </button>
             </div>
             <div className="command-palette-results">
               {results.length ? (

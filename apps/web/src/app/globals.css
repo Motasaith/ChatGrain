@@ -1858,10 +1858,22 @@ button {
   min-width: 0;
 }
 
-.agent-card-delete {
+/* Rename, copy and delete, as one row.
+ *
+ * The container carries the position now; the buttons inside are ordinary flex
+ * children. Absolutely positioning each one separately would mean three sets of
+ * coordinates to keep in step the first time a fourth is added. */
+.agent-card-tools {
   position: absolute;
   top: 10px;
   right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.agent-card-delete,
+.agent-card-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1873,15 +1885,44 @@ button {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  opacity: 0;
+  /* No opacity here: the row fades as a whole. Fading both would multiply -
+     zero times one is still zero - and the buttons would never appear. */
   transition: 140ms ease;
 }
 
-/* Revealed on hover so it does not compete with the card, but always present
-   for keyboard and touch users. */
-.agent-card-wrap:hover .agent-card-delete,
-.agent-card-delete:focus-visible {
+/* Hidden until wanted, and always present for a keyboard.
+ *
+ * Three permanently visible icon buttons on every card would compete with the
+ * agent's name for attention, and the name is what somebody is scanning for.
+ * Revealing them on hover keeps the list calm - but hover is not available to
+ * everyone, so focus reveals them too, and they are never removed from the
+ * accessibility tree. */
+.agent-card-wrap:hover .agent-card-tools,
+.agent-card-wrap:focus-within .agent-card-tools {
   opacity: 1;
+}
+
+.agent-card-tools {
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+
+.agent-card-action:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Errors from a rename or a copy, in a card with no room for a sentence. The
+   full text is in the title attribute. */
+.agent-card-error {
+  max-width: 120px;
+  overflow: hidden;
+  align-self: center;
+  color: #92312a;
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (hover: none) {
@@ -2114,10 +2155,19 @@ button {
   white-space: nowrap;
 }
 
+/* The active-tab underline.
+ *
+ * `bottom: 0`, not `-1px`. It used to hang one pixel below the button box, and
+ * because the row sets `overflow-x: auto` - which makes the browser compute
+ * `overflow-y: auto` as well, since only one axis may be visible - that single
+ * pixel of vertical overflow was enough to produce a permanent vertical
+ * scrollbar beside the tabs. Hiding `overflow-y` would have worked too, and
+ * would also have clipped the focus ring of whichever tab a keyboard user was
+ * on. Not overflowing in the first place costs nothing. */
 .studio-tabs button::after {
   position: absolute;
   right: 8px;
-  bottom: -1px;
+  bottom: 0;
   left: 8px;
   height: 2px;
   border-radius: 2px 2px 0 0;
@@ -2245,12 +2295,65 @@ button {
 }
 
 .settings-layout,
-.appearance-layout,
 .deploy-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 285px;
   align-items: start;
   gap: 15px;
+}
+
+/* The appearance preview gets real width.
+ *
+ * It was 285px, which is narrower than the widget it previews - so the thing
+ * being judged was squeezed, starter questions wrapped onto three lines that
+ * would sit on one, and the composer was cramped in a way a visitor would never
+ * see. A preview whose proportions differ from the real article is worse than
+ * no preview, because decisions get made from it.
+ *
+ * 390px matches the width the embed script actually gives the iframe
+ * (min(390px, calc(100vw - 28px))), so what is on screen here is what lands on
+ * the customer's site. The form takes what is left. */
+.appearance-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  align-items: start;
+  gap: 22px;
+}
+
+@media (max-width: 1100px) {
+  .appearance-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The closed launcher, under the panel, on the side it is configured for. */
+.appearance-launcher {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  margin-top: 14px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  box-shadow: 0 10px 26px rgb(16 35 28 / 26%);
+  overflow: hidden;
+}
+
+.appearance-launcher.is-right { margin-left: auto; }
+.appearance-launcher.is-left { margin-right: auto; }
+
+.appearance-launcher > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.appearance-launcher-note {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: center;
 }
 
 .settings-panel,
@@ -2770,19 +2873,51 @@ button {
   word-break: break-all;
 }
 
-.code-block button {
+.code-block .copy-button {
   position: absolute;
   top: 9px;
   right: 9px;
   display: flex;
   align-items: center;
   gap: 5px;
+  border: 1px solid transparent;
   border-radius: 7px;
   padding: 7px 9px;
   cursor: pointer;
   color: #dff3e7;
   background: #284438;
+  font: inherit;
   font-size: 12px;
+  /* The label changes between "Copy", "Copied" and "Press Ctrl+C", and a button
+     that resizes under the cursor is unpleasant to click twice. Wide enough for
+     the longest of the three. */
+  min-width: 104px;
+  justify-content: center;
+  transition: background .15s ease, color .15s ease;
+}
+
+.code-block .copy-button:hover {
+  background: #335645;
+}
+
+.code-block .copy-button:focus-visible {
+  outline: 2px solid #7fd3a6;
+  outline-offset: 2px;
+}
+
+/* Confirmation, which is the whole point of the change: the previous button
+   said nothing at all when it worked, so it read as broken. */
+.code-block .copy-button.is-copied {
+  color: #10231c;
+  background: #7fd3a6;
+}
+
+/* Neither success nor an error to fix - the text is selected and one keystroke
+   away, so it warns rather than alarms. */
+.code-block .copy-button.is-manual {
+  color: #ffd9a8;
+  border-color: #6b4f22;
+  background: #3a2c14;
 }
 
 .deploy-check {
@@ -3374,7 +3509,43 @@ button {
   .knowledge-summary,
   .deploy-preview-card { display: none; }
   .playground-layout { margin-top: 0; }
-  .playground-layout > section { display: none; }
+
+  /* The explanation goes; the starter questions stay.
+   *
+   * The whole left column was hidden on a narrow screen, which took the
+   * "Try asking" list with it - so the one control that lets somebody test an
+   * agent without typing was unavailable exactly where typing is hardest. The
+   * heading and the paragraph beside it are prose about what the panel is, and
+   * that is what a small screen can afford to lose. */
+  .playground-layout > section > h2,
+  .playground-layout > section > p,
+  .playground-layout > section > .page-eyebrow {
+    display: none;
+  }
+
+  .playground-layout > section {
+    order: 2;
+  }
+
+  /* Chips rather than a stacked list: four full-width buttons above the panel
+     would push the conversation off a phone screen entirely. `display: grid`
+     upstream, so this has to switch layout mode as well as direction. */
+  .playground-tips {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 0;
+    margin-bottom: 16px;
+    gap: 7px;
+  }
+
+  .playground-tips b {
+    flex-basis: 100%;
+  }
+
+  .playground-tips button {
+    width: auto;
+    text-align: left;
+  }
   .appearance-preview .chat-panel { max-width: 410px; margin-inline: auto; }
 }
 
@@ -4942,6 +5113,12 @@ button {
 .header-build-button,
 .app-primary-button {
   display: inline-flex;
+  /* Never wrapped. At 390px the heading row squeezed these until "New agent"
+     broke onto two lines inside a pill sized for one, so the words sat outside
+     their own background. A label is not the thing that should give: the row
+     around it wraps instead, below. */
+  white-space: nowrap;
+  flex: none;
   min-height: 38px;
   align-items: center;
   justify-content: center;
@@ -5053,6 +5230,16 @@ button {
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 26px;
+}
+
+/* The row gives way before the button does. On a narrow screen the action drops
+   under the title rather than crushing it. */
+@media (max-width: 620px) {
+  .page-heading {
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
 }
 
 .page-eyebrow {
@@ -5350,6 +5537,17 @@ button {
 .status-error {
   color: #a3442f;
   background: #fceae5;
+}
+
+/* Waiting on a person, not on the worker.
+ *
+ * Deliberately not the amber of "training", which reads as "come back later",
+ * and not the red of an error, which reads as "something broke". This is the
+ * one state where the next move belongs to whoever is reading it, so it is
+ * given a colour of its own. */
+.status-review {
+  color: #1d4ed8;
+  background: #e5edff;
 }
 
 .compact-empty {
@@ -8375,11 +8573,27 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 @container (min-width: 430px) {
+  /* Icon and label side by side, not stacked.
+   *
+   * These buttons are `display: grid` with two children, and a grid with no
+   * declared columns puts each child on its own row - so once the label was
+   * revealed it sat *under* the icon, inside a box still pinned to 34px. Both
+   * did not fit, and the word printed outside the button's border. The padding
+   * and gap here were written for a row all along; the flow direction was the
+   * one thing missing. */
   .chat-panel.chat-panel > header .chat-header-actions button {
     width: auto;
-    height: 34px;
+    min-height: 34px;
+    height: auto;
+    grid-auto-flow: column;
+    align-items: center;
     padding: 0 11px;
     gap: 6px;
+  }
+
+  /* A label should never be the thing that wraps a control. */
+  .chat-header-actions em {
+    white-space: nowrap;
   }
 
   .chat-header-actions em {
@@ -9675,6 +9889,9 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
 }
 
 .crawl-phase {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 4px 10px;
   border: 1px solid #dfe6e1;
   border-radius: 999px;
@@ -9688,10 +9905,26 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   color: #fff;
 }
 
+/* Finished, and it has to look finished.
+ *
+ * The done and active states were nearly the same shade, so a completed run and
+ * a running one were hard to tell apart at a glance - which is most glances.
+ * The tick carries most of the distinction; the softer, flatter treatment
+ * carries the rest, because a finished step should recede rather than keep
+ * asking for attention. */
 .crawl-phase.is-done {
-  border-color: transparent;
-  background: var(--green-pale);
+  border-color: color-mix(in srgb, var(--green) 22%, transparent);
+  background: transparent;
   color: var(--green-dark);
+}
+
+.crawl-phase.is-done > svg {
+  color: var(--green);
+}
+
+/* Only the step actually happening is filled in, so the eye lands on it. */
+.crawl-phase.is-waiting {
+  opacity: 0.55;
 }
 
 .crawl-phase.is-failed {
@@ -9967,6 +10200,11 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.45;
+  /* Visitors ask about domains, and "videobackgroundchanger.com" is one word
+     with nowhere to break. min-width zero lets the column shrink but cannot
+     make an unbreakable word narrower, so the question ran underneath the Pin
+     answer button beside it. */
+  overflow-wrap: anywhere;
 }
 
 .gaps-body > small,
@@ -12347,4 +12585,166 @@ body .docent-auth-page.docent-auth-page :where([class*="divider"], [class*="proo
   font-size: 11px;
   font-style: normal;
   white-space: nowrap;
+}
+
+/* Opening an agent ---------------------------------------------------------- */
+
+/* Shaped like the studio it precedes, not like a spinner in an empty box.
+   A skeleton that resembles what is coming reads as loading; a lone spinner in
+   the middle of nothing reads as a stall, because nothing about it says what is
+   being waited for. Shares the shimmer with the dashboard skeleton so the two
+   waits look like the same application. */
+.studio-skeleton {
+  display: grid;
+  gap: 18px;
+}
+
+.studio-skeleton i {
+  display: block;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #e9eee8 20%, #f5f7f3 50%, #e9eee8 80%);
+  background-size: 220% 100%;
+  animation: shimmer 1.4s infinite linear;
+}
+
+.studio-skeleton-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.studio-skeleton-head > div {
+  display: grid;
+  gap: 7px;
+}
+
+.studio-skeleton-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px !important;
+}
+
+.studio-skeleton-line { width: 320px; height: 13px; }
+.studio-skeleton-line.is-short { width: 62px; height: 9px; }
+.studio-skeleton-line.is-name { width: 140px; height: 17px; }
+.studio-skeleton-line.is-title { width: 210px; height: 16px; margin-bottom: 6px; }
+
+.studio-skeleton-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.studio-skeleton-tabs i { width: 96px; height: 22px; }
+
+.studio-skeleton-panel {
+  display: grid;
+  gap: 11px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+}
+
+/* Respects a stated preference for less motion. The shimmer is decoration; the
+   layout alone already says "this is loading". */
+@media (prefers-reduced-motion: reduce) {
+  .studio-skeleton i,
+  .dashboard-skeleton > div:first-child,
+  .dashboard-skeleton i,
+  .dashboard-skeleton section {
+    animation: none;
+  }
+}
+
+/* The chevron on a card, while that card is opening. */
+.link-pending {
+  color: var(--green);
+}
+
+/* Back out of an agent, and the workspace label that replaced a fake switcher */
+
+.studio-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-bottom: 10px;
+  border-radius: 7px;
+  padding: 3px 7px 3px 3px;
+  margin-left: -3px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.studio-back:hover {
+  color: var(--green-dark);
+  background: var(--paper);
+}
+
+/* The heading now stacks the back link above the identity row. */
+.studio-heading {
+  flex-wrap: wrap;
+}
+
+.studio-heading > .studio-back {
+  flex-basis: 100%;
+}
+
+/* Was a button with a chevron and no handler. It is a label now, so it should
+   not invite a click: no pointer, no hover, no affordance. */
+.workspace-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 12px 14px;
+  padding: 9px 10px;
+  border: 1px solid rgb(255 255 255 / 9%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 4%);
+  color: #eef4ef;
+  font-size: 13px;
+}
+
+.workspace-identity > b {
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playground-tips-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+/* The search overlay's close control. */
+.command-palette-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.command-palette-close:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* "(optional)" beside a field label. Quieter than the label, and not a separate
+   line — it qualifies the name rather than competing with it. */
+.field-optional {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
 }

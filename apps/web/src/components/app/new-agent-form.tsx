@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { pageLimitOptions } from "@/lib/agents/page-limit-options";
 import {
   ArrowLeft,
   ArrowRight,
@@ -93,7 +94,12 @@ export function NewAgentForm({
             />
           </label>
           <label className="field">
-            <span>Website URL</span>
+            {/* Marked on the label itself. The sentence under the field
+                already said an agent could be created empty, but a label is
+                read and helper text is skimmed - and somebody who does not
+                have a URL to hand needs to know that before they go looking
+                for one. */}
+            <span>Website URL <small className="field-optional">(optional)</small></span>
             <div className="field-with-icon">
               <Globe2 size={17} />
               <input
@@ -112,16 +118,11 @@ export function NewAgentForm({
               onChange={(event) => setPageLimit(Number(event.target.value))}
               value={pageLimit}
             >
-              {[100, 500, 1_000, 2_500, 5_000]
-                .filter((value) => value < crawlLimit)
-                .map((value) => (
-                  <option key={value} value={value}>
-                    {value.toLocaleString()} pages
-                  </option>
-                ))}
-              <option value={crawlLimit}>
-                Entire site (up to {crawlLimit.toLocaleString()} pages)
-              </option>
+              {pageLimitOptions(crawlLimit).map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
             <small>
               {/* The cap is deployment configuration, and a crawl that stops

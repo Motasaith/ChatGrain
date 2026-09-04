@@ -1,5 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { embedTexts } from "@/lib/rag/embeddings";
+import { logger } from "@/lib/observability/logger";
 import { z } from "zod";
 import { requireAgent } from "@/lib/agents/access";
 import { db } from "@/lib/db/client";
@@ -40,9 +42,26 @@ export async function POST(
     const { agentId } = await params;
     await requireAgent(agentId);
     const input = schema.parse(await readJson(request));
+
+    /**
+     * Embedded now, so matching later can be about meaning rather than
+     * spelling.
+     *
+     * Failure is tolerated on purpose. An embedding provider that is down or
+     * misconfigured must not stop somebody saving a pinned answer - the pin
+     * still works, matched on words exactly as it did before this existed, and
+     * the vectors can be filled in on the next save.
+     */
+    let questionVectors: number[][] | null = null;
+    try {
+      questionVectors = await embedTexts(input.questions, "query");
+    } catch (error) {
+      logger.warn({ error, agentId }, "Pinned answer saved without vectors");
+    }
+
     const [entry] = await db
       .insert(pinnedAnswers)
-      .values({ agentId, ...input })
+      .values({ agentId, ...input, questionVectors })
       .returning();
     return NextResponse.json({ data: entry, requestId }, { status: 201 });
   } catch (error) {

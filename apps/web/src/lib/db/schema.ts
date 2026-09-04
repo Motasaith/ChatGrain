@@ -488,6 +488,15 @@ export const pinnedAnswers = pgTable(
     title: text("title").notNull(),
     questions: text("questions").array().notNull(),
     answer: text("answer").notNull(),
+    /**
+     * One embedding per entry in `questions`, in the same order.
+     *
+     * Lets a pin match a question that means the same thing without being
+     * spelled the same. Null on rows written before this existed, and null when
+     * the embedding provider was unavailable at the time - both fall back to
+     * word overlap, which is what the matching did before.
+     */
+    questionVectors: jsonb("question_vectors").$type<number[][] | null>(),
     useCount: integer("use_count").default(0).notNull(),
     ...timestamps,
   },

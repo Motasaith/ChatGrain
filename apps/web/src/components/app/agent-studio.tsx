@@ -4,15 +4,18 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAskDialog } from "@/components/app/ask-dialog";
+import { CopyButton } from "@/components/app/copy-button";
+import { agentDisplayStatus } from "@/lib/agents/display-status";
+import { pageLimitOptions } from "@/lib/agents/page-limit-options";
 import { SourcePages } from "@/components/app/source-pages";
 import {
+  ArrowLeft,
   AlertTriangle,
   BookOpen,
   Bot,
   Check,
   CheckCircle2,
   CircleStop,
-  Clipboard,
   Code2,
   ExternalLink,
   FileText,
@@ -176,6 +179,25 @@ const PHASE_LABEL: Record<Job["phase"], string> = {
 };
 
 /**
+ * The same phases in the past tense, for after they have happened.
+ *
+ * A chip reading "Fetching pages" next to a finished job is not a label, it is
+ * a claim - and an untrue one. It was left in the present tense whatever the
+ * state, so a completed crawl looked exactly like a running one and the panel
+ * appeared stuck at the last step. Past tense plus a tick says the thing that
+ * is actually true.
+ */
+const PHASE_DONE_LABEL: Record<Job["phase"], string> = {
+  queued: "Queued",
+  discovering: "Pages found",
+  crawling: "Pages fetched",
+  parsing: "File read",
+  embedding: "Embeddings generated",
+  indexing: "Search index written",
+  done: "Finished",
+};
+
+/**
  * A file job and a crawl job run the same stages under different names, and
  * showing "Fetching pages" over an uploaded PDF is worse than showing nothing.
  */
@@ -204,6 +226,7 @@ export function AgentStudio({
   previewToken,
   initialPinned,
   isAdmin,
+  origin,
   crawlLimit,
   fileLimitLabel,
 }: {
@@ -213,6 +236,8 @@ export function AgentStudio({
   previewToken: string;
   initialPinned: PinnedAnswer[];
   isAdmin: boolean;
+  /** This installation's public origin, resolved on the server. */
+  origin: string;
   crawlLimit: number;
   fileLimitLabel: string;
 }) {
@@ -263,6 +288,16 @@ export function AgentStudio({
   const [error, setError] = useState("");
   const [workerHealthy, setWorkerHealthy] = useState<boolean | null>(null);
   const { ask, dialog } = useAskDialog();
+  /**
+   * The starter question the playground has been asked to send.
+   *
+   * The nonce is what makes clicking the same question twice work: the panel
+   * watches for a change, and an unchanged string is not one.
+   */
+  const [askRequest, setAskRequest] = useState<{
+    question: string;
+    nonce: number;
+  } | null>(null);
   const [textOpen, setTextOpen] = useState(false);
   const [textName, setTextName] = useState("");
   const [textContent, setTextContent] = useState("");
@@ -724,26 +759,80 @@ export function AgentStudio({
     }
   }
 
+  /**
+   * Removing a pinned answer, which used to happen on a single click.
+   *
+   * It is a small deletion and still an irreversible one: a pinned answer is
+   * text somebody wrote and tuned, there is no undo, and the control is a bin
+   * icon sitting at the end of a row full of other rows. Everything else
+   * destructive in this application asks first, and this was the exception
+   * nobody had noticed.
+   *
+   * It shows the use count, because that is the fact that changes the answer.
+   * Deleting one that has answered two hundred questions is a different act
+   * from deleting one that has never fired.
+   */
   async function removePinned(pinnedId: string) {
+    const entry = pinned.find((item) => item.id === pinnedId);
+    const ok = await ask({
+      title: `Delete "${entry?.title ?? "this pinned answer"}"?`,
+      body: (
+        <>
+          The agent will stop giving this exact answer and will fall back to
+          whatever it can find in the indexed pages.
+          {entry && entry.useCount > 0 ? (
+            <>
+              {" "}
+              It has been used <b>{entry.useCount.toLocaleString()}</b>{" "}
+              {entry.useCount === 1 ? "time" : "times"}.
+            </>
+          ) : null}{" "}
+          This cannot be undone.
+        </>
+      ),
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (ok === null) return;
+
     const response = await fetch(
       `/api/agents/${agent.id}/pinned/${pinnedId}`,
       { method: "DELETE" },
     );
     if (response.ok) {
       setPinned((current) => current.filter((item) => item.id !== pinnedId));
+      return;
     }
+    setError("Could not delete that pinned answer.");
   }
 
   function patch<K extends keyof Agent>(key: K, value: Agent[K]) {
     setAgent((current) => ({ ...current, [key]: value }));
   }
 
-  const embedCode = `<script src="${typeof window === "undefined" ? "" : window.location.origin}/embed.js" data-agent-id="${agent.id}" async></script>`;
+  /**
+   * Resolved on the server and passed in, not read from `window`.
+   *
+   * It used to be `typeof window === "undefined" ? "" : window.location.origin`,
+   * which is a hydration mismatch by construction: the server renders the
+   * snippet with an empty origin and the browser renders it with a real one, so
+   * React discards the tree and re-renders it. Worse for the person reading the
+   * page, the first paint shows `<script src="/embed.js" ...>` - a snippet that
+   * is wrong if pasted, and this is a block of text whose entire purpose is
+   * being copied.
+   *
+   * `publicOrigin()` is what every other outward-facing URL already uses, so
+   * the snippet now agrees with the loader it points at.
+   */
+  const embedCode = `<script src="${origin}/embed.js" data-agent-id="${agent.id}" async></script>`;
   const jobSource = job
     ? sources.find((source) => source.id === job.sourceId)
     : undefined;
   const uploadJob = jobSource ? jobSource.type !== "website" : false;
   const readPhase = uploadJob ? READ_PHASE.file : READ_PHASE.website;
+  const shownStatus = agentDisplayStatus(agent.status, {
+    awaitingReview: job?.status === "awaiting_review",
+  });
   // "page 12 of 340" reads correctly for a PDF and wrongly for a workbook.
   const uploadUnit = /\.(?:xlsx|xlsm|xls|csv)$/i.test(jobSource?.name ?? "")
     ? "rows"
@@ -797,6 +886,14 @@ export function AgentStudio({
     <>
       {dialog}
       <div className="studio-heading">
+        {/* The only route back to the list was the sidebar, which does not say
+            it is a way out of this agent, or the browser's back button, which
+            is not part of the application. A named link costs one row and
+            removes the question. */}
+        <Link className="studio-back" href="/dashboard/agents">
+          <ArrowLeft size={15} />
+          All agents
+        </Link>
         <div className="studio-agent-identity">
           <span style={{ background: agent.primaryColor }}>
             {agent.logoUrl || agent.iconUrl ? (
@@ -808,7 +905,13 @@ export function AgentStudio({
             <small>Agent</small>
             <h1>{agent.name}</h1>
           </div>
-          <i className={`status-pill status-${agent.status}`}>{agent.status}</i>
+          {/* Says what is actually happening. A crawl waiting for its pages to
+              be approved is stored as "training" because there is no other
+              status for it, and reading "training" about something that is
+              waiting for you is how a queue looks stuck. */}
+          <i className={`status-pill status-${shownStatus.tone}`}>
+            {shownStatus.label}
+          </i>
         </div>
         <div className="studio-actions">
           {error && <span className="inline-error">{error}</span>}
@@ -1052,7 +1155,14 @@ export function AgentStudio({
           </button>
         </div>
       )}
-      {job && jobDetail ? (
+      {/* Scoped to Knowledge, which is the tab it describes.
+          It used to sit above the tab content and therefore appeared on all
+          five, so Playground, Behaviour, Appearance and Deploy each opened
+          underneath a block of crawl statistics that had nothing to do with
+          them - and which, once a sync had finished, was not even current news.
+          Live progress is still visible everywhere through the status pill and
+          the training banner. */}
+      {tab === "knowledge" && job && jobDetail ? (
         <div className="crawl-detail">
           <div className="crawl-phases">
             {([readPhase, "embedding", "indexing"] as const).map((phase) => {
@@ -1069,7 +1179,10 @@ export function AgentStudio({
                       : "waiting";
               return (
                 <span className={`crawl-phase is-${state}`} key={phase}>
-                  {PHASE_LABEL[phase]}
+                  {state === "done" ? <Check size={13} /> : null}
+                  {state === "done"
+                    ? PHASE_DONE_LABEL[phase]
+                    : PHASE_LABEL[phase]}
                 </span>
               );
             })}
@@ -1273,15 +1386,17 @@ export function AgentStudio({
                 }
                 value={sourcePageLimit}
               >
-                <option value={100}>100 pages</option>
-                <option value={Math.min(500, crawlLimit)}>
-                  {Math.min(500, crawlLimit)} pages
-                </option>
-                {isAdmin && crawlLimit > 500 ? (
-                  <option value={crawlLimit}>
-                    Entire site · {crawlLimit.toLocaleString()}
+                {/* The same choices as the agent creation form, from the same
+                    helper. This offered 100 and 500 only, and hid the whole-site
+                    option behind an `isAdmin` check that duplicated a limit
+                    already applied - so an ordinary customer could pick their
+                    full allowance when creating an agent and not when adding a
+                    source to it, which is the screen they use far more. */}
+                {pageLimitOptions(crawlLimit).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
-                ) : null}
+                ))}
               </select>
               <button disabled={saving}><Plus size={14} /> Add website</button>
             </form>
@@ -1436,15 +1551,42 @@ export function AgentStudio({
               This uses the same public chat endpoint as the widget. Inspect the
               source cards under every grounded response.
             </p>
-            <div className="playground-tips">
-              <b>Try asking</b>
-              {["What does this company offer?", "How can I contact support?", "What is your refund policy?"].map((item) => (
-                <button key={item} type="button">{item}</button>
-              ))}
-            </div>
+            {/* The agent's own starter questions, and they send.
+                These were three hard-coded strings - "What does this company
+                offer?", "How can I contact support?", "What is your refund
+                policy?" - in buttons with no handler. So the panel advertised
+                questions this agent had never been set up to answer, and
+                clicking one did nothing at all. They now come from the same
+                field the widget reads, which is the point of a live test: it
+                should exercise what a visitor will actually be offered.
+
+                Hidden entirely when none are configured, rather than falling
+                back to invented ones. */}
+            {agent.suggestedQuestions.length ? (
+              <div className="playground-tips">
+                <b>Try asking</b>
+                {agent.suggestedQuestions.map((item) => (
+                  <button
+                    key={item}
+                    onClick={() =>
+                      setAskRequest({ question: item, nonce: Date.now() })
+                    }
+                    type="button"
+                  >
+                    {item}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="playground-tips-empty">
+                No starter questions yet. Add some under{" "}
+                <b>Appearance</b> and they will appear here and in the widget.
+              </p>
+            )}
           </section>
           <ChatPanel
             agentId={agent.id}
+            askRequest={askRequest}
             collectFeedback={agent.collectFeedback}
             embedToken={previewToken}
             iconUrl={agent.iconUrl}
@@ -1597,14 +1739,14 @@ export function AgentStudio({
                 <small>Detected automatically. Override it with a public image URL.</small>
               </label>
               <label className="field">
-                <span>Icon URL</span>
+                <span>Bubble icon URL</span>
                 <input
                   onChange={(event) => patch("iconUrl", event.target.value || null)}
                   placeholder="https://example.com/icon.png"
                   type="url"
                   value={agent.iconUrl || ""}
                 />
-                <small>Used for the launcher and as a logo fallback.</small>
+                <small>The closed bubble, shown under the preview. Falls back to the logo.</small>
               </label>
             </div>
             <label className="field"><span>Widget position</span><select value={agent.widgetPosition} onChange={(event) => patch("widgetPosition", event.target.value)}><option value="right">Bottom right</option><option value="left">Bottom left</option></select></label>
@@ -1698,7 +1840,7 @@ export function AgentStudio({
         <div className="deploy-grid">
           <section className="settings-panel">
             <div className="panel-heading"><div><h2>Install on your website</h2><p>Paste this once before the closing body tag.</p></div><Code2 size={18} /></div>
-            <div className="code-block"><code>{embedCode}</code><button onClick={() => navigator.clipboard.writeText(embedCode)} type="button"><Clipboard size={14} /> Copy</button></div>
+            <div className="code-block" data-copy-source><code>{embedCode}</code><CopyButton label="Copy the install snippet" text={embedCode} /></div>
             <div className="deploy-check"><CheckCircle2 size={17} /><div><b>No framework required</b><p>The loader is asynchronous and isolates the widget inside an iframe.</p></div></div>
             <div className="deploy-check"><CheckCircle2 size={17} /><div><b>Domain controls</b><p>Use the allowlist below before sharing a production agent.</p></div></div>
             <label className="field"><span>Allowed domains (one per line)</span><textarea rows={5} placeholder={"example.com\napp.example.com"} value={agent.allowedDomains.join("\n")} onChange={(event) => patch("allowedDomains", event.target.value.split(/\n/).map((item) => item.trim()).filter(Boolean))} /></label>

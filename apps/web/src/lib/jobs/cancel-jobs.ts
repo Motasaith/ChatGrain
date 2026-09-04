@@ -1,7 +1,7 @@
 import { and, eq, inArray, like, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
+import { recomputeAgentStatus } from "@/lib/agents/recompute-status";
 import {
-  agents,
   crawlJobs,
   documents,
   sources,
@@ -99,6 +99,20 @@ export async function cancelJobs(jobIds: string[]) {
     )
     .returning({ id: crawlJobs.id });
 
+  // Captured before the loop below, which deletes sources that never indexed
+  // anything - and with them the only route from a job back to its agent.
+  const affected = cancelled.length
+    ? await db
+        .selectDistinct({ agentId: sources.agentId })
+        .from(sources)
+        .where(
+          inArray(
+            sources.id,
+            cancelled.map((job) => job.sourceId),
+          ),
+        )
+    : [];
+
   for (const job of cancelled) {
     // The rule the worker applies too: a source that never finished indexing
     // has nothing to show, and listing it promises content the agent cannot
@@ -117,16 +131,21 @@ export async function cancelJobs(jobIds: string[]) {
     }
   }
 
-  // An agent left "training" with nothing running looks permanently stuck.
-  const [remaining] = await db
-    .select({ value: sql<number>`count(*)::int` })
-    .from(crawlJobs)
-    .where(inArray(crawlJobs.status, ["queued", "running"]));
-  if (!remaining?.value) {
-    await db
-      .update(agents)
-      .set({ status: "ready", updatedAt: new Date() })
-      .where(eq(agents.status, "training"));
+  /**
+   * An agent left "training" with nothing running looks permanently stuck, so
+   * each affected agent is recomputed from what it actually has.
+   *
+   * This used to count every crawl job in the installation and, if none were
+   * queued or running, set *every* agent with status "training" to "ready".
+   * Three things were wrong with that. It reached across workspaces, so
+   * cancelling one customer's job could mark another customer's agent ready.
+   * It ignored jobs awaiting review, which are outstanding work by any
+   * reasonable reading. And it said "ready" without checking there was anything
+   * to answer from, so an agent whose only crawl was cancelled before indexing
+   * a single page was advertised as ready to answer questions.
+   */
+  for (const { agentId } of affected) {
+    await recomputeAgentStatus(agentId);
   }
 
   return {

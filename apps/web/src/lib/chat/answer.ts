@@ -2,6 +2,11 @@ import { eq, sql } from "drizzle-orm";
 import type { Agent } from "@/lib/db/schema";
 import { db } from "@/lib/db/client";
 import { pinnedAnswers } from "@/lib/db/schema";
+import { embedText } from "@/lib/rag/embeddings";
+import {
+  bestPinnedMatch,
+  needsSemanticCheck,
+} from "@/lib/chat/pinned-match";
 import {
   classifyConversationIntent,
   defaultLlmModel,
@@ -716,28 +721,48 @@ function conversationQuestion(
   return `Recent conversation:\n${transcript}\n\nCurrent customer question: ${question}`;
 }
 
+/**
+ * The pinned answer for a question, if there is one.
+ *
+ * Two signals. Word overlap is tried first and costs nothing; only when it has
+ * failed, and only when this agent actually has embedded pins, is the question
+ * embedded and compared on meaning. So the common cases - an agent with no
+ * pins, or a question that plainly matches one - add no latency at all, and the
+ * round trip is spent only where the answer is genuinely in doubt.
+ *
+ * A failure to embed is not a failure to answer. The word-overlap result stands
+ * on its own, which is exactly what this did before embeddings existed.
+ */
 async function findPinnedAnswer(agentId: string, question: string) {
   const entries = await db
     .select()
     .from(pinnedAnswers)
     .where(eq(pinnedAnswers.agentId, agentId));
-  let best:
-    | { id: string; title: string; answer: string; score: number }
-    | undefined;
-  for (const entry of entries) {
-    for (const candidate of entry.questions) {
-      const score = pinnedMatchScore(question, candidate);
-      if (!best || score > best.score) {
-        best = {
-          id: entry.id,
-          title: entry.title,
-          answer: entry.answer,
-          score,
-        };
-      }
+  if (!entries.length) return null;
+
+  let questionEmbedding: number[] | null = null;
+  if (
+    needsSemanticCheck(
+      question,
+      entries,
+      pinnedMatchScore,
+      PINNED_MATCH_THRESHOLD,
+    )
+  ) {
+    try {
+      questionEmbedding = await embedText(question, "query");
+    } catch (error) {
+      logger.warn({ error, agentId }, "Pinned answer embedding unavailable");
     }
   }
-  if (!best || best.score < PINNED_MATCH_THRESHOLD) return null;
+
+  const best = bestPinnedMatch(question, entries, {
+    scoreWords: pinnedMatchScore,
+    wordThreshold: PINNED_MATCH_THRESHOLD,
+    questionEmbedding,
+  });
+  if (!best) return null;
+
   await db
     .update(pinnedAnswers)
     .set({ useCount: sql`${pinnedAnswers.useCount} + 1` })

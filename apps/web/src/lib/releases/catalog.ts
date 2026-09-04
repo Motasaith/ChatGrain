@@ -74,6 +74,7 @@ export const RELEASES: Release[] = [
     ],
     highlights: [
       "The attribution line in the widget is a link, opening in a new tab so a visitor's conversation is not replaced by a marketing page.",
+      "The Copy button on the install snippet confirms what it did, and works over plain HTTP where the clipboard API does not exist.",
     ],
     unproven: [
       "Nothing in this release has been deployed.",

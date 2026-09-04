@@ -5,6 +5,7 @@ import { requireAgent } from "@/lib/agents/access";
 import { db } from "@/lib/db/client";
 import { agents, crawlJobs, sources } from "@/lib/db/schema";
 import { AppError, errorResponse } from "@/lib/http/errors";
+import { recomputeAgentStatus } from "@/lib/agents/recompute-status";
 import { discardStagedUpload } from "@/lib/sources/upload-store";
 
 type Context = {
@@ -136,6 +137,14 @@ export async function DELETE(_: Request, context: Context) {
     const staged = (existing.metadata?.upload as { storageKey?: string } | undefined)
       ?.storageKey;
     if (staged) await discardStagedUpload(staged);
+
+    // The source's crawl job went with it through the cascade, so nothing is
+    // left that would ever move the agent off "training" - it was set there
+    // when this source was added and only a finishing job cleared it. Deleting
+    // a source that was still waiting for review left the agent saying it was
+    // training forever, with nothing training it.
+    await recomputeAgentStatus(agentId);
+
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     return errorResponse(error, requestId);

@@ -1,6 +1,7 @@
 import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AgentStudio } from "@/components/app/agent-studio";
+import { publicOrigin } from "@/lib/http/public-origin";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import {
@@ -89,6 +90,7 @@ export default async function AgentPage({
       initialPinned={pinned}
       initialSources={sourceList}
       isAdmin={workspace.isAdmin}
+      origin={publicOrigin()}
       crawlLimit={crawlPageLimit(workspace.isAdmin)}
       fileLimitLabel={formatByteLimit(
         fileUploadLimit(workspace.isAdmin),

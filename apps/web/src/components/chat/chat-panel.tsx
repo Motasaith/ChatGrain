@@ -432,6 +432,7 @@ export function ChatPanel({
   agentId,
   welcomeMessage,
   suggestedQuestions = [],
+  askRequest,
   name,
   primaryColor,
   logoUrl,
@@ -464,6 +465,15 @@ export function ChatPanel({
   embedToken?: string;
   active?: boolean;
   suggestedQuestions?: string[];
+  /**
+   * A question to send, asked for from outside the panel.
+   *
+   * Carries a nonce rather than being just a string, because the studio's
+   * "Try asking" list has to work when the same question is clicked twice - and
+   * a plain string would be unchanged the second time, so the effect below
+   * would not fire and the click would appear to do nothing.
+   */
+  askRequest?: { question: string; nonce: number } | null;
 }) {
   const welcome = {
     id: "welcome",
@@ -1111,6 +1121,25 @@ export function ChatPanel({
       setBusy(false);
     }
   }
+
+  /**
+   * Sends a question the surrounding page asked for.
+   *
+   * Declared after `deliver`, which it reaches through `askSuggested`. Placed
+   * above it, the lint rules correctly object that the effect closes over a
+   * binding that does not exist yet - harmless at runtime, since effects run
+   * after mount, but it reads as a hazard and one day will be one.
+   *
+   * Keyed on the nonce alone: including `askRequest` itself would re-send on
+   * any render that produced a new object, and including `busy` would fire the
+   * moment a send finished.
+   */
+  const askNonce = askRequest?.nonce;
+  useEffect(() => {
+    if (!askNonce || !askRequest?.question) return;
+    void askSuggested(askRequest.question);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askNonce]);
 
   async function rate(messageId: string, rating: 1 | -1) {
     await fetch("/api/feedback", {
