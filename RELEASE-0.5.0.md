@@ -780,6 +780,212 @@ and `system-tab.tsx` beside it.
 
 ---
 
+### 14. Nine things the console could not do
+
+**Why.** The console redesign (§13, written up in 0.6.0 §3) ended with a list
+of what an operator would ask for next. All nine are capabilities rather than
+presentation, so they belong here. Each is below with the decision that shaped
+it.
+
+**No migration.** Everything new is stored in tables that already exist:
+`system_state` for the maintenance flag, and a new `expired` value for the
+existing `admin_sessions.status` text column.
+
+#### 14.1 A page per workspace and per person
+
+`?tab=workspace&id=…` and `?tab=person&id=…`, reached by clicking a name in any
+list. The workspace page has its members, agents, tickets, grounded rate, 30-day
+charts of answers, conversations and embedded passages, recent jobs, editing
+sessions and audit events. The person page has their workspaces, the editing
+sessions they ran, and what they did.
+
+**Every list on these pages is the tab's own query, narrowed.** The jobs,
+sessions and audit functions gained a `workspace`, `admin` or `actor`
+parameter rather than a second query written for the detail view, so the
+detail page and the tab cannot disagree about what happened.
+
+An id that is not a UUID is refused before it reaches Postgres. A malformed id
+would otherwise be a 500 (`invalid input syntax for type uuid`) rather than
+"not found".
+
+#### 14.2 Answer quality across every workspace
+
+A **Quality** tab: answers, grounded rate, average and p95 latency, thumbs up
+and down, per workspace, over 7, 30 or 90 days. Sortable by busiest, least
+grounded, slowest, most thumbs down. The data was all being recorded
+(`messages.grounded`, `messages.latency_ms`, `feedback`) and shown nowhere.
+
+**A rate needs ten judged answers before it is ranked or coloured.** Without
+that floor, "least grounded" would be a list of workspaces that asked three
+questions and got one bad answer, and it would hide the one workspace with
+four hundred answers and a real problem.
+
+**It reaches messages through conversations.** `messages` has no index on time
+alone, but `conversations` is indexed on its last message. Filtering
+conversations to the window first keeps this from reading every message ever
+sent. It is still the heaviest query in the console; see *What has not been
+proved*.
+
+**First reading, 90 days on production data:** 341 answers, 91% grounded,
+**average 10.2 s, p95 15.8 s**. The grounding is healthy. The latency is not,
+and it is the first thing any scaling work should look at.
+
+#### 14.3 Visitors waiting on a person, in every workspace
+
+A **Waiting** tab: handed-off conversations and open or pending tickets across
+the installation. Chats are sorted longest wait first; tickets are sorted by
+priority, then age. It has a rail badge and a line in *Needs attention*.
+
+It is for **noticing**, not answering. Each workspace answers its own visitors;
+what nobody could see before was a workspace that had stopped doing so.
+
+#### 14.4 Live refresh
+
+Overview, Crawl jobs and Waiting refresh themselves: every 30, 15 and 30
+seconds respectively. The control shows how long ago the data was loaded.
+
+`router.refresh()`, not a polling endpoint, so there is no second way of
+loading the same data that could drift from the first. **Paused while the
+browser tab is hidden**, because an admin tab left open overnight would
+otherwise query the database four times a minute for nobody. It can also be
+switched off, because a list that reshuffles while somebody is reading it is
+worse than one that is a minute old.
+
+#### 14.5 Outbound e-mail health
+
+On **System**: which provider is configured, the sending address, exactly
+which variables are missing, and a **Send a test** button.
+
+The test goes **only to the administrator pressing it.** A test button that
+took an address would be a way to send mail from this installation to anyone.
+Each attempt is audited, and a refusal points at the log line that holds the
+provider's reason. `sendSupportEmail` swallows the reason by design and must
+keep doing so.
+
+#### 14.6 Maintenance mode
+
+A switch on **System**, confirmed, with an optional message. While it is on,
+every non-administrator who opens the dashboard sees a holding page, and
+administrators see a banner reminding them it is on.
+
+- **The widget keeps answering.** Visitors on customers' websites did not
+  choose the maintenance window, and an agent that goes silent on somebody
+  else's site reads as that site breaking. The holding page says so first,
+  because "is my chat broken" is the question a customer arrives with.
+- **Stored in `system_state`, not the environment.** It is needed in the middle
+  of a migration, when a switch that needs a restart is useless.
+- **It fails open.** If the flag cannot be read, the dashboard stays open.
+  Failing closed would lock every customer out whenever the database hiccups,
+  which is the situation this switch exists to manage, not cause.
+
+#### 14.7 CSV export
+
+Every list tab has a **CSV** link that downloads the list **as currently
+filtered**, up to 10,000 rows.
+
+- **The queries moved out of the tabs** into `queries.ts`, so the tab and the
+  export call the same function. An export cannot quietly disagree with the
+  screen it was taken from. It also keeps the route handler from importing
+  React components.
+- **Formula injection is neutralised.** Visitor names, ticket subjects and
+  audit messages are typed by people outside the company and opened in
+  spreadsheets by people inside it. A value starting `=`, `+`, `-` or `@` would
+  run as a formula, so it is prefixed with an apostrophe. Numbers are left
+  alone, so a count of `-2` is still a number.
+- **Every export is audited,** with its filters and row count. These files
+  carry customers' e-mail addresses and leave the system the moment they are
+  downloaded.
+- **Columns are chosen, not dumped.** No avatar URLs, no snapshot JSON.
+
+#### 14.8 Retention, visible, and restore points that expire
+
+A **Retention** panel on System. For each kind of record it shows how long it
+is kept, how many are held, how many the next run will remove, the oldest one,
+and which variable sets it. It also shows when the job last ran. Audit and log
+pruning already existed, driven by environment variables, but could not be
+seen from the dashboard.
+
+**New: editing-session restore points expire**, after
+`ADMIN_SESSION_SNAPSHOT_RETENTION_DAYS` (default 90). This closes the
+"grows without bound" item listed below. **Only the snapshot is dropped.** The
+row stays, with its list of what changed, and becomes `expired`. The record of
+what an administrator did to a customer's account must outlive the ability to
+undo it. Roll back refuses an expired session with a 410 and says why, and the
+button is hidden.
+
+`retentionPolicy()` is exported from `lib/admin/retention.ts` and the panel
+reads it, so the dashboard shows the numbers the job uses rather than a second
+copy of the defaults.
+
+#### 14.9 Audit details
+
+Audit rows open. Each shows its metadata as formatted JSON, plus the request
+id, target, IP, and a link to the workspace. The metadata held the specifics
+(the old and new limit, what a deletion removed, the reason typed into a
+dialog) and was recorded on every row but shown on none.
+
+#### Also added
+
+- **Workers** on System: one row per worker process that reported in the last
+  day, with pid, resident memory, and whether it is alive. These rows already
+  existed in `system_state`. The first question in any scaling discussion is
+  how many workers there are and how much memory each holds.
+
+#### Files
+
+| File | What it does |
+|---|---|
+| `apps/web/src/app/dashboard/admin/queries.ts` | **New.** Every list query, shared by the tabs and the export. |
+| `apps/web/src/app/dashboard/admin/detail-tabs.tsx` | **New.** Workspace and person pages. |
+| `apps/web/src/app/dashboard/admin/insight-tabs.tsx` | **New.** Quality and Waiting. |
+| `apps/web/src/app/dashboard/admin/page.tsx` | The two new tabs, the detail routes, the Waiting badge, the maintenance banner. |
+| `apps/web/src/app/dashboard/admin/overview-tab.tsx` | Live refresh; waiting visitors and maintenance in *Needs attention*. |
+| `apps/web/src/app/dashboard/admin/directory-tabs.tsx`, `activity-tabs.tsx` | Queries moved out; export links; names link to detail pages; audit rows open. |
+| `apps/web/src/app/dashboard/admin/system-tab.tsx` | Maintenance, e-mail, workers, retention. |
+| `apps/web/src/app/dashboard/admin/shared.ts`, `ui.tsx` | Export limit, `groundedRate`, the export link. |
+| `apps/web/src/app/api/admin/export/route.ts` | **New.** CSV per tab, audited. |
+| `apps/web/src/app/api/admin/maintenance-mode/route.ts` | **New.** The switch, audited. |
+| `apps/web/src/app/api/admin/email-test/route.ts` | **New.** A test message to yourself, audited. |
+| `apps/web/src/app/api/admin/sessions/[sessionId]/route.ts` | Refuses to roll back an expired session. |
+| `apps/web/src/lib/admin/csv.ts`, `csv.test.ts` | **New.** Quoting and formula neutralising; 6 tests. |
+| `apps/web/src/lib/admin/maintenance-mode.ts` | **New.** Read and write the flag; fails open. |
+| `apps/web/src/lib/admin/retention.ts` | `retentionPolicy()`; restore points expire. |
+| `apps/web/src/app/dashboard/layout.tsx` | Shows the holding page to non-administrators in maintenance. |
+| `apps/web/src/components/app/admin-auto-refresh.tsx` | **New.** |
+| `apps/web/src/components/app/admin-maintenance-toggle.tsx` | **New.** |
+| `apps/web/src/components/app/admin-email-test.tsx` | **New.** |
+| `apps/web/src/components/app/maintenance-page.tsx` | **New.** What customers see. |
+| `apps/web/src/components/app/admin-session-actions.tsx` | No Roll back on an expired session. |
+| `apps/web/src/components/app/admin-controls.tsx` | The retention result mentions restore points. |
+| `apps/web/src/app/globals.css` | Styles for all of the above. |
+
+#### Verified
+
+Every tab, both detail pages, every Quality sort and window, every export
+query at the full 10,000-row limit, and the retention job in **dry-run** were
+run against the production database, read-only: 30 checks, all passing. The
+dry run confirmed nothing was written. 595 tests passing, 1 skipped;
+typecheck, lint and `next build` clean.
+
+#### Not proved
+
+- **Nobody has clicked any of it in a browser.** Queries ran; buttons did not.
+- **Maintenance mode has never been switched on.** The holding page has not
+  been seen, and a customer with the dashboard already open keeps working
+  until they navigate. Their API calls are not refused.
+- **No restore point has been expired for real.** The dry run counted zero due.
+  The first real expiry will be the first time that `update` runs.
+- **The Quality query reads every assistant message in the window.** Fine at
+  341 answers. At a million it wants an index on `messages (created_at)` or a
+  daily rollup table like `workspace_usage`.
+- **Retention runs in every worker.** Each worker process keeps its own timer,
+  so two workers run the job twice. That is harmless, because it deletes by
+  cutoff, but it is wasted work, and it will matter once there are several.
+- **The test e-mail has not been sent.** Production has no mail provider
+  configured.
+
+---
+
 ## Migrations
 
 Seven. `0026`–`0031` are applied to production; `0032` is not.
@@ -853,9 +1059,9 @@ Stated rather than solved, and this is why the version is open.
 - **The restore is row-by-row, not a transaction.** A failure halfway through
   leaves the configuration partly restored. The restore point survives, so it
   can be run again — but the intermediate state is real.
-- **Nothing enforces a limit on stored snapshots.** One row per editing session,
-  each holding a workspace's configuration. Small, but it grows without bound
-  and there is no pruning.
+- **~~Nothing enforces a limit on stored snapshots.~~** Closed in §14.8:
+  restore points expire after `ADMIN_SESSION_SNAPSHOT_RETENTION_DAYS` (90 by
+  default), keeping the record of what changed.
 - **The consent flow is now off by default and has never been exercised at all.**
   It is reachable only with `IMPERSONATION_REQUIRE_CONSENT=true`, and no email
   has ever been sent.

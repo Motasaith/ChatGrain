@@ -1,7 +1,8 @@
-import { and, count, eq, lt, notInArray } from "drizzle-orm";
+import { and, count, eq, lt, ne, notInArray, sql } from "drizzle-orm";
 import { getAdminEmails } from "@/lib/auth/admin-emails";
 import { db } from "@/lib/db/client";
 import {
+  adminSessions,
   auditLogs,
   memberships,
   systemLogs,
@@ -23,6 +24,8 @@ type CleanupResult = {
   expiredSystemLogs: number;
   deletedAuditLogs: number;
   deletedSystemLogs: number;
+  expiredSnapshots: number;
+  prunedSnapshots: number;
   candidates: Array<{ id: string; email: string; lastSeenAt: string }>;
 };
 
@@ -31,6 +34,37 @@ function retentionDays() {
   return Number.isFinite(configured)
     ? Math.min(3_650, Math.max(7, Math.trunc(configured)))
     : 30;
+}
+
+function daysFrom(name: string, fallback: number) {
+  const configured = Number(process.env[name] ?? fallback);
+  return Number.isFinite(configured) && configured > 0 ? Math.trunc(configured) : fallback;
+}
+
+/**
+ * How long each kind of record is kept, in days.
+ *
+ * Exported so the admin dashboard shows the numbers this job actually uses,
+ * rather than a second copy of the defaults that could disagree with it.
+ */
+export function retentionPolicy() {
+  return {
+    inactiveUsers: retentionDays(),
+    auditLogs: daysFrom("AUDIT_LOG_RETENTION_DAYS", 180),
+    systemLogs: daysFrom("SYSTEM_LOG_RETENTION_DAYS", 30),
+    sessionSnapshots: daysFrom("ADMIN_SESSION_SNAPSHOT_RETENTION_DAYS", 90),
+  };
+}
+
+/**
+ * Editing sessions whose restore point is old enough to let go.
+ *
+ * Only the snapshot is dropped. The row stays, with its summary of what
+ * changed, and becomes `expired`: the record of what an administrator did to
+ * a customer's account must outlive the ability to undo it.
+ */
+function snapshotExpiry(cutoff: Date) {
+  return and(lt(adminSessions.startedAt, cutoff), ne(adminSessions.status, "expired"));
 }
 
 async function deleteClerkUsers(externalIds: string[]) {
@@ -98,29 +132,20 @@ export async function cleanupInactiveUsers({
     expiredSystemLogs: 0,
     deletedAuditLogs: 0,
     deletedSystemLogs: 0,
+    expiredSnapshots: 0,
+    prunedSnapshots: 0,
     candidates: candidates.slice(0, 50).map((user) => ({
       id: user.id,
       email: user.email,
       lastSeenAt: user.lastSeenAt.toISOString(),
     })),
   };
-  const auditCutoff = new Date(
-    Date.now() -
-      Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 180) *
-        24 *
-        60 *
-        60 *
-        1000,
-  );
-  const systemLogCutoff = new Date(
-    Date.now() -
-      Number(process.env.SYSTEM_LOG_RETENTION_DAYS ?? 30) *
-        24 *
-        60 *
-        60 *
-        1000,
-  );
-  const [expiredAudit, expiredSystem] = await Promise.all([
+  const policy = retentionPolicy();
+  const daysAgo = (value: number) => new Date(Date.now() - value * 24 * 60 * 60 * 1000);
+  const auditCutoff = daysAgo(policy.auditLogs);
+  const systemLogCutoff = daysAgo(policy.systemLogs);
+  const snapshotCutoff = daysAgo(policy.sessionSnapshots);
+  const [expiredAudit, expiredSystem, expiredSnapshots] = await Promise.all([
     db
       .select({ count: count(auditLogs.id) })
       .from(auditLogs)
@@ -129,9 +154,14 @@ export async function cleanupInactiveUsers({
       .select({ count: count(systemLogs.id) })
       .from(systemLogs)
       .where(lt(systemLogs.createdAt, systemLogCutoff)),
+    db
+      .select({ count: count(adminSessions.id) })
+      .from(adminSessions)
+      .where(snapshotExpiry(snapshotCutoff)),
   ]);
   result.expiredAuditLogs = Number(expiredAudit[0]?.count ?? 0);
   result.expiredSystemLogs = Number(expiredSystem[0]?.count ?? 0);
+  result.expiredSnapshots = Number(expiredSnapshots[0]?.count ?? 0);
   if (dryRun) return result;
 
   const deletedExternalIds: string[] = [];
@@ -177,6 +207,13 @@ export async function cleanupInactiveUsers({
         .where(lt(systemLogs.createdAt, systemLogCutoff))
         .returning({ id: systemLogs.id })
     ).length;
+    result.prunedSnapshots = (
+      await tx
+        .update(adminSessions)
+        .set({ status: "expired", snapshot: sql`'{}'::jsonb` })
+        .where(snapshotExpiry(snapshotCutoff))
+        .returning({ id: adminSessions.id })
+    ).length;
 
     await tx
       .insert(systemState)
@@ -188,6 +225,7 @@ export async function cleanupInactiveUsers({
           deletedWorkspaces: result.deletedWorkspaces,
           deletedAuditLogs: result.deletedAuditLogs,
           deletedSystemLogs: result.deletedSystemLogs,
+          prunedSnapshots: result.prunedSnapshots,
           retentionDays: days,
         },
         updatedAt: new Date(),
@@ -201,6 +239,7 @@ export async function cleanupInactiveUsers({
             deletedWorkspaces: result.deletedWorkspaces,
             deletedAuditLogs: result.deletedAuditLogs,
             deletedSystemLogs: result.deletedSystemLogs,
+            prunedSnapshots: result.prunedSnapshots,
             retentionDays: days,
           },
           updatedAt: new Date(),

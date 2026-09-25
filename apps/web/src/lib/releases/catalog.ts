@@ -105,6 +105,9 @@ export const RELEASES: Release[] = [
       "Per-workspace page limits and re-crawl floors, which used to be environment variables that applied to everyone.",
       "Usage counted per workspace per day, so 'which account is expensive' has an answer.",
       "Every administrator action, and every request made while impersonating, written into the audit trail of the account it affected.",
+      "A page per workspace and per person; answer quality and visitors waiting on a person, across every workspace.",
+      "Maintenance mode that closes the dashboard to customers while their agents keep answering, and CSV export of any filtered list, audited.",
+      "Retention shown on the dashboard, and editing-session restore points that expire while the record of what changed is kept.",
     ],
     unproven: [
       "No editing session has ever been run against a real workspace. The snapshot, diff and restore are tested against constructed data only.",

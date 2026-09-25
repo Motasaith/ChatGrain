@@ -2,8 +2,8 @@ import Form from "next/form";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
-import { adminHref, formatRelative } from "./shared";
+import { ChevronLeft, ChevronRight, Download, Search, X } from "lucide-react";
+import { EXPORT_LIMIT, adminHref, filterQuery, formatRelative } from "./shared";
 
 type Filters = Record<string, string | number | undefined>;
 
@@ -204,5 +204,22 @@ export function When({ value }: { value: Date | string }) {
     <time dateTime={date.toISOString()} title={date.toLocaleString("en")}>
       {formatRelative(date)}
     </time>
+  );
+}
+
+/**
+ * Downloads the list as filtered, as CSV. A plain link to a route, so the
+ * browser handles the download and nothing is held in the page.
+ */
+export function ExportLink({ tab, filters = {} }: { tab: string; filters?: Filters }) {
+  return (
+    <a
+      className="admin-export"
+      download
+      href={`/api/admin/export?${filterQuery(tab, filters)}`}
+      title={`Download this list, as filtered, up to ${EXPORT_LIMIT.toLocaleString()} rows`}
+    >
+      <Download size={14} /> CSV
+    </a>
   );
 }

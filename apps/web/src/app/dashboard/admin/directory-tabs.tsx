@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { and, desc, eq, ilike, isNotNull, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { Bot, ShieldCheck, Users } from "lucide-react";
 import { AdminAgentActions } from "@/components/app/admin-agent-actions";
 import { AdminUserActions } from "@/components/app/admin-user-actions";
@@ -7,24 +7,17 @@ import { AdminWorkspaceActions } from "@/components/app/admin-workspace-actions"
 import { ImpersonateButton } from "@/components/app/impersonate-button";
 import { getAdminEmails } from "@/lib/auth/admin-emails";
 import { db } from "@/lib/db/client";
-import { agents, conversations, memberships, sources, users, workspaceUsage, workspaces } from "@/lib/db/schema";
+import { agents, users, workspaces } from "@/lib/db/schema";
 import {
   type AdminSearchParams,
   PAGE_SIZE,
-  likePattern,
+  adminHref,
   readPage,
   readParam,
+  retentionDays,
 } from "./shared";
-import { AdminPanel, Empty, FilterChips, Pager, SearchForm, Toolbar, When } from "./ui";
-
-// Thirty days, because "which workspace is expensive" is a question about a
-// trend and a single day answers it badly.
-const answersLast30 = sql<number>`(
-  select coalesce(sum(calls), 0)::int from ${workspaceUsage}
-  where ${workspaceUsage.workspaceId} = ${workspaces.id}
-    and ${workspaceUsage.kind} = 'generation'
-    and ${workspaceUsage.day} >= to_char(now() - interval '30 days', 'YYYY-MM-DD')
-)`;
+import { AGENT_STATES, agentRows, inactiveCondition, personRows, workspaceRows } from "./queries";
+import { AdminPanel, Empty, ExportLink, FilterChips, Pager, SearchForm, Toolbar, When } from "./ui";
 
 export async function WorkspacesTab({ params }: { params: AdminSearchParams }) {
   const query = readParam(params, "q");
@@ -33,42 +26,8 @@ export async function WorkspacesTab({ params }: { params: AdminSearchParams }) {
   const page = readPage(params);
   const filters = { q: query, state, sort };
 
-  const where = and(
-    query ? ilike(workspaces.name, likePattern(query)) : undefined,
-    state === "suspended" ? isNotNull(workspaces.suspendedAt) : undefined,
-    state === "active" ? isNull(workspaces.suspendedAt) : undefined,
-  );
-
   const [rows, [counts]] = await Promise.all([
-    db
-      .select({
-        id: workspaces.id,
-        name: workspaces.name,
-        plan: workspaces.plan,
-        suspendedAt: workspaces.suspendedAt,
-        suspendedReason: workspaces.suspendedReason,
-        pageLimit: workspaces.pageLimit,
-        minRefreshHours: workspaces.minRefreshHours,
-        createdAt: workspaces.createdAt,
-        memberCount: sql<number>`(
-          select count(*)::int from ${memberships} where ${memberships.workspaceId} = ${workspaces.id}
-        )`,
-        agentCount: sql<number>`(
-          select count(*)::int from ${agents} where ${agents.workspaceId} = ${workspaces.id}
-        )`,
-        answersLast30,
-        passagesLast30: sql<number>`(
-          select coalesce(sum(units), 0)::int from ${workspaceUsage}
-          where ${workspaceUsage.workspaceId} = ${workspaces.id}
-            and ${workspaceUsage.kind} = 'embedding'
-            and ${workspaceUsage.day} >= to_char(now() - interval '30 days', 'YYYY-MM-DD')
-        )`,
-      })
-      .from(workspaces)
-      .where(where)
-      .orderBy(sort === "usage" ? desc(answersLast30) : desc(workspaces.createdAt))
-      .limit(PAGE_SIZE + 1)
-      .offset(page * PAGE_SIZE),
+    workspaceRows(params, PAGE_SIZE + 1, page * PAGE_SIZE),
     db
       .select({
         all: sql<number>`count(*)::int`,
@@ -79,7 +38,12 @@ export async function WorkspacesTab({ params }: { params: AdminSearchParams }) {
   const shown = rows.slice(0, PAGE_SIZE);
 
   return (
-    <AdminPanel description="Every account here, and what it is allowed to do." icon={ShieldCheck} title="Workspaces">
+    <AdminPanel
+      action={<ExportLink filters={filters} tab="workspaces" />}
+      description="Every account here, and what it is allowed to do. Open one for its members, usage and history."
+      icon={ShieldCheck}
+      title="Workspaces"
+    >
       <Toolbar>
         <SearchForm filters={{ state, sort }} placeholder="Search workspaces" query={query} tab="workspaces" />
         <FilterChips
@@ -122,7 +86,9 @@ export async function WorkspacesTab({ params }: { params: AdminSearchParams }) {
           <tbody>
             {shown.map((workspace) => (
               <tr key={workspace.id}>
-                <td><b>{workspace.name}</b></td>
+                <td>
+                  <Link href={adminHref("workspace", { id: workspace.id })}>{workspace.name}</Link>
+                </td>
                 <td><span className="admin-plan">{workspace.plan}</span></td>
                 <td>{workspace.memberCount}</td>
                 <td>{workspace.agentCount}</td>
@@ -161,45 +127,14 @@ export async function WorkspacesTab({ params }: { params: AdminSearchParams }) {
   );
 }
 
-const AGENT_STATES = ["ready", "training", "draft", "paused", "error"] as const;
-
 export async function AgentsTab({ params }: { params: AdminSearchParams }) {
   const query = readParam(params, "q");
   const status = readParam(params, "status");
   const page = readPage(params);
   const filters = { q: query, status };
-  const statusFilter = AGENT_STATES.find((value) => value === status);
 
   const [rows, statusCounts] = await Promise.all([
-    db
-      .select({
-        id: agents.id,
-        name: agents.name,
-        status: agents.status,
-        createdAt: agents.createdAt,
-        workspaceName: workspaces.name,
-        workspaceId: workspaces.id,
-        sourceCount: sql<number>`(
-          select count(*)::int from ${sources} where ${sources.agentId} = ${agents.id}
-        )`,
-        conversationCount: sql<number>`(
-          select count(*)::int from ${conversations}
-          where ${conversations.agentId} = ${agents.id}
-        )`,
-      })
-      .from(agents)
-      .innerJoin(workspaces, eq(workspaces.id, agents.workspaceId))
-      .where(
-        and(
-          query
-            ? or(ilike(agents.name, likePattern(query)), ilike(workspaces.name, likePattern(query)))
-            : undefined,
-          statusFilter ? eq(agents.status, statusFilter) : undefined,
-        ),
-      )
-      .orderBy(desc(agents.createdAt))
-      .limit(PAGE_SIZE + 1)
-      .offset(page * PAGE_SIZE),
+    agentRows(params, PAGE_SIZE + 1, page * PAGE_SIZE),
     db
       .select({ status: agents.status, count: sql<number>`count(*)::int` })
       .from(agents)
@@ -209,7 +144,12 @@ export async function AgentsTab({ params }: { params: AdminSearchParams }) {
   const countOf = (value: string) => statusCounts.find((row) => row.status === value)?.count ?? 0;
 
   return (
-    <AdminPanel description="Every agent on this installation, newest first." icon={Bot} title="Agents">
+    <AdminPanel
+      action={<ExportLink filters={filters} tab="agents" />}
+      description="Every agent on this installation, newest first."
+      icon={Bot}
+      title="Agents"
+    >
       <Toolbar>
         <SearchForm filters={{ status }} placeholder="Agent or workspace" query={query} tab="agents" />
         <FilterChips
@@ -242,7 +182,11 @@ export async function AgentsTab({ params }: { params: AdminSearchParams }) {
                 <td>
                   <Link href={`/dashboard/agents/${agent.id}`}>{agent.name}</Link>
                 </td>
-                <td>{agent.workspaceName}</td>
+                <td>
+                  <Link className="admin-quiet-link" href={adminHref("workspace", { id: agent.workspaceId })}>
+                    {agent.workspaceName}
+                  </Link>
+                </td>
                 <td><i className={`status-pill status-${agent.status}`}>{agent.status}</i></td>
                 <td>{agent.sourceCount}</td>
                 <td>{agent.conversationCount.toLocaleString()}</td>
@@ -278,48 +222,10 @@ export async function PeopleTab({
   // Read once here rather than per row: it is the same set for every user, and
   // it decides which role controls are offered as usable.
   const envAdmins = getAdminEmails();
-  const retentionDays = Number(process.env.INACTIVE_USER_RETENTION_DAYS ?? 30) || 30;
-  const inactive = lt(users.lastSeenAt, sql`now() - make_interval(days => ${retentionDays})`);
-
-  const roleFilter: SQL | undefined =
-    role === "admins"
-      ? ne(users.platformRole, "member")
-      : role === "exempt"
-        ? eq(users.retentionExempt, true)
-        : role === "inactive"
-          ? and(inactive, eq(users.retentionExempt, false))
-          : undefined;
+  const inactive = inactiveCondition();
 
   const [rows, [counts]] = await Promise.all([
-    db
-      .select({
-        id: users.id,
-        email: users.email,
-        name: users.name,
-        avatarUrl: users.avatarUrl,
-        lastSeenAt: users.lastSeenAt,
-        retentionExempt: users.retentionExempt,
-        platformRole: users.platformRole,
-        createdAt: users.createdAt,
-        workspaceNames: sql<string[]>`coalesce((
-          select array_agg(w.name order by m.created_at)
-          from ${memberships} m join ${workspaces} w on w.id = m.workspace_id
-          where m.user_id = ${users.id}
-        ), '{}')`,
-      })
-      .from(users)
-      .where(
-        and(
-          query ? or(ilike(users.email, likePattern(query)), ilike(users.name, likePattern(query))) : undefined,
-          roleFilter,
-        ),
-      )
-      // Administrators first, then by recency. On an installation with many
-      // customers the handful of people who can operate it are the rows this
-      // view exists for, and they should not sink under everyone else.
-      .orderBy(sql`case when ${users.platformRole} = 'member' then 1 else 0 end`, desc(users.lastSeenAt))
-      .limit(PAGE_SIZE + 1)
-      .offset(page * PAGE_SIZE),
+    personRows(params, PAGE_SIZE + 1, page * PAGE_SIZE),
     db
       .select({
         all: sql<number>`count(*)::int`,
@@ -333,7 +239,8 @@ export async function PeopleTab({
 
   return (
     <AdminPanel
-      description={`Everyone with an account. Inactive means not seen for ${retentionDays} days, which the retention policy acts on.`}
+      action={<ExportLink filters={filters} tab="people" />}
+      description={`Everyone with an account. Inactive means not seen for ${retentionDays()} days, which the retention policy acts on.`}
       icon={Users}
       title="People"
     >
@@ -368,7 +275,7 @@ export async function PeopleTab({
             {shown.map((user) => (
               <tr key={user.id}>
                 <td>
-                  <span className="admin-person">
+                  <Link className="admin-person" href={adminHref("person", { id: user.id })}>
                     {user.avatarUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img alt="" referrerPolicy="no-referrer" src={user.avatarUrl} />
@@ -379,7 +286,7 @@ export async function PeopleTab({
                       <b>{user.name}</b>
                       <small>{user.email}</small>
                     </span>
-                  </span>
+                  </Link>
                 </td>
                 <td title={user.workspaceNames.join(", ")}>
                   {user.workspaceNames.length

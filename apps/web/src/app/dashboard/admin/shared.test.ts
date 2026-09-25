@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { adminHref, formatBytes, likePattern, readPage, readParam } from "./shared";
+import {
+  QUALITY_MIN_ANSWERS,
+  adminHref,
+  formatBytes,
+  groundedRate,
+  likePattern,
+  readPage,
+  readParam,
+} from "./shared";
 
 /**
  * The admin console keeps every filter in the URL, so these helpers decide
@@ -38,5 +46,13 @@ describe("admin console helpers", () => {
     expect(formatBytes(0)).toBe("0 B");
     expect(formatBytes(Number.NaN)).toBe("0 B");
     expect(formatBytes(1536)).toBe("1.5 KB");
+  });
+});
+
+describe("grounded rate", () => {
+  it("is withheld below the minimum, so a workspace with three answers is not ranked worst", () => {
+    expect(groundedRate({ grounded: 1, ungrounded: 2 })).toBeNull();
+    expect(groundedRate({ grounded: QUALITY_MIN_ANSWERS, ungrounded: 0 })).toBe(1);
+    expect(groundedRate({ grounded: 6, ungrounded: 4 })).toBe(0.6);
   });
 });

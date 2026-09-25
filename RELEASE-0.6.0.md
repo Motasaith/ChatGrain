@@ -309,35 +309,10 @@ styled now.
 
 ## Not built yet
 
-What an operator of this installation will ask for next, roughly in order of
-how often the answer is needed. None of it is started.
+Items 1 to 9 of the list that stood here are now built. They are admin
+capabilities rather than presentation, so they are written up in
+[RELEASE-0.5.0.md](RELEASE-0.5.0.md) §14.
 
-1. **A detail view per workspace and per person.** Click a row, get a drawer:
-   members, agents, 30-day usage as a chart, recent audit rows, open sessions.
-   Today every question about one account is answered by filtering four tabs.
-2. **Answer quality across the installation.** `messages.grounded`,
-   `messages.latencyMs` and the `feedback` table are recorded and shown nowhere
-   an administrator can see across accounts. A grounded-rate and p95 latency
-   per workspace would find the customer whose agent is quietly refusing
-   everything.
-3. **Conversations waiting on a person, across workspaces.** Escalated
-   conversations and open tickets are visible only inside each workspace. The
-   Overview counts them; nothing lists them.
-4. **Live refresh on Overview and Crawl jobs.** The page is server-rendered and
-   still until something is clicked. A `router.refresh()` every 15 to 30
-   seconds on those two tabs only would make a running crawl watchable.
-5. **Outbound e-mail health.** `lib/support/mailer.ts` exists and the consent
-   flow depends on it, but there is no way to see whether it is configured or
-   to send a test message from the dashboard.
-6. **Maintenance mode.** A switch that shows customers a "back shortly" page
-   during a migration, with administrators exempt. Deploys currently have no
-   such state.
-7. **CSV export** of the filtered table on each tab. The filters are already
-   in the URL, so this is a route that reuses the same query.
-8. **Pruning.** `system_logs`, `audit_logs` and editing-session snapshots all
-   grow without bound (the last is already listed in 0.5.0). A retention
-   setting per table, shown next to the storage table, would close all three.
-9. **Audit metadata.** Each audit row carries a `metadata` JSON column that the
-   trail does not show. The log tab's expandable row is the pattern to reuse.
-10. **Dark mode.** The rest of the dashboard has none either, so this is a
-    0.6.0 change for the whole application rather than for the console.
+1. **Dark mode.** Still not started. The rest of the dashboard has none either,
+   so this is a 0.6.0 change for the whole application rather than for the
+   console.

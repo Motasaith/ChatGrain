@@ -3,6 +3,8 @@ import { connection } from "next/server";
 import { and, count, eq, ne } from "drizzle-orm";
 import { AppShell } from "@/components/app/app-shell";
 import { ImpersonationBanner } from "@/components/app/impersonation-banner";
+import { MaintenancePage } from "@/components/app/maintenance-page";
+import { getMaintenanceState } from "@/lib/admin/maintenance-mode";
 import { getWorkspaceContext } from "@/lib/auth/workspace";
 import { db } from "@/lib/db/client";
 import { agents, conversations } from "@/lib/db/schema";
@@ -26,6 +28,14 @@ export default async function DashboardLayout({
     }
   }
   const context = await getWorkspaceContext();
+  // Administrators are exempt: they are the ones doing the maintenance, and
+  // the switch to end it lives inside the dashboard it closes.
+  if (!context.isAdmin) {
+    const maintenance = await getMaintenanceState();
+    if (maintenance.enabled) {
+      return <MaintenancePage message={maintenance.message} />;
+    }
+  }
   const [handoffs] = await db
     .select({ count: count(conversations.id) })
     .from(conversations)

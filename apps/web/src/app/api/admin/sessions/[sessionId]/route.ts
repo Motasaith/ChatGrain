@@ -49,6 +49,16 @@ export async function POST(_: Request, context: Context) {
       );
     }
 
+    // Pruned by the retention job: the record of what changed survives, the
+    // copy needed to put it back does not.
+    if (session.status === "expired") {
+      throw new AppError(
+        "RESTORE_POINT_EXPIRED",
+        "This session's restore point has been pruned, so it can no longer be rolled back.",
+        410,
+      );
+    }
+
     const [workspace] = await db
       .select({ name: workspaces.name })
       .from(workspaces)

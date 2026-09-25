@@ -10,6 +10,19 @@ export type AdminSearchParams = Record<string, string | string[] | undefined>;
 
 export const PAGE_SIZE = 25;
 
+/** The largest export, so one click cannot pull a whole table into memory. */
+export const EXPORT_LIMIT = 10_000;
+
+/** Days without a sign-in before the retention policy treats an account as inactive. */
+export function retentionDays() {
+  return Number(process.env.INACTIVE_USER_RETENTION_DAYS ?? 30) || 30;
+}
+
+/** The query string of a filtered view, for links that leave the admin page. */
+export function filterQuery(tab: string, params: Record<string, string | number | undefined> = {}) {
+  return adminHref(tab, params).split("?")[1] ?? "";
+}
+
 export function readParam(params: AdminSearchParams, key: string) {
   const value = params[key];
   return (Array.isArray(value) ? value[0] : value)?.trim() ?? "";
@@ -83,6 +96,15 @@ export function formatRelative(value: Date | string) {
   return "just now";
 }
 
+/** Fewer answers than this and a rate is noise, so it is not ranked or coloured. */
+export const QUALITY_MIN_ANSWERS = 10;
+
+/** Share of answers with a known verdict that were grounded, or null when too few to say. */
+export function groundedRate(row: { grounded: number; ungrounded: number }) {
+  const judged = row.grounded + row.ungrounded;
+  return judged >= QUALITY_MIN_ANSWERS ? row.grounded / judged : null;
+}
+
 /**
  * How each session state reads as a pill.
  *
@@ -95,6 +117,7 @@ export const SESSION_PILL: Record<string, string> = {
   kept: "queued",
   discarded: "ready",
   reverted: "ready",
+  expired: "queued",
 };
 
 /** Crawl job states onto the pill colours the rest of the dashboard uses. */

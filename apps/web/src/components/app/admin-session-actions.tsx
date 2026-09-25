@@ -35,7 +35,7 @@ export function AdminSessionActions({
   const { ask, dialog } = useAskDialog();
 
   // Nothing to put back, or it has already been put back.
-  if (status === "discarded" || status === "reverted" || !changes.length) {
+  if (status === "discarded" || status === "reverted" || status === "expired" || !changes.length) {
     return null;
   }
 

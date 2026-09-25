@@ -56,7 +56,7 @@ export function AdminControls() {
       const data = payload.data;
       if (action.startsWith("cleanup")) {
         setResult(
-          `${data.matchedUsers} inactive users matched; ${data.deletedUsers} users, ${data.deletedWorkspaces} workspaces, ${data.deletedAuditLogs} audit events, and ${data.deletedSystemLogs} system logs deleted. Preview found ${data.expiredAuditLogs + data.expiredSystemLogs} expired log entries.`,
+          `${data.matchedUsers} inactive users matched; ${data.deletedUsers} users, ${data.deletedWorkspaces} workspaces, ${data.deletedAuditLogs} audit events, and ${data.deletedSystemLogs} system logs deleted; ${data.prunedSnapshots ?? 0} editing-session restore points expired. Preview found ${data.expiredAuditLogs + data.expiredSystemLogs} expired log entries and ${data.expiredSnapshots ?? 0} restore points past their retention.`,
         );
       } else if (action === "retry-failed-jobs") {
         setResult(`${data.retriedJobs} failed jobs returned to the queue.`);

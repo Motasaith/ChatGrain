@@ -13522,3 +13522,484 @@ a.admin-stat:hover {
     display: none;
   }
 }
+
+/* Admin console: detail pages, quality, waiting, exports, maintenance ------ */
+
+.admin-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-export,
+.admin-panel-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+  color: var(--ink);
+  background: var(--panel);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.admin-export:hover,
+.admin-panel-link:hover {
+  border-color: var(--line-strong);
+  background: var(--paper);
+}
+
+.admin-live-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: -6px;
+}
+
+.admin-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--muted);
+  background: var(--panel);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.admin-live i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #9ba7a1;
+}
+
+.admin-live.on {
+  color: var(--green-dark);
+}
+
+.admin-live.on i {
+  background: #3ba36c;
+  box-shadow: 0 0 0 3px rgb(59 163 108 / 18%);
+}
+
+.admin-live small {
+  min-width: 42px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  text-align: right;
+}
+
+.admin-quiet-link {
+  color: inherit !important;
+  font-weight: inherit !important;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+}
+
+.admin-panel .admin-table a.admin-person {
+  color: inherit;
+  font-weight: inherit;
+}
+
+.admin-panel .admin-table a.admin-person b {
+  color: var(--green-dark);
+}
+
+.admin-block {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.admin-bad-text {
+  color: #a3442f;
+}
+
+.admin-warn-text {
+  color: #97600b;
+  font-weight: 650;
+}
+
+.admin-good-text {
+  color: var(--green-dark);
+}
+
+.admin-rate {
+  display: inline-block;
+  min-width: 46px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  background: #edf0eb;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-align: center;
+}
+
+.admin-rate.good {
+  color: var(--green-dark);
+  background: var(--green-pale);
+}
+
+.admin-rate.warn {
+  color: #97600b;
+  background: #fdf0da;
+}
+
+.admin-rate.bad {
+  color: #a3442f;
+  background: #fceae5;
+}
+
+.admin-stats-grid.admin-stats-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* Detail pages */
+.admin-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: start;
+  color: var(--green-dark);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.admin-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+}
+
+.admin-detail-head h2 {
+  margin: 6px 0 4px;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+
+.admin-detail-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-detail-head p.admin-detail-warning {
+  margin-top: 8px;
+  color: #a3442f;
+  font-weight: 600;
+}
+
+.admin-panel .admin-list > div > .status-pill {
+  flex: none;
+}
+
+.admin-panel .admin-list b a {
+  color: var(--green-dark);
+}
+
+/* Audit rows that open */
+.admin-audit-list {
+  display: grid;
+}
+
+.admin-audit-list details {
+  border-top: 1px solid #edf0ec;
+}
+
+.admin-audit-list summary {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 4px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.admin-audit-list summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-audit-list summary:hover {
+  background: #fafbf9;
+}
+
+.admin-audit-list summary time {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.admin-audit-what {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.admin-audit-what b {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-audit-what small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-audit-list code,
+.admin-facts code {
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: #176d49;
+  background: #eff6f2;
+  font-family: var(--font-mono), monospace;
+  font-size: 11.5px;
+}
+
+.admin-audit-list dl,
+.admin-facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 4px 4px 10px 126px;
+  font-size: 12.5px;
+}
+
+.admin-facts {
+  padding: 0 0 10px;
+}
+
+.admin-audit-list dl div,
+.admin-facts div {
+  display: flex;
+  gap: 10px;
+}
+
+.admin-audit-list dt,
+.admin-facts dt {
+  width: 90px;
+  flex: none;
+  color: var(--muted);
+}
+
+.admin-audit-list dd,
+.admin-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-audit-list pre {
+  margin: 0 4px 12px 126px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  color: #4d5d55;
+  background: #f3f6f2;
+  font-family: var(--font-mono), monospace;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.admin-audit-list details > p {
+  margin: 0 0 12px 126px;
+  font-size: 12px;
+}
+
+/* E-mail and maintenance */
+.admin-icon-text {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 12px;
+  cursor: pointer;
+  color: var(--ink);
+  background: #f9faf8;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.admin-icon-text:hover:not(:disabled) {
+  border-color: #a9c8b8;
+  background: #f0f7f3;
+}
+
+.admin-icon-text.danger {
+  border-color: #e9c7bc;
+  color: #a3412a;
+  background: #fff7f4;
+}
+
+.admin-icon-text:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.admin-email-test {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  justify-items: start;
+}
+
+.admin-email-test p {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.admin-maintenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+
+.admin-maintenance > svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.admin-maintenance.on > svg {
+  color: #97600b;
+}
+
+.admin-maintenance > div {
+  display: grid;
+  min-width: 220px;
+  flex: 1;
+  gap: 3px;
+}
+
+.admin-maintenance b {
+  font-size: 14px;
+}
+
+.admin-maintenance small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.admin-maintenance .admin-maintenance-message {
+  color: var(--ink);
+  font-style: italic;
+}
+
+.admin-maintenance-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  border: 1px solid #f0d7a8;
+  border-radius: 11px;
+  padding: 10px 14px;
+  color: #7a4d06;
+  background: #fdf5e6;
+  font-size: 13px;
+}
+
+.admin-maintenance-banner > span:nth-child(2) {
+  flex: 1;
+}
+
+.admin-maintenance-banner > span:last-child {
+  font-weight: 700;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+/* The holding page customers see during maintenance. */
+.maintenance-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px 16px;
+  background:
+    radial-gradient(circle at 50% 18%, rgb(23 126 81 / 10%), transparent 34%),
+    var(--paper);
+}
+
+.maintenance-page section {
+  display: grid;
+  max-width: 440px;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.maintenance-page section > span {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--green-dark);
+  background: var(--green-pale);
+}
+
+.maintenance-page h1 {
+  margin: 6px 0 0;
+  font-size: 26px;
+  letter-spacing: -0.04em;
+}
+
+.maintenance-page p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.maintenance-page small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+@media (max-width: 1180px) {
+  .admin-stats-grid.admin-stats-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .admin-audit-list summary {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .admin-audit-list dl,
+  .admin-audit-list pre,
+  .admin-audit-list details > p {
+    margin-left: 0;
+    padding-left: 4px;
+  }
+
+  .admin-maintenance-banner {
+    flex-wrap: wrap;
+  }
+}

@@ -11,8 +11,10 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
+import { AdminAutoRefresh } from "@/components/app/admin-auto-refresh";
 import { AdminControls } from "@/components/app/admin-controls";
 import { AdminDailyBars } from "@/components/app/admin-daily-bars";
+import { getMaintenanceState } from "@/lib/admin/maintenance-mode";
 import { SANDBOX_CHANNEL } from "@/lib/chat/sandbox";
 import { db } from "@/lib/db/client";
 import { adminHref, formatBytes, formatDate } from "./shared";
@@ -46,6 +48,7 @@ type Overview = {
   failedJobs: number;
   failedJobs24h: number;
   openSessions: number;
+  openTickets: number;
   databaseBytes: number;
   workerHealthy: boolean;
   workerSeenAt: string | null;
@@ -86,6 +89,7 @@ async function loadOverview() {
         (select count(*)::int from crawl_jobs
           where status = 'failed' and updated_at > now() - interval '1 day') as "failedJobs24h",
         (select count(*)::int from admin_sessions where status = 'open') as "openSessions",
+        (select count(*)::int from tickets where status in ('open', 'pending')) as "openTickets",
         pg_database_size(current_database())::bigint as "databaseBytes",
         exists(
           select 1 from system_state
@@ -154,7 +158,15 @@ export async function OverviewTab() {
   const { overview: o, series, topWorkspaces } = await loadOverview();
   const topMax = Math.max(1, ...topWorkspaces.map((workspace) => workspace.answers));
 
+  const maintenance = await getMaintenanceState();
+  const waiting = o.conversationsEscalated + o.openTickets;
   const attention = [
+    maintenance.enabled && {
+      tone: "warn",
+      text: "Maintenance mode is on. Customers cannot use the dashboard.",
+      detail: maintenance.by ? `Turned on by ${maintenance.by}` : "Turn it off from System",
+      href: adminHref("system"),
+    },
     !o.workerHealthy && {
       tone: "bad",
       text: "The crawl worker has not reported in the last 15 seconds.",
@@ -173,6 +185,12 @@ export async function OverviewTab() {
       detail: "Their visitors may be getting no answers",
       href: adminHref("agents", { status: "error" }),
     },
+    waiting > 0 && {
+      tone: "warn",
+      text: `${waiting} ${waiting === 1 ? "visitor is" : "visitors are"} waiting on a person.`,
+      detail: `${o.conversationsEscalated} handed-off chats · ${o.openTickets} open tickets`,
+      href: adminHref("waiting"),
+    },
     o.openSessions > 0 && {
       tone: "warn",
       text: `${o.openSessions} administrator editing ${o.openSessions === 1 ? "session is" : "sessions are"} open.`,
@@ -189,6 +207,9 @@ export async function OverviewTab() {
 
   return (
     <>
+      <div className="admin-live-row">
+        <AdminAutoRefresh seconds={30} />
+      </div>
       <div className="admin-stats-grid">
         <StatTile
           href={adminHref("people")}
