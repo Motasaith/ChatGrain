@@ -151,7 +151,11 @@ export async function SystemTab({ adminEmail }: { adminEmail: string }) {
         </AdminPanel>
 
         <AdminPanel
-          description="Worker processes that reported in the last day. More than one is fine; each loads its own embedding model."
+          description={
+            (process.env.EMBEDDING_PROVIDER?.trim() || "local") === "local"
+              ? "Worker processes that reported in the last day. More than one is fine, but each loads its own copy of the local embedding model."
+              : `Worker processes that reported in the last day. Embeddings run on ${process.env.EMBEDDING_PROVIDER?.trim()}, so a worker holds no model and more of them are cheap.`
+          }
           icon={Cpu}
           title="Workers"
         >
