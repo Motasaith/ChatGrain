@@ -761,6 +761,25 @@ wrong mechanism for something checked on every request.
 
 ---
 
+### 13. The dashboard redesign is recorded in 0.6.0
+
+The admin page was rebuilt as a tabbed console: Overview with charts and a
+*Needs attention* list, then Workspaces, Agents, People, Crawl jobs, Editing
+sessions, Audit trail, Logs and System, each searchable, filterable and paged.
+
+**It is written up in [RELEASE-0.6.0.md](RELEASE-0.6.0.md) §3, not here**,
+because nothing an administrator can *do* changed. Every control, route and
+confirmation described in sections 2 to 12 is used exactly as built. What
+changed is layout, navigation and loading, and "how any of it looks or behaves"
+belongs to 0.6.0 by the table at the top of this file.
+
+The file tables above still name `apps/web/src/app/dashboard/admin/page.tsx`
+as the home of each section's rows. That was true when they were written. The
+rows now live in `overview-tab.tsx`, `directory-tabs.tsx`, `activity-tabs.tsx`
+and `system-tab.tsx` beside it.
+
+---
+
 ## Migrations
 
 Seven. `0026`–`0031` are applied to production; `0032` is not.

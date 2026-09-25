@@ -2,7 +2,7 @@
 
 **Version:** `0.6.0`
 **Status:** **Open, not stable, and not yet deployed.** Just started.
-**Tested:** locally only — 552 tests passing, 1 skipped; typecheck, lint and
+**Tested:** locally only: 588 tests passing, 1 skipped; typecheck, lint and
 `next build` clean.
 
 ---
@@ -162,6 +162,121 @@ from `window` during render**.
 
 ---
 
+### 3. The admin dashboard, as a console
+
+**Why it is here and not in 0.5.0.** Nothing an administrator *can do* changed.
+Every control, route and confirmation is the one 0.5.0 built. What changed is
+how the page is laid out, how it is navigated and how fast it answers, which is
+this release's subject. The pointer in `RELEASE-0.5.0.md` §13 leads here.
+
+**Why.** The admin page had grown to twelve sections stacked in one scroll:
+counts, health, storage, failures, workspaces, releases, sessions, agents,
+users, jobs, audit, logs and Sentry. Three problems followed.
+
+- **It did not scale past a handful of accounts.** Every list was a fixed
+  `limit(10)` to `limit(40)`, newest first, with no search. The forty-first
+  workspace could not be reached from the dashboard at all.
+- **Nothing said what needed a person.** A failed crawl was a number in a card
+  halfway down the page, and the page looked the same whether everything was
+  fine or the worker had been dead for an hour.
+- **Every load paid for everything.** About twelve queries plus a Sentry API
+  call ran on each visit, including after every button press, because each row
+  action calls `router.refresh()`.
+
+The layout borrows from the admin console of another project of ours
+(`AI_VIDEO_PIC_EDITOR`): a tab rail with counts on it, number tiles that carry
+their context, and small daily charts. The code is not shared. That project is
+a Vite SPA on tRPC and Tailwind; this one renders on the server with plain CSS.
+So only the ideas came across.
+
+#### What it looks like now
+
+Nine tabs, each a server component that loads only its own data:
+
+| Tab | What is on it |
+|---|---|
+| **Overview** | Six number tiles with a line of context each ("+3 today · +12 this week", "2 ready · 1 training · 0 failing"). Three 14-day charts: sign-ups, conversations started, answers generated. **Needs attention**, a list of links. **Busiest workspaces** over 30 days. Runtime health and the maintenance controls, as before. |
+| **Workspaces** | Search by name; filter active or suspended; sort by newest or most answers; member count added; impersonate from the row. |
+| **Agents** | Search by agent or workspace; filter by status, with counts. |
+| **People** | Search by name or email; filter to platform staff, retention exempt, or inactive past the retention window; which workspaces each person belongs to. |
+| **Crawl jobs** | Every job, not the last ten. Filter by status, search by source, site, agent or workspace. A progress bar per row, and a failed job shows its error in the row. |
+| **Editing sessions** | Filter by state, search by workspace or administrator, the reason shown in its own column. |
+| **Audit trail** | Search message, action or e-mail. Filter by area (`workspace`, `impersonation`, ...). |
+| **Logs** | Filter by level, search message or service. A count of the last 24 hours in the header. Each line opens to show its context. |
+| **System** | Table sizes with approximate row counts and size bars, the release panel, and Sentry. |
+
+Every tab past the first pages 25 rows at a time (logs 50).
+
+#### Decisions worth keeping
+
+**Filters live in the URL, not in component state.** `?tab=jobs&status=failed`
+is the whole state of the page. It survives a refresh and the back button, and
+it can be pasted to a colleague, which is how "look at this" is actually said
+in support. It also means the tabs need no client JavaScript. Search submits
+through `next/form`, a GET form that navigates client-side.
+
+**The rail counts only what wants a person.** Four badges: jobs failed in the
+last 24 hours, agents in an error state, open editing sessions, error logs in
+the last 24 hours. They are windowed to a day on purpose. An all-time failure
+count never falls back to zero, and a badge that never clears stops being
+read. They come from one query that runs on every tab, so a failure is visible
+from whichever tab is open.
+
+**Needs attention is links, not numbers.** Each item goes to the tab with the
+filter already applied: "3 crawl jobs failed in the last day" opens
+`?tab=jobs&status=failed`. A count the reader has to act on by hunting for the
+matching rows is half an answer. When the list is empty it says **All clear**
+rather than showing an empty box, because an empty panel cannot be told apart
+from one that failed to load.
+
+**Charts are one series each.** Sign-ups and answers differ by orders of
+magnitude, and two scales on one axis mislead. Days are whole UTC days, joined
+onto a generated calendar so a quiet day draws as zero rather than being left
+out, which would silently shorten the axis. The tooltip is pinned inside the
+plot at the edges so it never covers the chart's own title.
+
+**Conversation figures leave out sandbox chats.** They are an administrator
+reproducing a fault (0.5.0 §6), not demand. This matches what the dashboard
+layout already did for its unread badge. It does change one number: the old
+admin page counted them.
+
+**Search escapes `%` and `_`.** A search for `50%` finds `50%`, not everything
+beginning with 50. `likePattern` in `shared.ts`, with a test.
+
+**Pagination fetches one extra row** to know whether there is a next page,
+rather than running a second `count(*)` for every list. Only the filter chips
+carry counts, and those come from one grouped query per tab.
+
+**Sentry is fetched on the System tab only.** It was the slowest thing on the
+page and the only one leaving the server. It no longer runs on every
+`router.refresh()` of every row action.
+
+#### Files
+
+| File | What it does |
+|---|---|
+| `apps/web/src/app/dashboard/admin/page.tsx` | Rewritten. The heading, the tab rail with its badges, and which tab to render. No data of its own beyond the badge query. |
+| `apps/web/src/app/dashboard/admin/overview-tab.tsx` | **New.** Tiles, the three charts, Needs attention, Busiest workspaces, runtime health. |
+| `apps/web/src/app/dashboard/admin/directory-tabs.tsx` | **New.** Workspaces, Agents, People. |
+| `apps/web/src/app/dashboard/admin/activity-tabs.tsx` | **New.** Crawl jobs, Editing sessions, Audit trail, Logs. |
+| `apps/web/src/app/dashboard/admin/system-tab.tsx` | **New.** Storage, the release panel, Sentry. |
+| `apps/web/src/app/dashboard/admin/ui.tsx` | **New.** Panel, stat tile, filter chips, search form, pager, relative time. All server components. |
+| `apps/web/src/app/dashboard/admin/shared.ts` | **New.** URL reading and building, LIKE escaping, formatting, pill colours, and the Sentry loader moved out of the page. |
+| `apps/web/src/app/dashboard/admin/shared.test.ts` | **New.** 5 tests on the helpers that decide what a shared link means. |
+| `apps/web/src/components/app/admin-daily-bars.tsx` | **New.** The bar chart. The only client component added, because hover needs state. |
+| `apps/web/src/app/globals.css` | The stat tile rules retargeted to the new component. A new *Admin console* block at the end. |
+
+**Nothing else was touched.** The row controls (`admin-*-actions.tsx`,
+`impersonate-button.tsx`, `admin-controls.tsx`, `release-panel.tsx`) are used
+exactly as they were. No route, no migration, no schema change.
+
+**One fault fixed along the way.** Four of the old tables carried
+`className="admin-table"`, and no rule in `globals.css` matched it, so the
+workspace, session and agent tables were drawn with browser defaults. They are
+styled now.
+
+---
+
 ## What has not been proved
 
 - **Nothing here has been deployed.** It has been type-checked, linted, built
@@ -177,3 +292,52 @@ from `window` during render**.
   is reached only when the clipboard API is unavailable, which on a properly
   served installation is never — but "never" here means "unless somebody opens
   the dashboard over plain HTTP", which is how it gets checked after a deploy.
+- **The admin console has not been opened in a browser.** Every tab's queries
+  were run against the Aiven database, read-only, with and without filters, and
+  all of them return. The 14-day series came back as 14 consecutive UTC days
+  ending today. But nobody has looked at the layout, clicked through the tabs
+  or used a row control from inside the new tables.
+- **The rail's badge query runs on every admin page view.** Four counts and an
+  `exists`, each answered from an index or a small table. Cheap at today's
+  size, but it has not been measured against a large `system_logs`.
+- **The old stat tile rules were renamed, not removed.** `.admin-stats-grid
+  article` became `.admin-stat`. Nothing else used the old selector, but the
+  CSS was not audited for other orphaned `admin-*` rules left by the old page.
+- **Relative times are computed on the server.** "3 hours ago" is correct when
+  the page renders and goes stale while it stays open. The exact time is in the
+  hover title.
+
+## Not built yet
+
+What an operator of this installation will ask for next, roughly in order of
+how often the answer is needed. None of it is started.
+
+1. **A detail view per workspace and per person.** Click a row, get a drawer:
+   members, agents, 30-day usage as a chart, recent audit rows, open sessions.
+   Today every question about one account is answered by filtering four tabs.
+2. **Answer quality across the installation.** `messages.grounded`,
+   `messages.latencyMs` and the `feedback` table are recorded and shown nowhere
+   an administrator can see across accounts. A grounded-rate and p95 latency
+   per workspace would find the customer whose agent is quietly refusing
+   everything.
+3. **Conversations waiting on a person, across workspaces.** Escalated
+   conversations and open tickets are visible only inside each workspace. The
+   Overview counts them; nothing lists them.
+4. **Live refresh on Overview and Crawl jobs.** The page is server-rendered and
+   still until something is clicked. A `router.refresh()` every 15 to 30
+   seconds on those two tabs only would make a running crawl watchable.
+5. **Outbound e-mail health.** `lib/support/mailer.ts` exists and the consent
+   flow depends on it, but there is no way to see whether it is configured or
+   to send a test message from the dashboard.
+6. **Maintenance mode.** A switch that shows customers a "back shortly" page
+   during a migration, with administrators exempt. Deploys currently have no
+   such state.
+7. **CSV export** of the filtered table on each tab. The filters are already
+   in the URL, so this is a route that reuses the same query.
+8. **Pruning.** `system_logs`, `audit_logs` and editing-session snapshots all
+   grow without bound (the last is already listed in 0.5.0). A retention
+   setting per table, shown next to the storage table, would close all three.
+9. **Audit metadata.** Each audit row carries a `metadata` JSON column that the
+   trail does not show. The log tab's expandable row is the pattern to reuse.
+10. **Dark mode.** The rest of the dashboard has none either, so this is a
+    0.6.0 change for the whole application rather than for the console.

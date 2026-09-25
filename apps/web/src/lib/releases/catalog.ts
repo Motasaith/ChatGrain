@@ -75,9 +75,12 @@ export const RELEASES: Release[] = [
     highlights: [
       "The attribution line in the widget is a link, opening in a new tab so a visitor's conversation is not replaced by a marketing page.",
       "The Copy button on the install snippet confirms what it did, and works over plain HTTP where the clipboard API does not exist.",
+      "This admin dashboard is a tabbed console: every list is searchable, filterable and paged, filters live in the URL, and the rail counts what needs a person.",
+      "The Overview shows 14-day charts of sign-ups, conversations and answers, and a Needs attention list that links straight to the filtered rows.",
     ],
     unproven: [
       "Nothing in this release has been deployed.",
+      "The admin console's queries were run against the real database, but the console itself has not been clicked through in a browser.",
       "The three releases before it each made something work rather than making it pleasant, so the arrears here are large and mostly still unmeasured.",
     ],
     document: "RELEASE-0.6.0.md",
